@@ -86,12 +86,14 @@ interface TxnSpec {
   status?: TransactionStatus;
   merchantId?: string | null;
   normalized?: string;
+  /** the bank's text, when the stored normalized form is not just its echo (a row an older normalizer wrote) */
+  raw?: string;
 }
 
 function insertTxn(spec: TxnSpec): string {
   seq += 1;
   const accountId = spec.accountId ?? cardId;
-  const raw = spec.normalized ?? `TXN ${seq}`;
+  const raw = spec.raw ?? spec.normalized ?? `TXN ${seq}`;
   return bundle.db
     .insert(transactions)
     .values({
@@ -770,6 +772,36 @@ describe("topMerchants unlinked drill-downs", () => {
     const entry = topMerchants(bundle.db, JULY).entries[0]!;
     expect(entry.name).toBe("NEW BEST GOURMET DELI");
     expect(rowsBehind(entry.href)).toBe(2);
+  });
+
+  /**
+   * 🔴 Measured on his ledger copy 2026-10-29 (the Oct 26 statement imported, his filing not yet run): Top merchants
+   * named "CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA · 1 transaction · unlinked · $1,500.00" — every
+   * Capital One payment a payee of its own, by the ACH ID inside its description. ⛔ His rows keep the strings v2
+   * stored, while the heatmap beside this card keys `normalizeDescription(raw)`: both must name one payee, and the
+   * link must open both rows.
+   */
+  test("two card payments stored with their ACH IDs are one payee here, on the heatmap, and behind the link", () => {
+    insertTxn({
+      postedOn: "2026-07-05",
+      amountCents: -150_000,
+      category: null,
+      raw: "Capital One Mobile Pmt CA0Fda683870046 Rayan Karim Checa",
+      normalized: "CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA",
+    });
+    insertTxn({
+      postedOn: "2026-07-06",
+      amountCents: -50_000,
+      category: null,
+      raw: "Capital One Mobile Pmt CA05961FD73B0Ef Rayan Karim Checa",
+      normalized: "CAPITAL ONE MOBILE PMT CA05961FD73B0EF RAYAN KARIM CHECA",
+    });
+
+    const entry = topMerchants(bundle.db, JULY).entries[0]!;
+    expect(entry).toMatchObject({ kind: "unlinked", name: "CAPITAL ONE MOBILE PMT RAYAN KARIM CHECA", txnCount: 2, spentCents: 200_000 });
+    expect(rowsBehind(entry.href)).toBe(2);
+    const heat = dailySpendHeatmap(bundle.db, "2026-07").days.filter((d) => d.iso === "2026-07-05" || d.iso === "2026-07-06");
+    expect(heat.flatMap((d) => d.topMerchants.map((m) => m.name))).toEqual([entry.name, entry.name]);
   });
 });
 

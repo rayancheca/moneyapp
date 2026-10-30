@@ -5,7 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { daysInMonthOf } from "@/lib/calendar-math";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
-import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import {
@@ -18,13 +18,17 @@ import {
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import { billedWithPhrase, carrierWord } from "@/lib/billed-with";
 import {
+  asksForUnattachedMatch,
   forecastConfidence,
   settledVerdict,
   STATE_ATTENTION_ORDER,
   type ForecastConfidence,
+  type OccurrenceReading,
   type OccurrenceState,
+  type ScheduleProven,
   type UnsettledReason,
 } from "@/lib/occurrence-verdict";
+import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import {
@@ -55,6 +59,7 @@ import {
   seriesEvidence,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
+import { unattachedMatchesBySeries } from "./unattached-match";
 
 /**
  * Recurring calendar month (ux-overhaul-plan §4.1.3). One month of the
@@ -66,7 +71,8 @@ import { seriesCategoryIds } from "./series-category";
  *   - missed          red ✕   — expected before today, unposted, day AND its grace
  *                               checked through, the last over (`dueDayIsRead`, ⚖️ §6A 60, 62)
  *   - unsettled       grey ?  — expected before today, unposted, and the ledger
- *                               cannot yet say (see `occurrence-verdict`)
+ *                               cannot yet say (see `occurrence-verdict`) — or a row
+ *                               matches it to the cent unattached, named (`unattached`)
  *
  * ## Which series contribute, and to WHAT
  *
@@ -197,6 +203,12 @@ export interface CalendarEntry {
    * so a cell can never print a verdict beside the wrong explanation.
    */
   unsettledReason: UnsettledReason | null;
+  /**
+   * The row the one rule matched to this day to the cent, sitting unattached (`services/unattached-match`) — non-null
+   * exactly when `unsettledReason` is "matched_unattached", out of the same `settledVerdict` call. Named by its day and
+   * amount (`unsettledWords`), and never paid: the mark settles nothing (`settledCents` null).
+   */
+  unattached: UnattachedMatch | null;
   /**
    * How firmly this forecast is asserted. Non-null exactly when `state` is
    * "upcoming" — a settled day needs no confidence, it has an outcome.
@@ -584,6 +596,42 @@ function chargeRow(owed: SettlementPortion[] | undefined, amountCents: number): 
   return { cents, paydays: [...paydays].sort(compareDates) };
 }
 
+/** A month's credit linked to a pay series that its settlement never read, as step 1 would draw it. */
+interface UnreadCredit {
+  date: string;
+  entry: CalendarEntry;
+}
+
+/**
+ * Of a month's credits linked to a pay series that its settlement never read (`PaydayReading.notFiledAsIncome`), the
+ * ones drawn — each where it landed, "paid — toward no payday", and Settled, as it always was: his history.
+ * ⛔ Never one a payday mark of its series stands for: the row the one rule names on a payday (`named`) — of the
+ * month, or just past its edges, whose month's mark names it — nor one on a day its series draws a payday: one mark a
+ * payday, so the off-cycle $200.00 of Oct 15 stays drawn nowhere until it is filed (8b's default of 2026-10-29, kept to
+ * the reach it named).
+ *
+ * 🔴 Review of e6ad55a (HIGH): drawn and settled whole, one week was told twice on one Thursday. The trial import of
+ * the Oct 26 statement into his pre-import copy, read Oct 29: Oct 1, 8, 15 and 22 each drew the row "paid — toward no
+ * payday" beside the "?" naming it, and October's Settled +$2,412.47 held $4,767.68 of rows no other surface counts
+ * (the four, and that $200.00) while Not yet known held the same paydays' $4,567.68. One mark a payday: −$2,355.21.
+ * 🔴 Review of ff0bf19 (8b-1, MEDIUM): every such credit was then skipped, not just those — a series Detect now builds
+ * from unfiled credits lost its whole posted history, and no "?" named any of it (no deposit read, no first payday).
+ * The e2e post-suite copy read Jul 8 lost ten marks over Apr – Jun 2026 (+$400.00 ×3, interest ×6, a $33.00
+ * cashback): April 29 → 26 entries and its Settled $2,936.67 → $2,474.94, June 34 → 30 — and marks in every month
+ * from Jul 2024 on. Measured again 2026-10-30: that copy reads as 72a9959f did, Jan 2024 – Dec 2026, byte for byte.
+ */
+function unreadCreditsDrawn(
+  credits: readonly UnreadCredit[],
+  named: ReadonlyMap<string, readonly UnattachedMatch[]>,
+  entriesByDay: Readonly<Record<string, readonly CalendarEntry[]>>,
+): UnreadCredit[] {
+  if (credits.length === 0) return [];
+  const namedRows = new Set([...named.values()].flatMap((matches) => matches.map((m) => m.row.id)));
+  const paydayOn = (c: UnreadCredit): boolean =>
+    (entriesByDay[c.date] ?? []).some((e) => e.seriesId === c.entry.seriesId && e.transactionId === null);
+  return credits.filter((c) => !namedRows.has(c.entry.transactionId ?? "") && !paydayOn(c));
+}
+
 export function recurringCalendar(
   db: AppDatabase,
   month: string = monthKey(todayIso()),
@@ -655,12 +703,41 @@ export function recurringCalendar(
       towardNoPayday: false,
       settledCents: 0,
       unsettledReason: null,
+      unattached: null,
       confidence: null,
       isStale: false,
       neverBilled: false,
       billedWith: null,
       paidWith,
       hue: hues.get(s.id) ?? null,
+    });
+  /**
+   * An expected occurrence no posting paid, drawn at its own amount and settling nothing: upcoming, with who said it and
+   * what its evidence says; or past, with its verdict and the row that verdict names (`settledVerdict`).
+   */
+  const pushExpected = (
+    s: { id: string; name: string; kind: SeriesKind },
+    o: { date: string; amountCents: number },
+    graded: Pick<
+      CalendarEntry,
+      "state" | "unsettledReason" | "unattached" | "confidence" | "isStale" | "neverBilled" | "billedWith"
+    >,
+  ): void =>
+    pushEntry(o.date, {
+      seriesId: s.id,
+      name: s.name,
+      kind: s.kind,
+      amountCents: o.amountCents,
+      expectedAmountCents: o.amountCents,
+      transactionId: null,
+      settledByDepositsOn: [],
+      settlesPaydaysOn: [],
+      perPayday: null,
+      towardNoPayday: false,
+      settledCents: null,
+      paidWith: null,
+      hue: hues.get(s.id) ?? null,
+      ...graded,
     });
 
   /*
@@ -738,6 +815,8 @@ export function recurringCalendar(
 
   // 1) posted charges tagged to a drawable series, inside the month — what pays a bill's day is step 2's to read
   const postedDatesBySeries = new Map<string, string[]>();
+  /** the month's credits linked to a pay series that its settlement never read — drawn once step 2 has its paydays */
+  const unreadCredits: UnreadCredit[] = [];
   if (historyRows.length > 0) {
     const posted = db
       .select({
@@ -774,6 +853,7 @@ export function recurringCalendar(
        * reads it, and it is drawn as the payday's pay.
        */
       if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
+      const reading = readings.get(s.id)?.get(p.id);
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       /*
        * ⚖️ A PAY ROW IS GRADED PER PAYDAY (`lib/per-payday`): a lump whose money
@@ -790,14 +870,13 @@ export function recurringCalendar(
        * Nor is money out (decision 75): it is no payday's pay — the same day,
        * its deposit is graded at the day's net — so it is drawn as it is.
        */
-      const reading = readings.get(s.id)?.get(p.id);
       const expected = expectedCentsOf(reading, effectiveSeries(s), p.postedOn);
       const state: DayStateKind =
         expected === null ? "paid" : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
-      pushEntry(p.postedOn, {
+      const entry: CalendarEntry = {
         seriesId: s.id,
         name: s.name,
         kind: s.kind,
@@ -811,13 +890,27 @@ export function recurringCalendar(
         towardNoPayday: reading?.towardNoPayday ?? false,
         settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
+        unattached: null,
         confidence: null,
         isStale: false,
         neverBilled: false,
         billedWith: null,
         paidWith: null,
         hue: hues.get(s.id) ?? null,
-      });
+      };
+      /*
+       * ⛔ …AND A CREDIT ITS SETTLEMENT NEVER READ (`PaydayReading.notFiledAsIncome`) WAITS FOR ITS PAYDAYS: money
+       * linked to the pay on a day no row of it is filed as his pay, or itself filed as spending, is no pay of the
+       * series on any surface, and to the one rule a row it may only NAME. Where a payday mark of its series stands for
+       * it — the row the one rule names there, or a payday on its own day — it is no mark of its own
+       * (`unreadCreditsDrawn`, after step 2); everywhere else it is his history, drawn where it landed as it always
+       * was. Money out off its pay days is drawn at once, as the money out it is (`ReadableRow.offPayDay`).
+       */
+      if (reading?.notFiledAsIncome === true) {
+        unreadCredits.push({ date: p.postedOn, entry });
+        continue;
+      }
+      pushEntry(p.postedOn, entry);
       const dates = postedDatesBySeries.get(s.id) ?? [];
       dates.push(p.postedOn);
       postedDatesBySeries.set(s.id, dates);
@@ -876,6 +969,26 @@ export function recurringCalendar(
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
   // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
   const dueDaysBySeries = billDueDaysBySeries(db, forecastRows);
+  /** the past occurrences no posting paid, each with how far the ledger has read its day — graded below, at once */
+  const past: {
+    s: (typeof forecastRows)[number];
+    o: { date: string; amountCents: number };
+    reading: OccurrenceReading;
+    proven: ScheduleProven;
+  }[] = [];
+  /** …and, for a series with a credit its settlement never read, its unpaid paydays just past the month's edges */
+  const edges: Omit<(typeof past)[number], "proven">[] = [];
+  const unreadCreditSeries = new Set(unreadCredits.map((c) => c.entry.seriesId));
+  /** How far the ledger has read a past occurrence's day — one reading for the month's days and the edges' alike. */
+  const readingFor = (s: (typeof forecastRows)[number]): OccurrenceReading => ({
+    // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
+    dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
+    // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
+    // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
+    paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
+    // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
+    paydayLandingDays: s.toleranceDays,
+  });
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
@@ -886,6 +999,24 @@ export function recurringCalendar(
      */
     const projectable = paydayProjectable(s, settlements.get(s.id), today);
     const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
+    /*
+     * ⛔ …and where a credit of it settlement never read waits (`unreadCredits`), its paydays within its tolerance
+     * outside the month too, paid by no deposit — asked as the month's own are (`asksForUnattachedMatch`, which reads
+     * only a payday checked through its days to land): the one rule may give the credit to one of them
+     * (`unreadCreditsDrawn`). ⚖️ His Wed Sep 30 payroll paid Thu Oct 1 (decisions 29/32): left unfiled, it is
+     * October's Oct 1 "?" that names it, and September must not draw it as well.
+     */
+    if (unreadCreditSeries.has(s.id)) {
+      const portions = settlements.get(s.id)?.portions ?? [];
+      const outside = [
+        ...projectOccurrences(projectable, addDays(monthStart, -s.toleranceDays), addDays(monthStart, -1)),
+        ...projectOccurrences(projectable, addDays(monthEnd, 1), addDays(monthEnd, s.toleranceDays)),
+      ];
+      // a payday its deposits paid is drawn paid in its month, naming no row — so it names none here either
+      for (const o of outside.filter((d) => !portions.some((p) => p.paydayOn === d.date))) {
+        edges.push({ s, o, reading: readingFor(s) });
+      }
+    }
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
     const payments = paymentsBySeries.get(s.id) ?? [];
@@ -947,6 +1078,7 @@ export function recurringCalendar(
             towardNoPayday: false,
             settledCents: paidFromElsewhere.get(s.id)?.get(o.date) ?? 0,
             unsettledReason: null,
+            unattached: null,
             confidence: null,
             isStale: false,
             neverBilled: false,
@@ -985,54 +1117,65 @@ export function recurringCalendar(
         }
       }
 
-      const isFuture = compareDates(o.date, today) >= 0;
-      // The state and its reason are one decision, taken once. Splitting them
-      // is how `budgetVerdict` came to print a headline beside a definition that
-      // contradicted it.
-      const verdict = isFuture
-        ? null
-        : settledVerdict(
-            s.kind,
-            o.date,
-            {
-              // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
-              dueDay: readingOf
-                ? readingOf(s.id)
-                : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
-              // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
-              // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
-              paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
-              // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
-              paydayLandingDays: s.toleranceDays,
-            },
-            // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
-            // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
-            scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
-          );
-
-      pushEntry(o.date, {
-        seriesId: s.id,
-        name: s.name,
-        kind: s.kind,
-        state: verdict?.state ?? "upcoming",
-        amountCents: o.amountCents,
-        expectedAmountCents: o.amountCents,
-        transactionId: null,
-        settledByDepositsOn: [],
-        settlesPaydaysOn: [],
-        perPayday: null,
-        towardNoPayday: false,
-        settledCents: null,
-        unsettledReason: verdict?.reason ?? null,
-        confidence: isFuture ? confidence : null,
-        isStale: isFuture && isStale,
-        neverBilled: isFuture && neverBilled,
-        billedWith: isFuture ? billedWith : null,
-        paidWith: null,
-        hue: hues.get(s.id) ?? null,
+      if (compareDates(o.date, today) >= 0) {
+        pushExpected(s, o, {
+          state: "upcoming",
+          unsettledReason: null,
+          unattached: null,
+          confidence,
+          isStale,
+          neverBilled,
+          billedWith,
+        });
+        continue;
+      }
+      past.push({
+        s,
+        o,
+        reading: readingFor(s),
+        // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
+        // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
+        proven: scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
       });
     }
   }
+
+  /*
+   * ⛔ …and before a past mark says what did not arrive, THE ONE RULE (`services/unattached-match`): a row matching its
+   * day to the cent, sitting unattached, makes it "not yet known" and named — never a red ✕, never "never reached a
+   * bank", and never paid. Asked of exactly the days every other surface asks it of (`asksForUnattachedMatch`), so one
+   * row answers the same day here as on the runway, the forecast and Earned vs banked.
+   *
+   * 🔴 Review of de31d22 (HIGH): the calendar never asked. On his ledger copy (2026-10-29, after the Oct 26 import and
+   * before his filing) it drew Oct 1, 8, 15 and 22 "not yet known — never reached a bank $1,141.92" while the forecast
+   * card on the same page said "Pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026, …"; with Breezeline's
+   * Oct 10 −$50.00 unlinked, a red ✕ "missed" on Oct 8 beside the Next column's "Oct 8 — matched to the cent by a row of
+   * $50.00 on Oct 10 that is not attached to it".
+   */
+  const asked = new Map<string, ExpectedDay[]>();
+  // the month's days draw their marks; the edges' only say which row is theirs (`unreadCreditsDrawn`)
+  for (const { s, o, reading } of [...past, ...edges]) {
+    if (!asksForUnattachedMatch(s.kind, o.date, reading)) continue;
+    asked.set(s.id, [...(asked.get(s.id) ?? []), { date: o.date, amountCents: o.amountCents }]);
+  }
+  const unattachedOf = unattachedMatchesBySeries(db, asked, today);
+  for (const { s, o, reading, proven } of past) {
+    const match = unattachedOf.get(s.id)?.find((m) => m.date === o.date) ?? null;
+    // The state and its reason are one decision, taken once. Splitting them
+    // is how `budgetVerdict` came to print a headline beside a definition that
+    // contradicted it.
+    const verdict = settledVerdict(s.kind, o.date, reading, proven, match);
+    pushExpected(s, o, {
+      state: verdict.state,
+      unsettledReason: verdict.reason,
+      unattached: verdict.unattached ?? null,
+      confidence: null,
+      isStale: false,
+      neverBilled: false,
+      billedWith: null,
+    });
+  }
+  for (const c of unreadCreditsDrawn(unreadCredits, unattachedOf, entriesByDay)) pushEntry(c.date, c.entry);
 
   let entryCount = 0;
   let postedNetCents = 0;

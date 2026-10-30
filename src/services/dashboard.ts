@@ -10,7 +10,7 @@ import { resolvePeriod } from "@/lib/period";
 import { passedPaydaysLeftOut, type PaydaysLeftOut } from "@/lib/unbanked-income";
 import { listAccounts } from "./accounts";
 import { agentsCashOfRender } from "./analytics";
-import { hisLiveIncomeSeries, unattachedIncomeWherePayLandsCents } from "./budgets";
+import { postedIncomeHolds } from "./budgets";
 import { bridgedNetWorthSeries, type BridgedNetWorthPoint } from "./in-flight";
 import { forecastCurrentMonth } from "./forecast";
 import { allSpendPartlyRead } from "./movers-card";
@@ -121,9 +121,9 @@ export interface SpendingPace {
    * This month's paydays that passed with no deposit against them — in NEITHER of Free to spend's income legs (posted
    * income holds no deposit for them; the forecast's fixed income opens on today) — named under the figure in the
    * forecast's words (`passedPaydaysLeftOut` over `MonthForecast.unbankedIncome`, the paydays its own note says are
-   * "not counted above, and not in EOM cash"). Null where none passed unbanked, and beside the dash: a figure withheld
-   * leaves nothing out. ⛔ Called "not in Free to spend" only where the posted leg's rows bear it out — never while it
-   * counts Income no pay schedule is attached to where that pay lands (`unattachedIncomeWherePayLandsCents`).
+   * "not counted above"). Null where none passed unbanked, and beside the dash: a figure withheld leaves nothing out.
+   * ⛔ Called "not in Free to spend" only of the paydays no row the posted leg holds answers — never of one whose row the
+   * one rule matched to it, to the cent, that the leg counts (`leftOutOf` over `postedIncomeHolds`).
    */
   paydaysLeftOut: PaydaysLeftOut | null;
   points: PacePoint[];
@@ -379,7 +379,7 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * ⚖️ default built, not asked (2026-10-29): a month whose pay is found in part prints its figure (decision 72), and a
    * payday that passed with no deposit — after the pay account's last checked day, or on a checked day — is in neither
    * leg: no posted row, and the forecast's fixed income opens on today. It is NAMED under the figure, in the forecast's
-   * words (`paydaysLeftOut`) — not counted, as the forecast keeps it out of EOM cash (passed pay is reported, never
+   * words (`paydaysLeftOut`) — not counted, as the forecast adds none of it to EOM cash (passed pay is reported, never
    * projected: `unbankedIncomeForSeries`), and no dash, which §6A 68 keeps for a month not one day of which is checked.
    * 🔴 Review of a5ce8b15 (MEDIUM): weekly $1,000 found Jul 2, its account checked through Jul 2, read $4,920.00 on Jul
    * 8 and Jul 9 and $3,920.00 on Jul 10 — Jul 9's pay in neither leg, under only spending's partly-read line — while
@@ -389,17 +389,21 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * in neither leg — now under "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls
    * after Oct 26, …".
    *
-   * ⛔ "Not in Free to spend" is said only where the posted leg's own rows bear it out — the month's Income in the
-   * accounts his pay lands in that no pay schedule is attached to (`unattachedIncomeWherePayLandsCents`, read as
-   * `cashFlowByPeriod` reads the window) — and where that holds money the paydays are named in the forecast's words and
-   * nothing is said of the figure. 🔴 Review of 5c1c4903 (MEDIUM): the paydays are settlement's (attached rows only),
+   * ⛔ "Not in Free to spend" is said only of the paydays no row the posted leg holds answers: of the rows the one rule
+   * matched to them (`lib/unattached-match` — the payday's series' account, its tolerance, its amount to the cent),
+   * those the leg counts (`postedIncomeHolds`, the reader `cashFlowByPeriod` sums the window by) take back their own
+   * paydays' claim (`leftOutOf`) — "— $1,141.92 of it not in Free to spend" where it holds some, nothing said of the
+   * figure where it holds them all. 🔴 Review of 5c1c4903 (MEDIUM): the paydays are settlement's (attached rows only),
    * the posted leg counts every row filed under Income — Jul 9's $1,000 filed Income › Salary from the review queue and
-   * attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case shows. Latent on his ledger
-   * copy 2026-10-29 (its payroll is attached by guarded writes). On a copy of today's trial import of his Wells Fargo
-   * statement with its five payroll rows filed Salary from the review queue (four attached to nothing; the import had
-   * attached Oct 15's $200.00), the tile reads ≈ −$1,960.30 on Oct 29 — all $4,767.68 of October's posted pay in it —
-   * over "3 paydays worth $3,425.76 already passed this month with no deposit imported. Pay that never reaches a bank
-   * cannot be projected as arriving." where it said "— not in Free to spend".
+   * attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case shows. 🔴 Review of 082a0ef5
+   * (B3, MEDIUM): the fix held back every payday's claim while ANY Income sat unattached where some pay landed — on a
+   * copy of his ledger with Oct 15's off-cycle $200.00 detached, read Oct 30, of Oct 29, after Wells Fargo's Oct 26: a
+   * payday no $200.00 of Oct 15 can be. Measured on a copy of his pre-filing ledger with the five October payroll rows
+   * filed Salary from the review queue (four attached to nothing; the import had attached Oct 15's $200.00): ≈ −$1,960.30
+   * on Oct 29 over "3 paydays worth $3,425.76 already passed this month with no deposit attached to it. Pay matched to
+   * the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it cannot be projected as
+   * arriving." — all three rows in the figure — and ≈ −$3,102.22 on Oct 30 over "4 paydays worth $4,567.68 already passed
+   * this month — $1,141.92 of it not in Free to spend. 3 fall on days already checked, …", Oct 29 in neither leg.
    */
   const waitsForIncome = !withheld && cashFlow.incomeUnread;
   const figure = withheld || waitsForIncome ? null : freeToSpendCents;
@@ -411,7 +415,8 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
           passed,
           "Free to spend",
           (iso) => formatDayShortIn(iso, today),
-          postedIncomeUnattachedWherePayLands(db, period.from, period.to) > 0,
+          // ⚡ read only where the one rule matched a row (`postedIncomeHolds`)
+          postedIncomeHolds(db, agentsCashOfRender(db), passed.unattached ?? [], period.from, period.to),
         );
   /*
    * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on
@@ -438,17 +443,6 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
     freeToSpendCents: figure,
     href: "/spending",
   };
-}
-
-/**
- * The month's posted Income no pay schedule is attached to where his pay lands — over the rows `cashFlowByPeriod`
- * reads for Free to spend's posted leg (the window, whose-money-is-whose by the render's one reading), so the line
- * under the figure and the figure read one set of rows. ⚡ Asked only beside a figure, of a payday passed unbanked:
- * ≈ 2.1 ms against ≈ 335 ms for all of `dashboardData` on the filed trial copy `spendingPace` names (2026-10-29).
- */
-function postedIncomeUnattachedWherePayLands(db: AppDatabase, from: string, to: string): number {
-  const agentsCash = agentsCashOfRender(db);
-  return unattachedIncomeWherePayLandsCents(db, agentsCash, hisLiveIncomeSeries(db, agentsCash), from, to);
 }
 
 function investmentsTeaser(db: AppDatabase, today: string): InvestmentsTeaser | null {

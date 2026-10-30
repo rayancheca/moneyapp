@@ -29,6 +29,7 @@ function entry(over: Partial<CalendarEntry> & Pick<CalendarEntry, "seriesId" | "
     towardNoPayday: false,
     settledCents: null,
     unsettledReason: null,
+    unattached: null,
     confidence: null,
     isStale: false,
     neverBilled: false,

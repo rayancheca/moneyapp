@@ -1438,8 +1438,14 @@ describe("incomeExpectation — §6A 68: no income day of the month checked", ()
  * tile, and this header's sentence by the same two readings). The passed paydays are settlement's, which reads only
  * rows ATTACHED to the pay (`lib/payday-settlement`); "in so far" counts every row filed under Income (`hisIncomeRows`).
  * Jun 11's deposit filed Income › Salary from the review queue and attached to nothing is in both.
+ *
+ * ⛔ …and the claim is about THE PAYDAY IT NAMES: only a row the one rule matched to that payday — its series' account,
+ * its tolerance, its amount to the cent (`lib/unattached-match`) — that "in so far" holds takes it back
+ * (`passedUnpaidInSoFar`). 🔴 Review of 082a0ef5 (B3, MEDIUM): any Income attached to nothing where some pay landed,
+ * filed as some pay is filed, held back every payday's claim — a $50 tip of Tutoring's in Savings held back It America's
+ * Jun 11, which no deposit anywhere paid ({postedUnattached 5000} beside passedUnpaid 114192 ×1).
  */
-describe("incomeExpectation — Income in so far that no pay schedule is attached to", () => {
+describe("incomeExpectation — the passed paydays' rows that 'in so far' holds", () => {
   let checkingId: string;
   let pay: string;
 
@@ -1460,11 +1466,17 @@ describe("incomeExpectation — Income in so far that no pay schedule is attache
     checkedThrough(bundle.db, checkingId, "2026-06-15");
   });
 
-  /** a credit on `accountId`, filed under `categoryPath`, attached to `seriesId` or to nothing */
-  function credit(accountId: string, postedOn: string, cents: number, categoryPath: string, seriesId?: string): void {
+  /** a credit on `accountId`, filed under `categoryPath` (null: unfiled), attached to `seriesId` or to nothing */
+  function credit(
+    accountId: string,
+    postedOn: string,
+    cents: number,
+    categoryPath: string | null,
+    seriesId?: string,
+  ): string {
     seq += 1;
     const rawDescription = `CREDIT ${seq}`;
-    bundle.db
+    return bundle.db
       .insert(transactions)
       .values({
         accountId,
@@ -1472,45 +1484,53 @@ describe("incomeExpectation — Income in so far that no pay schedule is attache
         amountCents: cents,
         rawDescription,
         normalizedDescription: rawDescription,
-        categoryId: catId(categoryPath),
+        categoryId: categoryPath === null ? null : catId(categoryPath),
         recurringSeriesId: seriesId ?? null,
         dedupeHash: dedupeHash({ accountId, postedOn, amountCents: cents, rawDescription, occurrenceIndex: 0 }),
       })
-      .run();
+      .returning({ id: transactions.id })
+      .get().id;
   }
 
   const month = () => incomeExpectation(bundle.db, "2026-06-01", "2026-06-30", "2026-06-16");
+  /** the rows "in so far" holds, by the payday the one rule matched each to */
+  const heldOn = (got: ReturnType<typeof month>) => got.passedUnpaidInSoFar.map((m) => [m.date, m.row.id]);
 
-  test("a deposit filed as Income where the pay lands, attached to nothing, is named as in so far", () => {
-    credit(checkingId, "2026-06-11", 114_192, "Income > Salary");
+  test("a deposit filed as Income where the pay lands, matching the payday to the cent, is in so far", () => {
+    const jun11 = credit(checkingId, "2026-06-11", 114_192, "Income > Salary");
     const got = month();
     // in so far counts Jun 11's deposit, while settlement — attached rows only — leaves Jun 11 passed unpaid
     expect(got.postedCents).toBe(2 * 114_192);
     expect([got.passedUnpaidOccurrences, got.passedUnpaidCents]).toEqual([1, 114_192]);
-    expect(got.postedUnattachedCents).toBe(114_192);
+    expect(heldOn(got)).toEqual([["2026-06-11", jun11]]);
+    expect(got.passedUnpaidUnattached.map((m) => m.row.id)).toEqual([jun11]);
   });
 
-  test("Income attached to nothing where the pay does not land is not, filed as his pay is or not", () => {
+  test("Income attached to nothing where the pay does not land answers none of its paydays", () => {
     const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
     const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
     credit(savings, "2026-06-11", 114_192, "Income > Salary");
     const got = month();
     expect(got.postedCents).toBe(2 * 114_192);
     expect(got.passedUnpaidCents).toBe(114_192);
-    expect(got.postedUnattachedCents).toBe(0);
+    expect(heldOn(got)).toEqual([]);
   });
 
-  // ⚖️ …nor where it lands filed as no pay of his is filed: his Sep 4 reimbursement from It America LLC (2026-09-28)
-  test("Income attached to nothing where the pay lands, filed as a reimbursement, is not", () => {
+  // ⚖️ …nor money of another amount where it lands: his Sep 4 reimbursement from It America LLC (2026-09-28)
+  test("Income attached to nothing where the pay lands, of another amount, answers none of its paydays", () => {
     credit(checkingId, "2026-06-05", 46_820, "Income > Refunds & Reimbursements");
     const got = month();
     expect(got.postedCents).toBe(114_192 + 46_820);
     expect(got.passedUnpaidCents).toBe(114_192);
-    expect(got.postedUnattachedCents).toBe(0);
+    expect(heldOn(got)).toEqual([]);
   });
 
-  // ⛔ …and with two schedules, one schedule's account and the other's filing make it neither one's pay
-  test("Income where one schedule lands, filed as another's pay is filed, is neither's", () => {
+  /*
+   * 🔴 B3(b), the review's own scratch test: Tutoring lands in Savings, filed Other Income, Jun 3 and Jun 10 paid and
+   * attached, Savings checked through Jun 15; a $50 tip in Savings, filed Other Income, attached to nothing. It America's
+   * Jun 11 passed with no deposit anywhere, and its claim stood behind money in neither its account nor its amount.
+   */
+  test("a tip where another schedule lands, filed as that pay is filed, answers none of this one's paydays", () => {
     const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
     const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
     const tutoring = createSeries({
@@ -1523,38 +1543,69 @@ describe("incomeExpectation — Income in so far that no pay schedule is attache
     });
     bundle.db.update(recurringSeries).set({ accountId: savings }).where(eq(recurringSeries.id, tutoring)).run();
     credit(savings, "2026-06-03", 30_000, "Income > Other Income", tutoring);
-    // Savings is where Tutoring lands; Salary is how It America's pay is filed
-    credit(savings, "2026-06-11", 114_192, "Income > Salary");
+    credit(savings, "2026-06-10", 30_000, "Income > Other Income", tutoring);
+    checkedThrough(bundle.db, savings, "2026-06-15");
+    credit(savings, "2026-06-12", 5_000, "Income > Other Income");
     const got = month();
-    expect(got.passedUnpaidCents).toBeGreaterThan(0);
-    expect(got.postedUnattachedCents).toBe(0);
+    expect(got).toMatchObject({ postedCents: 179_192, passedUnpaidCents: 114_192, passedUnpaidOccurrences: 1 });
+    expect(heldOn(got)).toEqual([]);
   });
 
-  // ⚖️ …while a schedule that has not paid yet is filed where he put it (`user_category_id`, the bridge's override)
-  test("a schedule filed by hand before its first deposit reads its filing", () => {
-    const fresh = createSeries({
+  // ⛔ …and with two schedules, a row on one's account to the cent of the other's pay is neither one's
+  test("Income where one schedule lands, of another schedule's amount, answers neither's paydays", () => {
+    const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
+    const savings = createAccount(bundle.db, { institutionId: chase.id, name: "Savings", type: "savings" });
+    const tutoring = createSeries({
       name: "Tutoring (weekly pay)",
       nextExpectedOn: "2026-06-03",
       nextExpectedAmountCents: 30_000,
       kind: "income",
       cadence: "weekly",
       intervalDaysAvg: 7,
-      lastMatchedOn: null,
     });
-    bundle.db
-      .update(recurringSeries)
-      .set({ accountId: checkingId, userCategoryId: catId("Income > Other Income") })
-      .where(eq(recurringSeries.id, fresh))
-      .run();
-    credit(checkingId, "2026-06-10", 30_000, "Income > Other Income");
+    bundle.db.update(recurringSeries).set({ accountId: savings }).where(eq(recurringSeries.id, tutoring)).run();
+    credit(savings, "2026-06-03", 30_000, "Income > Other Income", tutoring);
+    checkedThrough(bundle.db, savings, "2026-06-15");
+    credit(savings, "2026-06-11", 114_192, "Income > Salary");
     const got = month();
     expect(got.passedUnpaidCents).toBeGreaterThan(0);
-    expect(got.postedUnattachedCents).toBe(30_000);
+    expect(heldOn(got)).toEqual([]);
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-30): a row the one rule matched to the payday is the figure's whatever it is
+   * filed under — "in so far" counts it, so the payday is not called outside it. His word for what it is stays on the
+   * row, and the sentence names it ("a row of $1,141.92 on Jun 11 that is not attached to it"). Until 2026-10-30 a
+   * filing no pay of his had was read as his word that it was not his pay (the series↔category bridge).
+   */
+  test("a row matching the payday to the cent where the pay lands is in so far whatever it is filed under", () => {
+    const jun11 = credit(checkingId, "2026-06-11", 114_192, "Income > Refunds & Reimbursements");
+    expect(heldOn(month())).toEqual([["2026-06-11", jun11]]);
+  });
+
+  // ⛔ …while a row "in so far" does not count takes back nothing: unfiled, as the import leaves a row it cannot file
+  test("a row matching the payday to the cent that in so far does not count — unfiled — is named, never held", () => {
+    const jun11 = credit(checkingId, "2026-06-11", 114_192, null);
+    const got = month();
+    expect(got.postedCents).toBe(114_192);
+    expect(got.passedUnpaidUnattached.map((m) => m.row.id)).toEqual([jun11]);
+    expect(heldOn(got)).toEqual([]);
+  });
+
+  // ⛔ …nor a row of another window: Tue Jun 30's $1,141.92 answers Thu Jul 2, and is June's "in so far", not July's
+  test("a row before the window that matches a payday in it is that window's neighbour's, never held by it", () => {
+    checkedThrough(bundle.db, checkingId, "2026-07-06");
+    for (const d of ["2026-06-11", "2026-06-18", "2026-06-25"]) credit(checkingId, d, 114_192, "Income > Salary", pay);
+    const jun30 = credit(checkingId, "2026-06-30", 114_192, "Income > Salary");
+    const july = incomeExpectation(bundle.db, "2026-07-01", "2026-07-31", "2026-07-07");
+    expect([july.passedUnpaidOccurrences, july.passedUnpaidCents]).toEqual([1, 114_192]);
+    expect(july.passedUnpaidUnattached.map((m) => [m.date, m.row.id])).toEqual([["2026-07-02", jun30]]);
+    expect(heldOn(july)).toEqual([]);
   });
 
   test("Income attached to the pay is the pay's, and no payday passed unpaid", () => {
     credit(checkingId, "2026-06-11", 114_192, "Income > Salary", pay);
-    expect(month()).toMatchObject({ postedCents: 2 * 114_192, passedUnpaidCents: 0, postedUnattachedCents: 0 });
+    expect(month()).toMatchObject({ postedCents: 2 * 114_192, passedUnpaidCents: 0, passedUnpaidInSoFar: [] });
   });
 });
 

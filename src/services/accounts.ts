@@ -179,15 +179,13 @@ export function cashPosition(
   db: AppDatabase,
   balances: ReadonlyMap<string, AccountBalance> = latestBalances(db),
 ): CashPosition {
-  const liquidity = accountLiquidity(db);
-  const active = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.isActive, true)).all();
   let spendableCents = 0;
   let investableCents = 0;
   let cardDebtCents = 0;
   let cardCreditCents = 0;
-  for (const { id } of active) {
+  for (const [id, liquidity] of activeLiquidity(db)) {
     const cents = balances.get(id)?.balanceCents ?? 0;
-    switch (liquidity.get(id)) {
+    switch (liquidity) {
       case "spendable":
         spendableCents += cents;
         break;
@@ -203,6 +201,34 @@ export function cashPosition(
     }
   }
   return { spendableCents, investableCents, cardDebtCents, cardCreditCents };
+}
+
+/** Every ACTIVE account, with what its balance is to `cashPosition` (`accountLiquidity`) — archived ones leave here. */
+function activeLiquidity(db: AppDatabase): Map<string, Liquidity | undefined> {
+  const liquidity = accountLiquidity(db);
+  const active = db.select({ id: accounts.id }).from(accounts).where(eq(accounts.isActive, true)).all();
+  return new Map(active.map(({ id }) => [id, liquidity.get(id)] as const));
+}
+
+/**
+ * Of these rows, the ones posted on an account `cashPosition` counts as "Cash you can spend today" — active, and
+ * spendable — so the cash it reads, and the forecast's EOM cash that starts from it, holds their money: a balance
+ * replays every row posted to it, attached to a schedule or not. A card's credit and an archived account's rows are in
+ * none of it. The rows the one rule matches to a passed payday (`lib/unattached-match`) are on days their account is
+ * checked through, which its balance is read to (`MonthForecast.unbankedIncome.inEomCash`).
+ */
+export function inSpendableCash(db: AppDatabase, rowIds: readonly string[]): ReadonlySet<string> {
+  if (rowIds.length === 0) return new Set();
+  const spendable = new Set([...activeLiquidity(db)].filter(([, l]) => l === "spendable").map(([id]) => id));
+  return new Set(
+    db
+      .select({ id: transactions.id, accountId: transactions.accountId })
+      .from(transactions)
+      .where(inArray(transactions.id, [...rowIds]))
+      .all()
+      .filter((r) => spendable.has(r.accountId))
+      .map((r) => r.id),
+  );
 }
 
 /**

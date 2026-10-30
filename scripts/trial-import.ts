@@ -4,7 +4,8 @@ import Database from "better-sqlite3";
 import { createDatabase } from "@/db/client";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
-import { importStatementFiles, type ImportInput } from "@/services/import/service";
+import { importStatementFilesWithReport, type ImportInput } from "@/services/import/service";
+import { importFilingLine } from "@/services/recurring-import-links";
 import { DbTargetRefusal, dbTargetFrom, strayFlags } from "./db-target";
 import { archiveRootsFor, statementFiles } from "./statement-folders";
 
@@ -147,7 +148,7 @@ async function main(): Promise<void> {
 
   console.log(`Trial-importing ${FILES.length} files from ${args.join(", ")}\n`);
 
-  const outcomes = await importStatementFiles(db, FILES);
+  const { outcomes, filed } = await importStatementFilesWithReport(db, FILES);
 
   const byStatus = outcomes.reduce<Record<string, number>>((acc, o) => {
     acc[o.status] = (acc[o.status] ?? 0) + 1;
@@ -190,6 +191,13 @@ async function main(): Promise<void> {
   if (leftOut.length > 0) {
     console.log(`\nLINES LEFT OUT (${leftOut.length})`);
     for (const l of leftOut) console.log(`  ${l}`);
+  }
+
+  // ⚖️ default built, not asked (2026-10-29): rows linked to a series he confirmed, filed under its category — said
+  // here, before --confirm, because the real import files them the same way
+  if (filed.length > 0) {
+    console.log(`\nFILED UNDER A SERIES YOU CONFIRMED (${filed.length})`);
+    for (const f of filed) console.log(`  ${importFilingLine(f)}`);
   }
 
   const after = snapshot(db, sqlite);

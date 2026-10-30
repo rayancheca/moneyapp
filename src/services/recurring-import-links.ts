@@ -1,9 +1,11 @@
 import { inArray } from "drizzle-orm";
+import { countPhrase } from "@/components/ui/blast-radius";
 import type { AppDatabase } from "@/db/client";
 import { transactions } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { absorbIntoLiveSeries, loadRecomputeCtx, recomputeSeriesStats } from "./recurring";
 import { linkFirstPostings } from "./recurring-first-posting";
+import { fileImportedLinks, importFilingTargets, type ImportFiling } from "./recurring-links";
 
 /**
  * LINKING AT IMPORT — the rows an upload, a gap acceptance or an un-import makes
@@ -39,6 +41,11 @@ import { linkFirstPostings } from "./recurring-first-posting";
  * posting (measured on a copy of the real ledger, 2026-09-15). A descriptor
  * owner that DOES expect the amount that day still keeps it: first-posting
  * refuses any charge another live series expects, and absorption then takes it.
+ *
+ * LAST, over the same scope: ⚖️ default built, not asked (2026-10-29) — what
+ * is now linked to a series he CONFIRMED is filed under its category, as his
+ * own attach files it (`fileImportedLinks`), and said in the import's report
+ * (`importFilingLine`). A series he never confirmed files nothing.
  */
 
 /** What linking at import wrote. */
@@ -47,6 +54,8 @@ export interface ImportLinkResult {
   absorbed: number;
   /** first charges of never-posted commitments, by exact amount and schedule */
   firstPostings: number;
+  /** what it filed under a series he confirmed, one per series (`fileImportedLinks`) */
+  filed: ImportFiling[];
 }
 
 /**
@@ -60,16 +69,28 @@ export function linkRowsMadeActive(
   today: string = todayIso(),
 ): ImportLinkResult {
   const scope = new Set(candidateIds);
-  if (scope.size === 0) return { absorbed: 0, firstPostings: 0 };
+  if (scope.size === 0) return { absorbed: 0, firstPostings: 0, filed: [] };
   const ctx = loadRecomputeCtx(db);
   return db.transaction((tx) => {
+    // BEFORE any link is written: the category each series he confirmed has when the import links to it
+    const targets = importFilingTargets(tx);
     // BEFORE absorption, in the same transaction: a charge a registered
     // commitment expects to the cent is its first posting, whoever owns the
     // descriptor — unless another live series expects it too
     const first = linkFirstPostings(tx, today, ctx, scope);
     const absorbed = absorbIntoLiveSeries(tx, today, ctx, scope);
-    return { absorbed: absorbed.tagged, firstPostings: first.tagged };
+    const filed = fileImportedLinks(tx, targets, scope, today, ctx);
+    return { absorbed: absorbed.tagged, firstPostings: first.tagged, filed };
   });
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-29): the import's report, one line per series it filed under — "It America LLC
+ * (weekly pay): 5 rows filed under Income > Salary". The trial prints it before --confirm and the import after it; the
+ * hand filings' clause says the same words ("filed under", `filedToastTitle`).
+ */
+export function importFilingLine(f: ImportFiling): string {
+  return `${f.seriesName}: ${countPhrase(f.count, "row")} filed under ${f.categoryPath}`;
 }
 
 /**

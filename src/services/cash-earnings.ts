@@ -6,6 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import {
+  paydaysNoDepositPaidInFull,
   payShortfall,
   silentPaydaysNotBankedYet,
   type PayShortfall,
@@ -13,6 +14,7 @@ import {
   type WindowEarnings,
 } from "@/lib/pay-shortfall";
 import { firstPaydayOn } from "@/lib/payday-settlement";
+import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex, payDayRows } from "./analytics";
@@ -21,6 +23,7 @@ import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-ru
 import { accountCoverage, archivedAccountCoverage } from "./coverage";
 import { paydaySettlement } from "./payday-settlement";
 import { effectiveSeries } from "./recurring";
+import { unattachedMatchesBySeries } from "./unattached-match";
 
 /**
  * Earned versus banked, read off the real ledger.
@@ -84,6 +87,18 @@ export interface CashEarningsReading extends CashEarnings {
    * `withChecked`.
    */
   checkedSilentNotBankedYet?: readonly string[];
+  /**
+   * Of the schedule's passed paydays the ledger has checked that no deposit paid in full — those a sentence would call
+   * absent (`paydaysNoDepositPaidInFull`): "with no deposit", "not banked yet" inside their days to land, "did not
+   * reach a bank" past them, and the rest of one paid short — the ones a row matches to the cent that sits unattached
+   * (`unattachedMatchesBySeries`), over the schedule's whole life, oldest first: each reader takes its own window's or
+   * its silence's, and says a row of a payday still inside its days to land where it would have said "not banked yet".
+   * Never banked by it — still in the difference, still unpaid — and never called absent. 🔴 His ledger copy 2026-10-29
+   * (before his filing): "so the pay did not reach a bank" and "none of it reached an account" of Oct 1, 8, 15 and 22
+   * beside four +$1,141.92 payroll rows on Wells Fargo, unattached. Present only with `withChecked`, and empty when
+   * nothing is checked.
+   */
+  unattachedPaydays?: readonly UnattachedMatch[];
   /**
    * The window's pay against the series' settlement (`payShortfall`) — /spending's shortfall note and the split of its
    * surplus note: what the READ paydays came to beyond what was banked inside the window, what deposits outside it
@@ -452,6 +467,8 @@ export function cashEarningsReadings(
 
   const readings: CashEarningsReading[] = [];
   const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
+  // each schedule's paydays it would call absent, asked the one rule together below
+  const absentBySeries = new Map<string, readonly ExpectedDay[]>();
 
   for (const s of series) {
     /*
@@ -556,10 +573,23 @@ export function cashEarningsReadings(
         checkedPeriodsCovered: 0,
         checkedPeriodsSinceBanked: 0,
         checkedSilentNotBankedYet,
+        unattachedPaydays: [],
         ...ruled(shortfall),
       });
       continue;
     }
+    // ⛔ the one rule, asked of every payday the schedule would call absent — checked, and paid in full by no deposit
+    // (`paydaysNoDepositPaidInFull`) — below, with every other schedule's (`unattachedMatchesBySeries`)
+    absentBySeries.set(
+      s.id,
+      paydaysNoDepositPaidInFull(settlement, {
+        from: startedOn,
+        to: today,
+        today,
+        checkedThrough,
+        toleranceDays: s.toleranceDays,
+      }),
+    );
     /*
      * The same schedule, read AS OF the frontier: a day the records have read
      * through is complete, so a payday dated on it is checked — unless the
@@ -591,9 +621,19 @@ export function cashEarningsReadings(
         checkedThrough,
       ),
       checkedSilentNotBankedYet,
+      unattachedPaydays: [],
       ...ruled(shortfall),
     });
   }
 
-  return readings;
+  /*
+   * ⛔ The one rule asked ONCE, of every schedule read here (`unattachedMatchesBySeries`): one row answers one payday of
+   * one schedule. 🔴 Review of e6ad55a (MEDIUM): asked schedule by schedule, two pay schedules of one amount on one
+   * account each took the one row both could answer, and Earned vs banked named it under both lines.
+   */
+  const unattachedOf = unattachedMatchesBySeries(db, absentBySeries, today);
+  if (unattachedOf.size === 0) return readings;
+  return readings.map((r) =>
+    absentBySeries.has(r.seriesId) ? { ...r, unattachedPaydays: unattachedOf.get(r.seriesId) ?? [] } : r,
+  );
 }

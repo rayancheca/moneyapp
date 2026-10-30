@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
 import { dailyBalances } from "@/db/schema/balances";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -85,6 +86,29 @@ function buildMonthlyNetflix(juneAmountCents = -1549): void {
 
 function netflix() {
   return bundle.db.select().from(recurringSeries).where(eq(recurringSeries.merchantId, netflixId)).get()!;
+}
+
+/**
+ * The cash job's rows filed as his pay, Income › Salary — as every row linked to his pay is. ⛔ A credit linked to a
+ * pay series and filed nowhere is no pay of it (`PaydayReading.notFiledAsIncome`): the calendar draws none of it, and
+ * the payday it matches to the cent names it (review of e6ad55a).
+ */
+function fileCashJobAsSalary(): void {
+  const income = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .get()!;
+  const salary = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .get()!;
+  bundle.db
+    .update(transactions)
+    .set({ categoryId: salary.id })
+    .where(eq(transactions.rawDescription, "CASH JOB WEEKLY PAY"))
+    .run();
 }
 
 beforeEach(() => {
@@ -635,6 +659,7 @@ describe("recurringCalendar", () => {
       .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
       .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
       .run();
+    fileCashJobAsSalary();
     cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const future = recurringCalendar(bundle.db, "2026-07", TODAY);
@@ -654,6 +679,37 @@ describe("recurringCalendar", () => {
     expect(posted.transactionId).not.toBeNull();
     expect(posted.isStale).toBe(false);
     expect(posted.confidence).toBeNull();
+  });
+
+  /*
+   * ⛔ A CREDIT LINKED TO A PAY SERIES THAT ITS SETTLEMENT NEVER READ IS STILL ITS HISTORY (`notFiledAsIncome`): drawn
+   * where it landed, "paid — toward no payday", and Settled as it always was — unless a payday mark of its series
+   * stands for it (the row the one rule names there, or a payday on its own day). 🔴 Review of ff0bf19 (8b-1, MEDIUM):
+   * every such credit was skipped, so a series Detect now builds from unfiled credits lost its whole posted history —
+   * this fixture left unfiled drew none of Jan 2, 9, 16 or 23 and only Jan 30, and the e2e post-suite copy read Jul 8
+   * lost ten marks over Apr – Jun 2026: April 29 → 26 entries, its Settled $2,936.67 → $2,474.94, June 34 → 30.
+   */
+  test("a pay series built from unfiled credits keeps its posted history, Settled, beside the payday after it", () => {
+    const days = ["2026-01-02", "2026-01-09", "2026-01-16", "2026-01-23"];
+    for (const day of days) insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
+    detectRecurringSeries(bundle.db, "2026-01-30");
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
+      .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
+      .run();
+    cardCheckedThrough("2026-01-01", "2026-07-07");
+
+    const january = recurringCalendar(bundle.db, "2026-01", TODAY);
+    for (const day of days) {
+      const drawn = january.entriesByDay[day] ?? [];
+      expect(drawn.map((e) => [e.state, e.transactionId !== null, e.towardNoPayday, e.settledCents])).toEqual([
+        ["paid", true, true, 104700],
+      ]);
+    }
+    expect(january.postedNetCents).toBe(4 * 104700);
+    // the payday after them is graded on its own, a mark of its own — no row the one rule names
+    expect(january.entriesByDay["2026-01-30"]!.map((e) => [e.transactionId, e.unattached])).toEqual([[null, null]]);
   });
 
   /*
@@ -693,6 +749,7 @@ describe("recurringCalendar", () => {
         status: "confirmed",
       })
       .run();
+    fileCashJobAsSalary();
     cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);

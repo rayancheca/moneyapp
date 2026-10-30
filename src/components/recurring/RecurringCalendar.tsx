@@ -31,7 +31,7 @@ import {
   monthLabel,
   perPaydayWord,
   TOWARD_NO_PAYDAY,
-  unsettledReasonWord,
+  unsettledWords,
   upcomingEvidenceWord,
 } from "./labels";
 import { MonthFlowStrip } from "./MonthFlowStrip";
@@ -261,10 +261,12 @@ function payerWord(e: CalendarEntry): string | null {
 function entrySummary(e: CalendarEntry): string {
   const evidence = upcomingEvidenceWord(e);
   const settledBy = payerWord(e);
+  // its reason — or, matched by a row sitting unattached, that row (`unsettledWords`)
+  const why = unsettledWords(e);
   const qualifier = settledBy
     ? ` (${settledBy})`
-    : e.unsettledReason
-      ? ` (${unsettledReasonWord(e.unsettledReason)})`
+    : why
+      ? ` (${why})`
       : e.confidence
         ? ` (${CONFIDENCE_WORD[e.confidence]}${evidence ? `, ${evidence}` : ""})`
         : "";
@@ -584,8 +586,8 @@ export function DaySheetBody({ entries }: { entries: readonly CalendarEntry[] })
                           beside the wrong reason for it. */}
                       {payerWord(e)
                         ? `${STATE_WORD[e.state]} — ${payerWord(e)}`
-                        : e.state === "unsettled" && e.unsettledReason
-                          ? `${STATE_WORD[e.state]} — ${unsettledReasonWord(e.unsettledReason)}`
+                        : e.state === "unsettled" && unsettledWords(e)
+                          ? `${STATE_WORD[e.state]} — ${unsettledWords(e)}`
                           : STATE_WORD[e.state]}
                     </Badge>
                     {e.confidence ? (

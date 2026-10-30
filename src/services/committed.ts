@@ -501,6 +501,8 @@ export function committedBook(
     // `arrearsSentence`
     unreadCents: s.unreadCents,
     inGraceCents: s.inGraceCents,
+    // …and the rows that match its read due days unattached: named, never "has not posted" (`lib/unattached-match`)
+    unattached: s.unattached,
   }));
 
   return committedOutflows({ from: today, to, months, occurrences, overdue });

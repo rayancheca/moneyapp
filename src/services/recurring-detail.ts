@@ -1,4 +1,5 @@
 import { and, desc, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/series-evidence";
 import type { PassedPaydaysReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
@@ -286,6 +287,8 @@ export interface SeriesDetail {
     inGraceCents: number;
     graceDays: number;
     carriedGrace: CarriedGrace | null;
+    /** of the read part, the due days rows sitting unattached match to the cent (`ArrearsSeries.unattached`) */
+    unattached?: readonly UnattachedMatch[];
   } | null;
   /**
    * The income side of `overdue`: this month's paydays that passed with no deposit against them — null when none did,
@@ -361,14 +364,23 @@ function unbankedPaydaysOf(
   const unbanked = unbankedIncomeThisMonth(db, new Set([s.id]), today);
   const passed = unbanked.series[0];
   if (passed === undefined) return null;
-  const { totalCents, occurrenceCount, checkedOccurrenceCount, pastGraceOccurrenceCount, frontier } =
-    unbankedIncomeTotals(unbanked);
+  const {
+    totalCents,
+    occurrenceCount,
+    checkedOccurrenceCount,
+    pastGraceOccurrenceCount,
+    frontier,
+    unattached,
+    inGraceUnattachedCount,
+  } = unbankedIncomeTotals(unbanked);
   return {
     totalCents,
     occurrenceCount,
     checkedOccurrenceCount,
     pastGraceOccurrenceCount,
     frontier,
+    unattached,
+    inGraceUnattachedCount,
     paydays: passed.occurrenceDates.map((date, i) => ({ date, amountCents: passed.occurrenceCents[i]! })),
   };
 }
@@ -591,6 +603,7 @@ export function seriesDetail(
         inGraceCents: late.inGraceCents,
         graceDays: late.graceDays,
         carriedGrace: late.carriedGrace,
+        unattached: late.unattached,
       }
     : null;
   const unbankedPaydays = unbankedPaydaysOf(db, s, today);

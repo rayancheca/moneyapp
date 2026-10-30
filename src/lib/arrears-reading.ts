@@ -1,4 +1,6 @@
+import { formatDayShort } from "@/lib/format-date";
 import { formatCents } from "@/lib/money";
+import { MATCHED_TO_THE_CENT_BY, unattachedCents, unattachedRowsWords, type UnattachedMatch } from "@/lib/unattached-match";
 
 /**
  * How far the ledger has READ a bill that came due and that no posting covers — the split every arrears sentence is
@@ -34,6 +36,11 @@ export interface ArrearsReading {
    * waits for is the days a payment has to post, still to come. Absent: none of it.
    */
   inGraceCents?: number;
+  /**
+   * Of the read half, the due days a row matches to the cent that sits unattached (`ArrearsSeries.unattached`) — said
+   * by their rows' day and amount, never "has not posted", and still owed. Absent: none.
+   */
+  unattached?: readonly UnattachedMatch[];
 }
 
 export type ArrearsKind = "read" | "unread" | "mixed";
@@ -43,28 +50,60 @@ export interface ArrearsSplit {
   unreadCents: number;
   /** of `unreadCents`, the part only its days to post keep unread (`ArrearsReading.inGraceCents`) */
   inGraceCents: number;
+  /** of `readCents`, the part rows sitting unattached match to the cent (`ArrearsReading.unattached`) */
+  unattachedCents: number;
+  unattached: readonly UnattachedMatch[];
   kind: ArrearsKind;
 }
 
 /** The read and unread halves, clamped: never more unread than is owed, never less than nothing. */
-export function arrearsSplit({ owedCents, unreadCents, inGraceCents = 0 }: ArrearsReading): ArrearsSplit {
+export function arrearsSplit({ owedCents, unreadCents, inGraceCents = 0, unattached = [] }: ArrearsReading): ArrearsSplit {
   const owed = Math.max(0, owedCents);
   const unread = Math.min(owed, Math.max(0, unreadCents));
   const read = owed - unread;
+  const matched = Math.min(read, unattachedCents(unattached));
   return {
     readCents: read,
     unreadCents: unread,
     inGraceCents: Math.min(unread, Math.max(0, inGraceCents)),
+    unattachedCents: matched,
+    unattached: matched === 0 ? [] : unattached,
     kind: unread === 0 ? "read" : read === 0 ? "unread" : "mixed",
   };
+}
+
+/**
+ * ⛔ The READ half said through the one rule for an unattached match (`lib/unattached-match`): "has not posted" /
+ * "not posted" only of the part no row matches to the cent; the matched part by its rows' day and amount — "is
+ * matched to the cent by a row of $695.04 on Oct 15 that is not attached to it" after a subject, the same without
+ * "is" in a fragment — and still owed: the figure before it is unchanged, and so is the tone (`arrearsAlarms`).
+ * 🔴 The runway said "$695.04 has not posted" of the Car lease's Oct 15 beside the −$695.04 "Mbfs.Com Auto Pay" of
+ * Oct 15 sitting on Wells Fargo unattached (his ledger copy 2026-10-29, after the import and before his filing).
+ *
+ * `amounted`: the read half's words follow its own amount ("$695.04 …"). Without it ("came due Oct 15 and …",
+ * "Oct 15 — …") all of it matched leads unamounted, and a part is named by its amount either way.
+ */
+function readHalfWords(split: ArrearsSplit, notPosted: NotPostedWords, amounted: boolean): string {
+  const read = formatCents(split.readCents);
+  if (split.unattachedCents === 0) return amounted ? `${read} ${notPosted}` : notPosted;
+  const is = notPosted === HAS_NOT_POSTED ? "is " : "";
+  const matched = `${is}${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(split.unattached, formatDayShort)}`;
+  if (split.unattachedCents === split.readCents) return amounted ? `${read} ${matched}` : matched;
+  const rest = formatCents(split.readCents - split.unattachedCents);
+  return `${formatCents(split.unattachedCents)} ${matched}, and ${rest} ${notPosted}`;
 }
 
 /**
  * A bill's OWN arrears as the reading its page says them through — the "Already due" card (`alreadyDueWords`) and its
  * End dialog (`seriesEndInput`): `seriesDetail.overdue`, whose amount is signed money out.
  */
-export function overdueReading(o: { amountCents: number; unreadCents: number; inGraceCents: number }): ArrearsReading {
-  return { owedCents: -o.amountCents, unreadCents: o.unreadCents, inGraceCents: o.inGraceCents };
+export function overdueReading(o: {
+  amountCents: number;
+  unreadCents: number;
+  inGraceCents: number;
+  unattached?: readonly UnattachedMatch[];
+}): ArrearsReading {
+  return { owedCents: -o.amountCents, unreadCents: o.unreadCents, inGraceCents: o.inGraceCents, unattached: o.unattached };
 }
 
 /**
@@ -144,12 +183,12 @@ function daysToPostNotOver(pronoun: ArrearsPronoun): string {
  * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
  */
 export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords): string {
-  const read = formatCents(split.readCents);
+  const read = readHalfWords(split, notPosted, true);
   const unread = formatCents(split.unreadCents);
   if (unreadWaitsOnDaysToPost(split)) {
-    return `${read} ${notPosted}, and the days a payment has to post for the other ${unread} are not over yet`;
+    return `${read}, and the days a payment has to post for the other ${unread} are not over yet`;
   }
-  return `${read} ${notPosted}, and ${noStatementHasCovered(`the other ${unread}`)}`;
+  return `${read}, and ${noStatementHasCovered(`the other ${unread}`)}`;
 }
 
 /**
@@ -164,7 +203,7 @@ export function arrearsClause(
   pronoun: ArrearsPronoun = "it",
 ): string {
   const split = arrearsSplit(reading);
-  if (split.kind === "read") return notPosted;
+  if (split.kind === "read") return readHalfWords(split, notPosted, false);
   if (split.kind === "unread") {
     if (unreadWaitsOnDaysToPost(split)) return daysToPostNotOver(pronoun);
     return noStatementHasCovered(pronoun);

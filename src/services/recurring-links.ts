@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, type SQL } from "drizzle-orm";
 import { withPreMutationTransaction } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import type { CategoryKind } from "@/db/schema/categories";
@@ -10,11 +10,14 @@ import { formatCategoryPath } from "@/lib/category-path";
 import { loadCategoryIndex, uncategorizedWhere, type CategoryIndex } from "./analytics";
 import { applyUndoPatch, type UndoFields, type UndoPatch } from "./bulk-edit";
 import { clearReviewIfSettled } from "./duplicate-lifecycle";
+import { notUserOwned } from "./merchants";
 import {
   analyzeGroup,
   loadRecomputeCtx,
   recomputeSeriesStats,
   resolveMergeTarget,
+  type RecomputeCtx,
+  type Tx,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
 import { splitTxnIdsIn } from "./transaction-splits";
@@ -25,6 +28,9 @@ import { splitTxnIdsIn } from "./transaction-splits";
  * affected series' stats through recomputeSeriesStats, so a later detection run
  * finds the stored stats already equal to what it would compute — and changes
  * nothing. All work happens in one synchronous transaction.
+ *
+ * …and the filing rule they share with linking at import (`fileImportedLinks`),
+ * which writes no link: it files what an import linked to a series he confirmed.
  */
 
 /**
@@ -91,15 +97,19 @@ interface FilingTarget {
 
 /** The series' half: null for a series named by no category, or only by the system "Uncategorized". */
 function filingTargetOf(db: AppDatabase, idx: CategoryIndex, seriesId: string): FilingTarget | null {
-  const named = seriesCategoryIds(db, idx, [seriesId]).get(seriesId);
-  if (named === undefined || idx.isUncategorized(named)) return null;
   const series = db
     .select({ kind: recurringSeries.kind })
     .from(recurringSeries)
     .where(eq(recurringSeries.id, seriesId))
     .get();
   if (series === undefined) return null;
-  return { categoryId: named, seriesKind: series.kind, categoryKind: idx.topLevelOf(named).kind };
+  return targetNamedBy(idx, seriesCategoryIds(db, idx, [seriesId]).get(seriesId), series.kind);
+}
+
+/** …from the category a series is named by (`seriesCategoryIds`) and its kind — one reading for every filing link. */
+function targetNamedBy(idx: CategoryIndex, named: string | undefined, seriesKind: SeriesKind): FilingTarget | null {
+  if (named === undefined || idx.isUncategorized(named)) return null;
+  return { categoryId: named, seriesKind, categoryKind: idx.topLevelOf(named).kind };
 }
 
 /** The rows' half: of `rows`, those not filed yet that `target` can hold — never a split row. */
@@ -144,7 +154,13 @@ function plannedFiling(idx: CategoryIndex, target: FilingTarget, rows: readonly 
  * "Car insurance" (Car › Lease, Car › Car Insurance) and stayed Uncategorized — September's /spending read $1,695.04
  * Uncategorized and no Car, and the Car budget missed both.
  *
- * ⛔ Only a link that is his: detection's links (absorption, first posting, a created series' members) file nothing.
+ * ⛔ Only a link that is his — or an import's to a series he CONFIRMED (`fileImportedLinks`, ⚖️ default built, not
+ * asked, 2026-10-29). Detection's links (Detect now's groups and its whole-ledger absorption, a created series'
+ * members) and an import's link to a series he never confirmed file nothing: a detected series is the detector's
+ * guess — PURA VIDA and YA-FIT were "subscriptions" by its count and are a café and a smoothie bar he eats at often
+ * (`absorbIntoLiveSeries`) — so filing by one would move his money into a category nobody chose; and Detect now reaches
+ * history nobody has looked at (his rule, 2026-09-14) with no report to name what it filed, where an import's trial
+ * names its filing before --confirm (`importFilingLine`).
  */
 function planFiling(db: AppDatabase, seriesId: string, rows: readonly FilingBefore[]): PlannedFiling | null {
   const idx = loadCategoryIndex(db);
@@ -155,17 +171,29 @@ function planFiling(db: AppDatabase, seriesId: string, rows: readonly FilingBefo
 }
 
 /**
- * Writes a filing plan as every hand categorization writes it (`bulkApply`, `setTransactionCategory`): source 'user',
- * confidence 1, `needs_review` cleared — linking is his act, and filing follows the category he set. But the flag is
- * cleared through `clearReviewIfSettled`, so a row still in an open duplicate pair keeps it: filing a row answers no
- * duplicate question. Returns each filed row's prior columns, keyed by id, for an attach's undo (which restores the
- * flag with the rest); a merge has no undo — its restore point holds them.
+ * Who files: his own link as his — source 'user', as every hand categorization writes it — and an import's link to a
+ * series he confirmed as `confirmed_series`, an engine's source, so his own filings stay his: a rule or a merchant
+ * mapping he applies later may re-file the import's (`notUserOwned`), never his.
  */
-function writeFiling(tx: AppDatabase, plan: FilingPlan | null): Map<string, UndoFields> {
+type FilingSource = Extract<CategorizationSource, "user" | "confirmed_series">;
+
+/**
+ * Writes a filing plan as every hand categorization writes it (`bulkApply`, `setTransactionCategory`): source 'user'
+ * (`FilingSource`: the import's link writes its own), confidence 1, `needs_review` cleared — linking is his act, and
+ * filing follows the category he set. But the flag is cleared through `clearReviewIfSettled`, so a row still in an
+ * open duplicate pair keeps it: filing a row answers no duplicate question. Returns each filed row's prior columns,
+ * keyed by id, for an attach's undo (which restores the flag with the rest); a merge has no undo — its restore point
+ * holds them — and neither has an import's filing: import-statements takes its restore point before it writes.
+ */
+function writeFiling(
+  tx: AppDatabase,
+  plan: FilingPlan | null,
+  source: FilingSource = "user",
+): Map<string, UndoFields> {
   const filedBefore = new Map<string, UndoFields>();
   if (plan === null) return filedBefore;
   tx.update(transactions)
-    .set({ categoryId: plan.categoryId, categorizationSource: "user", categorizationConfidence: 1 })
+    .set({ categoryId: plan.categoryId, categorizationSource: source, categorizationConfidence: 1 })
     .where(inArray(transactions.id, plan.rows.map((r) => r.id)))
     .run();
   clearReviewIfSettled(tx, plan.rows.filter((r) => r.needsReview).map((r) => r.id));
@@ -191,6 +219,111 @@ function fileUnfiledUnderSeries(
 ): { filedBefore: Map<string, UndoFields>; filed: HandFiling | null } {
   const planned = planFiling(tx, seriesId, rows);
   return { filedBefore: writeFiling(tx, planned?.plan ?? null), filed: planned?.filing ?? null };
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-29): what linking at import filed under one series he confirmed — a hand
+ * filing's shape (`HandFiling`) with the series it filed for and the very rows, oldest first, so the import's report
+ * names it (`importFilingLine`) and the trial prints it before --confirm.
+ */
+export interface ImportFiling extends HandFiling {
+  readonly seriesId: string;
+  readonly seriesName: string;
+  readonly transactionIds: readonly string[];
+}
+
+/** A series he confirmed, as linking at import files under it: its name and the filing rule's series half. */
+interface ConfirmedTarget extends FilingTarget {
+  readonly seriesName: string;
+}
+
+/**
+ * Every series he CONFIRMED that names a category to file under, keyed by id, in name order — `status = 'confirmed'`,
+ * the one word that tells his series from the detector's: he pressed Confirm, made it recurring, or registered it.
+ * ⛔ Read BEFORE linking at import writes a link (`linkRowsMadeActive`), as an attach reads the category before his link
+ * (`planFiling`): a row the import links that is filed elsewhere would otherwise vote on the very category the series
+ * files its unfiled rows under (`seriesCategoryIds` counts filed rows).
+ */
+export function importFilingTargets(db: AppDatabase): ReadonlyMap<string, ConfirmedTarget> {
+  const idx = loadCategoryIndex(db);
+  const named = seriesCategoryIds(db, idx);
+  const confirmed = db
+    .select({ id: recurringSeries.id, name: recurringSeries.name, kind: recurringSeries.kind })
+    .from(recurringSeries)
+    .where(eq(recurringSeries.status, "confirmed"))
+    .orderBy(asc(recurringSeries.name), asc(recurringSeries.id))
+    .all();
+  return new Map(
+    confirmed.flatMap((s) => {
+      const target = targetNamedBy(idx, named.get(s.id), s.kind);
+      return target === null ? [] : [[s.id, { ...target, seriesName: s.name }] as const];
+    }),
+  );
+}
+
+/**
+ * ⚖️ default built, not asked (2026-10-29). Owner context: he does nothing by hand (2026-09-14: "im not attaching shit
+ * by hand") — an import must land his pay attached AND filed. Of the rows an import-path operation made active
+ * (`scope`), those now linked to a series he confirmed are filed as his own attach files them (§6A 47, `rowsToFile`:
+ * not filed yet, never a split, never money the series cannot hold) under the category each had before the import
+ * linked anything (`importFilingTargets`) — with two fences an engine needs that his own act does not: never a row
+ * whose filing is his (`notUserOwned`: his own "Uncategorized" is his answer), never a leg of a transfer. Written as
+ * the import's (`confirmed_series`); each series it filed under has its stats settled again, since the kind they derive
+ * reads the rows' categories (`classifyKind`); and what it filed comes back one per series, for the report.
+ *
+ * A row in scope that arrives already linked — the carry of the read a re-read replaces, a link an un-import gave back
+ * — is filed too: the import's filing never travels with a re-read (`engineCategoryCarry` leaves it out, as it leaves
+ * every category an engine of the import derives again), so here is where the row that replaces it is filed again.
+ *
+ * 🔴 Measured on his ledger copy 2026-10-30, a trial of the Wells Fargo statement Sep 25 → Oct 26 on the copy from
+ * before that import: the four +$1,141.92 payroll deposits and the off-cycle +$200.00 landed attached to "It America
+ * LLC (weekly pay)" and filed nowhere, so settlement (`payDayRows`, which reads rows filed under Income) paid none of
+ * their paydays — Earned vs banked read $7,156.60 of $23,983.20 (30%), "5 paydays have passed since the last deposit
+ * on Sep 24" — until a guarded script filed them by hand (scripts/file-wells-fargo-october-2026-10-29.ts).
+ */
+export function fileImportedLinks(
+  tx: Tx,
+  targets: ReadonlyMap<string, ConfirmedTarget>,
+  scope: ReadonlySet<string>,
+  today: string,
+  ctx: RecomputeCtx,
+): ImportFiling[] {
+  if (targets.size === 0 || scope.size === 0) return [];
+  const idx = loadCategoryIndex(tx);
+  const linked = tx
+    .select({
+      seriesId: transactions.recurringSeriesId,
+      id: transactions.id,
+      amountCents: transactions.amountCents,
+      categoryId: transactions.categoryId,
+      categorizationSource: transactions.categorizationSource,
+      categorizationConfidence: transactions.categorizationConfidence,
+      needsReview: transactions.needsReview,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.status, "active"),
+        inArray(transactions.recurringSeriesId, [...targets.keys()]),
+        uncategorizedWhere(idx),
+        notUserOwned(),
+        isNull(transactions.transferGroupId),
+      ),
+    )
+    .orderBy(asc(transactions.postedOn), asc(transactions.id))
+    .all()
+    // the scope narrows which rows may be FILED, as it narrows which may be linked (`absorbIntoLiveSeries`)
+    .filter((r) => scope.has(r.id));
+  const filed: ImportFiling[] = [];
+  for (const [seriesId, { seriesName, ...target }] of targets) {
+    const rows = rowsToFile(tx, idx, target, linked.filter((r) => r.seriesId === seriesId));
+    const planned = plannedFiling(idx, target, rows);
+    if (planned === null) continue;
+    writeFiling(tx, planned.plan, "confirmed_series");
+    recomputeSeriesStats(tx, seriesId, today, ctx);
+    filed.push({ ...planned.filing, seriesId, seriesName, transactionIds: planned.plan.rows.map((r) => r.id) });
+  }
+  return filed;
 }
 
 /**

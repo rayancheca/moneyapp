@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { spendUnread } from "@/lib/budget-coverage";
 import { periodBounds, todayIso, type PeriodBounds } from "@/lib/dates";
-import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
+import { formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { paidByAnotherMonthNote, paidForAnotherMonthNote } from "@/lib/paid-by-another-month";
-import { IMPORTS_NOT_EARNINGS, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { budgetGuides } from "@/services/budget-guide";
 import {
   budgetPaceStatuses,
@@ -24,6 +23,7 @@ import { budgetInsights } from "@/services/budget-insights";
 import { provenanceFor } from "@/services/provenance";
 import { BudgetRow } from "@/components/budgets/BudgetRow";
 import { IncomeSoFar, IncomeSoFarNote } from "@/components/budgets/IncomeSoFar";
+import { PassedPaydaysLine } from "@/components/budgets/PassedPaydaysLine";
 import { InsightList } from "@/components/insights/InsightList";
 import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
@@ -65,15 +65,6 @@ export default async function BudgetsPage({
   // full month of budgeted amounts against a fraction of a month of income.
   const monthBounds = periodBounds(today, "monthly");
   const income = incomeExpectation(db, monthBounds.start, monthBounds.end, today);
-  // which of the passed paydays the ledger has looked for — null when all of them
-  const passedUnread = unbankedIncomeFrontierClause(
-    {
-      occurrenceCount: income.passedUnpaidOccurrences,
-      checkedOccurrenceCount: income.passedUnpaidCheckedOccurrences,
-      frontier: income.passedUnpaidFrontier,
-    },
-    formatDayLong,
-  );
   // the fourth leg: paydays this month that another month's money paid — null when none
   const paidElsewhere = paidByAnotherMonthNote(
     {
@@ -115,6 +106,7 @@ export default async function BudgetsPage({
       // …and how far the ledger has read it, so the note says "not posted" only where the row does
       overdueUnreadCents: s.overdueUnreadCents,
       overdueInGraceCents: s.overdueInGraceCents,
+      overdueUnattached: s.overdueUnattached,
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
       // so a row spent only from cash wallets is left out on the row's own rule
@@ -283,29 +275,9 @@ export default async function BudgetsPage({
               no arrears leg by doctrine — a payday that passed without a deposit
               is evidence about the imports, not about the job. The spending side
               two lines down says the same shape for bills, and it can add its
-              figure because a bill nobody paid is still owed. */}
-          {/* 🔴 "with no deposit against them" was said of Sep 3 and Sep 10 while
-              the account that pay lands in was checked through Aug 12 (measured
-              2026-09-15). It is said now only when every passed payday fell on
-              a day the ledger has checked; otherwise `passedUnread` names the
-              rest as not looked for, in /spending's words. */}
-          {/* ⛔ …and "counted in neither figure above" only where "in so far" holds
-              no Income that no pay schedule is attached to where the pay lands
-              (`postedUnattachedCents`): settlement never read that money, and it
-              may be their pay. 🔴 Review of 5c1c4903 (MEDIUM): Jul 9's $1,000
-              filed Income › Salary and attached to nothing read "$2,000.00 in so
-              far" over the same payday "counted in neither figure above". */}
-          {income.passedUnpaidCents > 0 && (
-            <p className="mt-1 text-xs text-ink-faint">
-              {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}
-              worth <Money cents={income.passedUnpaidCents} /> already passed this month
-              {passedUnread === null && (
-                <> with no deposit against {income.passedUnpaidOccurrences === 1 ? "it" : "them"}</>
-              )}
-              {income.postedUnattachedCents > 0 ? "." : " — counted in neither figure above."}{" "}
-              {passedUnread ?? IMPORTS_NOT_EARNINGS}
-            </p>
-          )}
+              figure because a bill nobody paid is still owed. Every word of the
+              line is `PassedPaydaysLine`'s, which a test renders. */}
+          <PassedPaydaysLine income={income} />
           {/* 🔴 THE FOURTH LEG, NAMED — his answer to §6A 29. A payday paid by
               money that landed in ANOTHER month is in none of the three: not
               "in so far" (the deposit is last month's), not "still expected"

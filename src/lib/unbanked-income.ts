@@ -1,3 +1,11 @@
+import {
+  countedDepositWords,
+  MATCHED_TO_THE_CENT_BY,
+  matchedOfWords,
+  unattachedCents,
+  unattachedRowsWords,
+  type UnattachedMatch,
+} from "@/lib/unattached-match";
 import { formatCents } from "./money";
 
 /**
@@ -22,6 +30,11 @@ export interface UnbankedIncomeReading {
   checkedOccurrenceCount: number;
   /** how far the accounts the other paydays land in have been checked */
   frontier: UnbankedFrontier;
+  /**
+   * Of the checked paydays, those a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`):
+   * never "with no deposit" nor "never reaches a bank", and still unbanked. Absent: none.
+   */
+  unattached?: readonly UnattachedMatch[];
 }
 
 /**
@@ -280,8 +293,23 @@ export function unbankedIncomeFrontierClause(
   if (unread <= 0) return null;
 
   const checked = r.checkedOccurrenceCount;
+  // ⛔ "with no deposit" only where no row matches one unattached (`lib/unattached-match`) — and "…and filed as income"
+  // once one of them is attached and filed nowhere (`countedDepositWords`)
+  const matched = r.unattached ?? [];
+  const noDeposit = matched.length === 0 ? "with no deposit" : `with no deposit ${countedDepositWords(matched, "it")}`;
+  /*
+   * ⛔ …and the rows by their day and amount (`matchedOfWords`): this clause is what his pay's page, /budgets and
+   * Earned vs banked below the stale bar print INSTEAD of the sentence naming them. 🔴 Review of e6ad55a (MEDIUM): on
+   * the pre-filing copy read Oct 31 his pay's page and /budgets said only "4 fall on days already checked, with no
+   * deposit attached to it; the other one falls after Mon, Oct 26, 2026, …", and with Oct 1, 8 and 15 filed and Oct
+   * 22's row unattached, read Nov 2, the card's verdict "1 falls on a day already checked, with no deposit attached to
+   * it; …" one line over the difference naming the row.
+   */
+  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, formatDay)}`;
   const checkedPart =
-    checked === 0 ? null : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, with no deposit`;
+    checked === 0
+      ? null
+      : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}${rows}`;
   const other = unread === 1 ? "the other one" : `the other ${unread}`;
 
   if (r.frontier.kind === "unchecked") {
@@ -314,6 +342,12 @@ export interface PassedPaydaysReading extends UnbankedIncomeReading {
    * still answer them on a day the ledger has not read. Only these are a warning.
    */
   pastGraceOccurrenceCount: number;
+  /**
+   * Of `unattached`, the rows for paydays still inside their days to land (`UnbankedIncomeSeries.inGraceUnattachedCount`)
+   * — the others are past them — so the subject says of the paydays no row answers which pay is not banked yet and
+   * which never reaches a bank. Absent: none (every row answers a payday past its days to land).
+   */
+  inGraceUnattachedCount?: number;
 }
 
 /** How the forecast's note and a pay series' own page word the paydays that passed this month with no deposit. */
@@ -341,16 +375,46 @@ export interface PassedPaydaysWords {
  * ⚖️ …and "never reaches a bank" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
  */
-function notProjectedSubject(r: PassedPaydaysReading): string {
+function notProjectedSubject(
+  r: PassedPaydaysReading,
+  formatDay: (iso: string) => string,
+  rowsNamed: boolean,
+): string {
   const unlooked = "Pay the ledger has not looked for";
   if (r.checkedOccurrenceCount === 0) return unlooked;
-  const checked = r.pastGraceOccurrenceCount > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  /*
+   * ⛔ "Never reaches a bank" only of the paydays no row matches to the cent unattached (`unattached`): those are pay
+   * "matched to the cent by rows of … that are not attached to it" — still not projected, since nothing paid them. 🔴
+   * His ledger copy 2026-10-29 (before his filing): "Pay that never reaches a bank" of Oct 1, 8, 15 and 22 beside four
+   * +$1,141.92 payroll rows on Wells Fargo, unattached. ⛔ …and once the frontier clause before it has named the rows
+   * (`rowsNamed`), "pay those rows match": the forecast's note prints both, and would name the rows twice.
+   */
+  const matched = r.unattached ?? [];
+  const rows = rowsNamed
+    ? "pay those rows match"
+    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  /*
+   * ⛔ …a row answers a payday inside its days to land as well as one past them (`inGraceUnattachedCount`), and of the
+   * paydays no row answers the pay is "never reaches a bank" once one of them is past its days to land, "not banked
+   * yet" while none is. 🔴 Review of 304c59a4 (MEDIUM): the rows were asked of paydays past their days to land alone,
+   * so his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to
+   * that day), said "Pay not banked yet cannot be projected as arriving" beside the row.
+   */
+  const unmatched = r.checkedOccurrenceCount - matched.length;
+  const unmatchedPastGrace = r.pastGraceOccurrenceCount - (matched.length - (r.inGraceUnattachedCount ?? 0));
+  const unmatchedWords = unmatchedPastGrace > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  const checked =
+    unmatched <= 0 ? [`P${rows.slice(1)}`] : matched.length === 0 ? [unmatchedWords] : [unmatchedWords, rows];
   /*
    * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
    * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other
    * two paydays fall after the checked day — a claim about days nobody has read (review of the pay-words batch).
+   * ⛔ The parts joined once: "Pay that never reaches a bank, and pay matched … that is not attached to it,, and pay the
+   * ledger has not looked for, …" was the subject of some paydays matched and some unread (found fixing the review of
+   * e6ad55a).
    */
-  return r.checkedOccurrenceCount < r.occurrenceCount ? `${checked}, and ${unlooked.toLowerCase()},` : checked;
+  const parts = r.checkedOccurrenceCount < r.occurrenceCount ? [...checked, unlooked.toLowerCase()] : checked;
+  return parts.length === 1 ? parts[0]! : `${parts.join(", and ")},`;
 }
 
 /**
@@ -364,16 +428,60 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
   const unread = unbankedIncomeFrontierClause(r, formatDay);
   return {
     count: r.occurrenceCount === 1 ? "1 payday" : `${r.occurrenceCount} paydays`,
-    passed: unread === null ? "already passed this month with no deposit imported" : "already passed this month",
+    passed:
+      unread !== null
+        ? "already passed this month"
+        : (r.unattached ?? []).length === 0
+          ? "already passed this month with no deposit imported"
+          : `already passed this month with no deposit ${countedDepositWords(r.unattached ?? [], "it")}`,
     unread,
-    notProjected: `${notProjectedSubject(r)} cannot be projected as arriving`,
+    // the clause names the rows when there is one (`unbankedIncomeFrontierClause`)
+    notProjected: `${notProjectedSubject(r, formatDay, unread !== null)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
 }
 
 /**
- * A line naming the passed paydays a figure leaves out — said to be out of it only where its rows bear that out
- * (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
+ * What a figure is still said to leave out of the passed paydays a sentence names (`leftOutOf`): every payday's money
+ * (`cents` null — said without an amount), or the part of it no row the figure holds answers ("$1,141.92 of it").
+ */
+export interface LeftOut {
+  /** the part left out, where it is not all of the paydays' money; null when it is */
+  readonly cents: number | null;
+  /** what is said of it — "not in Free to spend", or after the part's amount "of it not in Free to spend" */
+  readonly words: string;
+}
+
+/**
+ * ⛔ ONE SPLIT, every figure that names passed paydays it does not count: a payday whose row the one rule matched
+ * (`lib/unattached-match` — on its series' account, within its tolerance, to the cent) is never said to be outside a
+ * figure that HOLDS that row (`held`), and a payday no row it holds answers keeps its claim. Free to spend's line
+ * (`passedPaydaysLeftOut`, `notIn` "not in Free to spend"), /budgets' header (`PassedPaydaysLine`, "counted in neither
+ * figure above") and the forecast's note (`UnbankedIncomeNote`, "not in EOM cash") say it through this one split. Null
+ * when the figure holds a row for every payday: nothing is said of it, and the paydays are still named. ⛔ It moves
+ * no money: the paydays stay passed unpaid, and only the claim that their money is outside the figure is taken back.
+ *
+ * Each held row is its payday's money to the cent (the one rule's match), so what is left is the other paydays' money.
+ *
+ * 🔴 Review of 082a0ef5 (B1, B3, MEDIUM): the claim was withheld of EVERY payday while any Income sat unattached where
+ * some pay landed — a $50 tip of Tutoring's in Savings held back It America's Jun 11, which no deposit paid, and on his
+ * ledger copy with Oct 15's off-cycle $200.00 detached, read Oct 30, the tile dropped "— not in Free to spend" of Oct
+ * 29, a payday no $200.00 of Oct 15 can be; and /recurring kept "not in EOM cash" of the $3,425.76 its EOM cash held.
+ */
+export function leftOutOf(totalCents: number, held: readonly UnattachedMatch[], notIn: string): LeftOut | null {
+  const leftCents = totalCents - unattachedCents(held);
+  if (leftCents <= 0) return null;
+  return leftCents >= totalCents ? { cents: null, words: notIn } : { cents: leftCents, words: `of it ${notIn}` };
+}
+
+/** The split as plain text: "not in Free to spend", "$1,141.92 of it not in Free to spend" — for a line of words. */
+export function leftOutText(l: LeftOut): string {
+  return l.cents === null ? l.words : `${formatCents(l.cents)} ${l.words}`;
+}
+
+/**
+ * A line naming the passed paydays a figure leaves out — said to be out of it only of the paydays no row it holds
+ * answers (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
  */
 export interface PaydaysLeftOut {
   text: string;
@@ -392,23 +500,24 @@ export interface PaydaysLeftOut {
  * account is read for. 🔴 Free to spend left Jul 9's $1,000 out of both legs on Jul 10 and said nothing (review of
  * a5ce8b15).
  *
- * ⛔ "— not in Free to spend" only where the figure's posted rows bear it out: where its posted Income holds money no
- * pay schedule is attached to in an account that pay lands in (`postedMayHoldThem`,
- * `unattachedIncomeWherePayLandsCents`), the paydays are named and nothing is said of the figure. 🔴 The paydays are
- * settlement's, which reads only attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000
- * filed Income › Salary and attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case
- * shows (review of 5c1c4903, MEDIUM).
+ * ⛔ "— not in Free to spend" only of the paydays no row the figure's posted leg holds answers (`leftOutOf`, over the
+ * rows the one rule matched that the leg counts — `postedIncomeHolds`): "— $1,141.92 of it not in Free to spend" where
+ * it holds some, nothing said of the figure where it holds them all. 🔴 The paydays are settlement's, which reads only
+ * attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000 filed Income › Salary and
+ * attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case shows (review of 5c1c4903,
+ * MEDIUM).
  */
 export function passedPaydaysLeftOut(
   passed: PassedPaydaysReading & { totalCents: number },
   figure: string,
   formatDay: (iso: string) => string,
-  /** the figure's posted Income holds money no pay schedule is attached to where that pay lands */
-  postedMayHoldThem: boolean,
+  /** of the rows the one rule matched to these paydays (`passed.unattached`), those the figure's posted leg counts */
+  held: readonly UnattachedMatch[],
 ): PaydaysLeftOut | null {
   if (passed.totalCents <= 0) return null;
   const w = passedPaydaysWords(passed, formatDay);
-  const notIn = postedMayHoldThem ? "" : ` — not in ${figure}`;
+  const left = leftOutOf(passed.totalCents, held, `not in ${figure}`);
+  const notIn = left === null ? "" : ` — ${leftOutText(left)}`;
   const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed}${notIn}.`;
   return { text: `${lead} ${w.unread ?? `${w.notProjected}.`}`, warning: w.warning };
 }

@@ -607,7 +607,16 @@ describe("money linked to his pay that is his spending is no row of its pay day"
     bundle.db.delete(transactions).where(eq(transactions.postedOn, "2026-09-10")).run();
     payRow("2026-09-10", WEEK, bankFeesId());
     expect(settled()).toEqual(["2026-09-03"]);
-    expect(entriesOn("2026-09-10").find((e) => e.transactionId !== null)?.towardNoPayday).toBe(true);
+    /*
+     * ⛔ …and no mark of the pay's on the calendar: a credit its settlement never reads is the one rule's to name
+     * (`PaydayReading.notFiledAsIncome`), so Sep 10's payday names it and nothing settles. 🔴 Drawn "paid — toward no
+     * payday" and Settled whole, it was the pay's money on the one surface that counted it (review of e6ad55a).
+     */
+    const sep10 = entriesOn("2026-09-10");
+    expect(sep10.map((e) => [e.state, e.unsettledReason, e.transactionId])).toEqual([
+      ["unsettled", "matched_unattached", null],
+    ]);
+    expect(sep10[0]!.unattached?.row).toMatchObject({ postedOn: "2026-09-10", notFiledAsIncome: true });
     expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK, "2026-09-03"]);
   });
 });
@@ -631,10 +640,20 @@ describe("a credit linked to his pay on a day no row is filed as his pay is no p
     payRow("2026-09-17", WEEK, filedAs());
     expect(settled()).toEqual(["2026-09-03", "2026-09-10"]);
     const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
-    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "never_banked"]]);
-    // the credit is drawn where it landed, toward no payday, and the day's Settled holds nothing of his pay
-    const credit = entriesOn("2026-09-17").find((e) => e.transactionId !== null)!;
-    expect([credit.towardNoPayday, credit.expectedAmountCents]).toEqual([true, null]);
+    /*
+     * ⚖️ …and named by it, not called absent (`notFiledAsIncome`, default built, not asked 2026-10-29): the credit
+     * attached to his pay matches the payday to the cent. 🔴 This pinned "never reached a bank" beside it — the words
+     * the next Wells Fargo import would have printed of its four attached, unfiled payroll rows (review of de31d22).
+     */
+    expect(payday.map((e) => [e.state, e.unsettledReason])).toEqual([["unsettled", "matched_unattached"]]);
+    expect(payday[0]!.unattached?.row).toMatchObject({ postedOn: "2026-09-17", amountCents: WEEK, notFiledAsIncome: true });
+    /*
+     * ⛔ …and the credit is no mark of its own: the payday names it, and the day's Settled holds none of it
+     * (`PaydayReading.notFiledAsIncome`). 🔴 It was drawn "paid — toward no payday" beside that "?", its $1,141.92 in
+     * Settled — the one surface counting money no other does (review of e6ad55a).
+     */
+    expect(entriesOn("2026-09-17").filter((e) => e.transactionId !== null)).toEqual([]);
+    expect(entriesOn("2026-09-17").reduce((sum, e) => sum + (e.settledCents ?? 0), 0)).toBe(0);
     expect([payLine().bankedCents, payLine().lastBankedOn]).toEqual([WEEK * 2, "2026-09-10"]);
     const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
     const evidence = postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!;

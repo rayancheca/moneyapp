@@ -787,11 +787,12 @@ describe("dashboardData: spending pace", () => {
       const pace = dashboardData(bundle.db, "2026-07-14").pace!;
       // its posted leg holds Jul 9's deposit: Jul 2 and Jul 9 + Jul 16, 23 and 30 to come − $80
       expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
-      // …so the payday is named in the forecast's words, and nothing is said of the figure
+      // …so the payday is named in the forecast's words, and nothing is said of the figure — ⛔ nor "no deposit
+      // imported" of it: the one rule names the row that matches it to the cent (`lib/unattached-match`, batch 8b)
       expect(pace.paydaysLeftOut).toEqual({
         text:
-          "1 payday worth $1,000.00 already passed this month with no deposit imported. Pay that never reaches a bank " +
-          "cannot be projected as arriving.",
+          "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
         warning: true,
       });
       // attached, it is the same figure, and no payday passed with no deposit
@@ -802,23 +803,151 @@ describe("dashboardData: spending pace", () => {
     });
 
     /*
-     * ⛔ …and Income attached to nothing that cannot be its pay leaves the claim standing: in an account the pay does
-     * not land in, or filed as no pay of his is filed — his filing is his word for what the money is. ⚖️ His Sep 4
-     * $468.20 from It America LLC on Wells Fargo, filed under Refunds & Reimbursements, is "them paying them back for
-     * claude subscription" (his words, 2026-09-28), not pay.
+     * ⛔ …and Income attached to nothing that is not THAT PAYDAY's leaves its claim standing: the one rule matches a row
+     * to a payday on the pay's account, within its tolerance, to the cent (`lib/unattached-match`), and only a row it
+     * matched that the figure holds takes the claim back (`leftOutOf`). 🔴 Review of 082a0ef5 (B3, MEDIUM): any Income
+     * attached to nothing where the pay lands, filed as it is filed, held back every payday's claim — on a copy of his
+     * ledger with Oct 15's off-cycle $200.00 detached (Salary, Wells Fargo), read Oct 30, the tile dropped "— not in Free
+     * to spend" of Oct 29, after Wells Fargo's Oct 26: a payday no $200.00 of Oct 15 can be. A row of another amount is
+     * no deposit the one rule names, so the forecast's own words stand beside it: "with no deposit imported".
      */
     test.each([
-      ["filed as his pay is, in an account the pay does not land in", "checking", "Salary"],
-      ["filed as no pay of his is filed, where the pay lands", "wells", "Refunds & Reimbursements"],
-    ])("Income attached to no schedule %s leaves the payday called left out", (_, where, category) => {
+      ["filed as his pay is, in an account the pay does not land in", "checking", 1000_00],
+      ["of another amount, filed as his pay is, where the pay lands", "wells", 200_00],
+    ])("Income attached to no schedule %s leaves the payday called left out", (_, where, amountCents) => {
       const { wells } = weeklyPayFoundJul2("2026-07-13");
-      filedFromTheReviewQueue(where === "wells" ? wells : checking, "2026-07-09", 1000_00, category);
+      filedFromTheReviewQueue(where === "wells" ? wells : checking, "2026-07-09", amountCents, "Salary");
       const pace = dashboardData(bundle.db, "2026-07-14").pace!;
-      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.freeToSpendCents).toBe(1000_00 + amountCents + 3 * 1000_00 - 80_00);
       expect(pace.paydaysLeftOut?.text).toBe(
         "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
           "that never reaches a bank cannot be projected as arriving.",
       );
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-30): a row the one rule matched to the payday that the figure holds takes the
+     * claim back whatever it is filed under — Free to spend counts it, so the payday is not called outside it, and the
+     * row is named. Until 2026-10-30 a filing no pay of his had was read as his word that the row was not pay (the
+     * series↔category bridge, ⚖️ his Sep 4 $468.20 reimbursement — of no payday's amount, which no rule matches).
+     */
+    test("a row matching the payday to the cent where the pay lands is held, whatever it is filed under", () => {
+      const { wells } = weeklyPayFoundJul2("2026-07-13");
+      filedFromTheReviewQueue(wells, "2026-07-09", 1000_00, "Refunds & Reimbursements");
+      const pace = dashboardData(bundle.db, "2026-07-14").pace!;
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut?.text).toBe(
+        "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
+      );
+    });
+
+    // ⛔ …while a matched row Free to spend does not count — unfiled, as an import leaves it — is named and takes nothing
+    test("a row matching the payday to the cent that Free to spend does not count is named, and the claim stands", () => {
+      const { wells } = weeklyPayFoundJul2("2026-07-13");
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: wells,
+          postedOn: "2026-07-09",
+          amountCents: 1000_00,
+          rawDescription: "PAYROLL 07/09",
+          normalizedDescription: "PAYROLL 07/09",
+          dedupeHash: "payroll-unfiled-2026-07-09",
+        })
+        .run();
+      const pace = dashboardData(bundle.db, "2026-07-14").pace!;
+      expect(pace.freeToSpendCents).toBe(1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut?.text).toBe(
+        "1 payday worth $1,000.00 already passed this month with no deposit attached to it — not in Free to spend. Pay " +
+          "matched to the cent by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
+      );
+    });
+
+    /*
+     * ⛔ …and of SOME paydays: the money no row the figure holds answers keeps the claim, as part of the paydays' money.
+     * The shape of his pre-filing copy with the payroll filed Salary, four rows attached to nothing, read Oct 30: Oct 1, 8
+     * and 22's rows in the figure, Oct 29's $1,141.92 in neither leg — "— $1,141.92 of it not in Free to spend".
+     */
+    test("a row the figure holds for one payday of two takes back that payday's claim only", () => {
+      const { wells } = weeklyPayFoundJul2("2026-07-20");
+      filedFromTheReviewQueue(wells, "2026-07-09", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-21").pace!;
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 2 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "2 paydays worth $2,000.00 already passed this month with no deposit attached to it — $1,000.00 of it not in " +
+          "Free to spend. Pay that never reaches a bank, and pay matched to the cent by a row of $1,000.00 on Jul 9 " +
+          "that is not attached to it, cannot be projected as arriving.",
+        warning: true,
+      });
+    });
+
+    // ⛔ …and only of the rows its own window holds: Tue Jun 30's $1,000 answers Thu Jul 2 from June's posted leg
+    test("a row of the month before that matches a payday of this one is in that month's figure: the claim stands", () => {
+      const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "weekly", nextExpectedOn: "2026-07-02", amountCents: 1000_00, lastMatchedOn: "2026-06-25", intervalDaysAvg: 7 });
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
+      bundle.db.update(recurringSeries).set({ accountId: wells }).where(eq(recurringSeries.id, pay)).run();
+      const salary = bundle.db.select().from(categories).where(eq(categories.name, "Salary")).get()!.id;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: wells,
+          postedOn: "2026-06-25",
+          amountCents: 1000_00,
+          rawDescription: "Payroll",
+          normalizedDescription: "Payroll",
+          dedupeHash: "Payroll-2026-06-25",
+          categoryId: salary,
+          recurringSeriesId: pay,
+        })
+        .run();
+      checkedThroughFixture(bundle.db, wells, "2026-07-06");
+      spend("Groceries", "2026-07-02", -80_00);
+      filedFromTheReviewQueue(wells, "2026-06-30", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-07").pace!;
+      // July's posted leg holds no pay: Jul 9, 16, 23 and 30 to come − $80
+      expect(pace.freeToSpendCents).toBe(4 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut?.text).toBe(
+        "1 payday worth $1,000.00 already passed this month with no deposit attached to it — not in Free to spend. Pay " +
+          "matched to the cent by a row of $1,000.00 on Jun 30 that is not attached to it cannot be projected as arriving.",
+      );
+    });
+
+    /*
+     * ⛔ …and of a payday CHECKED but still inside its days to land: the one rule is asked of it too, so a row the
+     * figure holds takes its claim back and is named. 🔴 Review of 304c59a4 (MEDIUM — a regression from ae29cda4 by
+     * 9e715b7b): it was asked only past the days to land, so his ledger copy with Oct 22's +$1,141.92 filed Salary and
+     * attached to nothing, read Oct 24 (Wells Fargo read to that day), said "1 payday worth $1,141.92 already passed
+     * this month with no deposit imported — not in Free to spend. Pay not banked yet cannot be projected as arriving."
+     * over the very ≈ $734.74 the unmodified copy reads.
+     */
+    test("a row the figure holds for a checked payday still inside its days to land takes its claim back", () => {
+      const { wells } = weeklyPayFoundJul2("2026-07-10");
+      // Jul 9 is checked (Jul 10) and inside its 3 days to land (through Jul 12)
+      filedFromTheReviewQueue(wells, "2026-07-09", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-11").pace!;
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
+        warning: false,
+      });
+    });
+
+    // ⛔ …while without the row it is the payday the figure leaves out, not banked yet — the claim and its words stand
+    test("without the row, a checked payday inside its days to land is left out of the figure, not banked yet", () => {
+      weeklyPayFoundJul2("2026-07-10");
+      const pace = dashboardData(bundle.db, "2026-07-11").pace!;
+      expect(pace.freeToSpendCents).toBe(1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay not " +
+          "banked yet cannot be projected as arriving.",
+        warning: false,
+      });
     });
   });
 });

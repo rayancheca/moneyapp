@@ -1,5 +1,6 @@
 import type { SeriesKind } from "@/db/schema/recurring";
 import { addDays, compareDates } from "./dates";
+import type { UnattachedMatch } from "./unattached-match";
 
 /**
  * What the calendar is allowed to SAY about one expected occurrence.
@@ -62,7 +63,14 @@ export type UnsettledReason =
    */
   | "never_banked"
   /** too few postings to know when this is due — the date itself is a guess */
-  | "schedule_unproven";
+  | "schedule_unproven"
+  /**
+   * money in or out, on a day another surface would call absent — a payday checked through its days to land, a due
+   * day read with its grace (`asksForUnattachedMatch`) — that a row on its account matches to the cent, sitting
+   * unattached (`services/unattached-match`): the row is named (`SettledVerdict.unattached`), and still pays nothing.
+   * 🔴 Review of de31d22 (HIGH): "never reached a bank" and a red ✕ beside the rows every other surface named.
+   */
+  | "matched_unattached";
 
 export type OccurrenceState =
   /** posted, within the series' own noise band of the expected amount */
@@ -122,6 +130,8 @@ export interface SettledVerdict {
   state: Extract<OccurrenceState, "missed" | "unsettled">;
   /** null exactly when `state` is "missed" */
   reason: UnsettledReason | null;
+  /** the row the verdict names — present exactly when `reason` is "matched_unattached" */
+  unattached?: UnattachedMatch;
 }
 
 /**
@@ -351,13 +361,23 @@ export interface OccurrenceReading {
  * screen; `runway`, `carCost` and `merchantProfile` all follow it. A caller that
  * could compute "missed" here and fetch the explaining sentence from somewhere
  * else is a caller that can eventually print the wrong pair.
+ *
+ * ⛔ …and `unattached`, the row the one rule matched to this day (`services/unattached-match`, asked of the days
+ * `asksForUnattachedMatch` names), outranks the absence it would answer: "matched_unattached", the row named — never a
+ * red ✕, never "never reached a bank" nor "not banked yet", and never paid by it. A day nobody has read keeps its own
+ * reason, a row or not.
  */
 export function settledVerdict(
   kind: SeriesKind,
   occurrenceDate: string,
   reading: OccurrenceReading,
   scheduleIsProven: ScheduleProven,
+  unattached: UnattachedMatch | null = null,
 ): SettledVerdict {
+  const named =
+    unattached !== null && asksForUnattachedMatch(kind, occurrenceDate, reading)
+      ? ({ state: "unsettled", reason: "matched_unattached", unattached } as const)
+      : null;
   // Coverage first: where nobody has looked — a payday after its pay's checked day, a bill's day or the grace after it
   // not imported — nothing at all can be said, which is a stronger and more actionable answer than "not banked yet"
   // or "we are unsure when this is due".
@@ -370,13 +390,32 @@ export function settledVerdict(
      * app, 2026-10-14). The dashboard's own split (`paydayLandingIsRead`, `unbankedSplit`).
      */
     const landed = paydayLandingIsRead(occurrenceDate, reading.paydayLandingDays, reading.paydaysCheckedThrough);
-    return { state: "unsettled", reason: landed ? "never_banked" : "unbanked" };
+    return named ?? { state: "unsettled", reason: landed ? "never_banked" : "unbanked" };
   }
   if (!dueDayIsRead(occurrenceDate, reading.dueDay)) {
     return { state: "unsettled", reason: reading.dueDay.readsToToday ? "in_grace" : "not_imported" };
   }
+  // ⚖️ before "too few charges to grade yet": the arrears name the row whatever the posting count, and so does this
+  if (named !== null) return named;
   if (!scheduleIsProven) return { state: "unsettled", reason: "schedule_unproven" };
   return { state: "missed", reason: null };
+}
+
+/**
+ * THE DAYS THE ONE RULE IS ASKED ABOUT (`services/unattached-match`) — a past occurrence no posting paid that another
+ * surface would call absent: a payday the ledger has CHECKED (`paydayIsRead` — "with no deposit" on the forecast's note,
+ * the tile, /budgets and Earned vs banked; inside its days to land "not banked yet", past them "never reached a bank"),
+ * and a due day read with its grace (`dueDayIsRead` — the arrears' read half, "has not posted"). ⛔ The calendar asks
+ * exactly these — the income mirror (`unbankedIncomeForSeries`) and the pay readings (`paydaysNoDepositPaidInFull`) the
+ * same of a payday — so a row is never spent on a day no other surface would match it to. 🔴 Review of de31d22 (HIGH):
+ * it asked none, and drew "never reached a bank" and a red ✕ beside the rows the forecast card and /recurring's Next
+ * column named. 🔴 Review of 304c59a4 (MEDIUM): it asked a payday only past its days to land, so on his ledger copy with
+ * Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to that day), Oct 22 drew "not
+ * banked yet" and the forecast's note above it "with no deposit imported" beside the row.
+ */
+export function asksForUnattachedMatch(kind: SeriesKind, occurrenceDate: string, reading: OccurrenceReading): boolean {
+  if (absenceIsEvidence(kind)) return dueDayIsRead(occurrenceDate, reading.dueDay);
+  return paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
 }
 
 /** The fields `forecastConfidence` reads — a subset of a `recurring_series` row. */

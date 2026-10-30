@@ -3,7 +3,8 @@ import { createDatabase } from "@/db/client";
 import { manualSnapshot } from "@/db/backup";
 import { accountCoverage } from "@/services/coverage";
 import { netWorthSeries } from "@/services/derivation";
-import { importStatementFiles, type ImportInput } from "@/services/import/service";
+import { importStatementFilesWithReport, type ImportInput } from "@/services/import/service";
+import { importFilingLine } from "@/services/recurring-import-links";
 import { DbTargetRefusal, dbTargetFrom, originalsDirFor, strayFlags, type DbTarget } from "./db-target";
 import { archiveRootsFor, statementFiles } from "./statement-folders";
 
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
     coverage: accountCoverage(db),
   };
 
-  const outcomes = await importStatementFiles(db, FILES);
+  const { outcomes, filed } = await importStatementFilesWithReport(db, FILES);
 
   const byStatus = outcomes.reduce<Record<string, number>>((acc, o) => {
     acc[o.status] = (acc[o.status] ?? 0) + 1;
@@ -111,6 +112,8 @@ async function main(): Promise<void> {
     // a line another imported file still prints that this re-read no longer writes — out, never added on a guess
     for (const l of f.leftOut) console.log(`  LEFT OUT  ${f.fileName}: ${l.notice}`);
   }
+  // ⚖️ default built, not asked (2026-10-29): what it linked to a series he confirmed, filed under its category
+  for (const f of filed) console.log(`  FILED  ${importFilingLine(f)}`);
 
   const after = {
     netWorth: netWorthSeries(db).at(-1)?.totalCents ?? 0,
