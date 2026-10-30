@@ -183,6 +183,34 @@ describe("unattachedRowsWords — the row's day and amount, said where a surface
         "attached to it but not filed as income",
     );
   });
+
+  /*
+   * ⛔ …and not attached to what the sentence sums, in its own pronoun: of several paydays or bills, "them", as its
+   * "with no deposit attached to them" says (`countedDepositWords`). 🔴 Review of 92de2b12 (LOW): /budgets read "with no
+   * deposit attached to them, matched … that are not attached to it", and its page note, of two bills, "…by rows of
+   * $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it".
+   */
+  it("says what the rows are not attached to in the sentence's own pronoun", () => {
+    const bills = unattachedMatches(
+      [
+        { date: "2026-10-10", amountCents: -5000 },
+        { date: "2026-10-15", amountCents: -69504 },
+      ],
+      [row("a", "2026-10-10", -5000), row("b", "2026-10-15", -69504)],
+      3,
+    );
+    expect(unattachedRowsWords(bills, formatDayShort, "them")).toBe(
+      "rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to them",
+    );
+    const filed = bills.map((m) => ({ ...m, row: { ...m.row, notFiledAsIncome: true } }));
+    expect(unattachedRowsWords(filed.slice(0, 1), formatDayShort, "them")).toBe(
+      "a row of $50.00 on Oct 10 that is attached to them but not filed as income",
+    );
+    // …and "it" where no pronoun is given: one schedule, one bill
+    expect(unattachedRowsWords(bills, formatDayShort)).toBe(
+      "rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it",
+    );
+  });
 });
 
 describe("what a deposit lacks, said where a surface would have said 'with no deposit'", () => {

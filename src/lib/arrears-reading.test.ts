@@ -156,6 +156,35 @@ describe("an unread half no statement is keeping unread — its days to post", (
   });
 });
 
+/*
+ * ⛔ The rows a read half's due days are matched by are "not attached to" what the sentence says its arrears of — one
+ * bill "it", several "them" — as its unread words are. 🔴 Review of 92de2b12 (LOW): /budgets' page note, of two bills,
+ * read "…matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it".
+ */
+describe("the rows a read half is matched by, said of the bills the sentence sums", () => {
+  const unattached = [
+    { date: "2026-10-10", row: { id: "a", postedOn: "2026-10-10", amountCents: -5000 } },
+    { date: "2026-10-15", row: { id: "b", postedOn: "2026-10-15", amountCents: -69504 } },
+  ];
+  const reading = { owedCents: 74_504, unreadCents: 0, unattached };
+
+  test("several bills: 'not attached to them', in the read and the mixed form alike", () => {
+    expect(arrearsTail(reading, NOT_POSTED, "them")).toBe(
+      " and matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to them",
+    );
+    expect(arrearsTail({ ...reading, owedCents: 84_504, unreadCents: 10_000 }, NOT_POSTED, "them")).toBe(
+      ": $745.04 matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to " +
+        "them, and no statement has covered the other $100.00 yet",
+    );
+  });
+
+  test("one bill: 'not attached to it', as it always was", () => {
+    expect(arrearsTail(reading, HAS_NOT_POSTED)).toBe(
+      " and is matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it",
+    );
+  });
+});
+
 describe("overdueReading — a bill's own arrears, as its page and its End dialog say them", () => {
   test("its amount is money out; the read split rides along", () => {
     expect(overdueReading({ amountCents: -4500, unreadCents: 4500, inGraceCents: 4500 })).toEqual({

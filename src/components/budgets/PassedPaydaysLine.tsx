@@ -54,8 +54,9 @@ export function PassedPaydaysLine({ income }: PassedPaydaysLineProps) {
   const noDeposit =
     matched.length === 0
       ? `with no deposit against ${them}`
-      : `with no deposit ${countedDepositWords(matched, them)}, ` +
-        `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDayShort)}`;
+      : // …and the rows "not attached to them" too: one pronoun for one sentence (review of 92de2b12, LOW)
+        `with no deposit ${countedDepositWords(matched, them)}, ` +
+        `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDayShort, them)}`;
   const neither = leftOutOf(income.passedUnpaidCents, income.passedUnpaidInSoFar, "counted in neither figure above");
   return (
     <p className="mt-1 text-xs text-ink-faint">

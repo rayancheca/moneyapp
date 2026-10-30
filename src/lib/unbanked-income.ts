@@ -6,6 +6,8 @@ import {
   unattachedRowsWords,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
+import { compareDates } from "./dates";
+import { formatDayShortIn } from "./format-date";
 import { formatCents } from "./money";
 
 /**
@@ -257,6 +259,17 @@ function everyOneFalls(paydays: number): string {
 }
 
 /**
+ * The rows' own days, short — "Oct 1", or "Dec 31, 2025" in a year not the newest row's (`formatDayShortIn`) — in the
+ * sentences here, whatever day format they name the checked day in, as /spending's notes and Earned vs banked do.
+ * 🔴 Review of 92de2b12 (LOW): in the forecast's and the pay page's day format four rows read "on Thu, Oct 1, 2026,
+ * Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026", and /budgets' frontier clause the same.
+ */
+function rowDaysOf(matched: readonly UnattachedMatch[]): (iso: string) => string {
+  const newest = matched.map((m) => m.row.postedOn).sort(compareDates).at(-1);
+  return (iso) => formatDayShortIn(iso, newest ?? iso);
+}
+
+/**
  * "the other one falls", "the other 3 fall" — the passed paydays after the ones a sentence has just named on checked
  * days: the clause below and Earned vs banked's stale verdict, one spelling (review of 0c9bc8d).
  */
@@ -306,7 +319,7 @@ export function unbankedIncomeFrontierClause(
    * 22's row unattached, read Nov 2, the card's verdict "1 falls on a day already checked, with no deposit attached to
    * it; …" one line over the difference naming the row.
    */
-  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, formatDay)}`;
+  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, rowDaysOf(matched))}`;
   const checkedPart =
     checked === 0
       ? null
@@ -393,7 +406,7 @@ function notProjectedSubject(
   const matched = r.unattached ?? [];
   const rows = rowsNamed
     ? "pay those rows match"
-    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, rowDaysOf(matched))}`;
   /*
    * ⛔ …a row answers a payday inside its days to land as well as one past them (`inGraceUnattachedCount`), and of the
    * paydays no row answers the pay is "never reaches a bank" once one of them is past its days to land, "not banked

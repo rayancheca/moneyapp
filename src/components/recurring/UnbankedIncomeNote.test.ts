@@ -159,10 +159,10 @@ describe("UnbankedIncomeNote — 'not in EOM cash' only of the paydays no row EO
     frontier: { kind: "day" as const, through: "2026-10-26" },
     unattached: ROWS,
   };
+  // ⛔ the rows' days short, whatever the note's day format (review of 92de2b12, LOW)
   const PAY_MATCHED =
-    "Pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that " +
-    "are not attached to it cannot be projected as arriving; the month strip below counts it, because that line is " +
-    "the schedule.";
+    "Pay matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it cannot be " +
+    "projected as arriving; the month strip below counts it, because that line is the schedule.";
 
   // ⛔ …and "not counted above" — the forecast's lines — never read of the EOM cash that holds them
   test("rows EOM cash holds for every payday: not counted above, though EOM cash holds those rows", () => {

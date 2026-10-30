@@ -330,11 +330,11 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
   test("with a payday not looked for yet, read Oct 31: his pay's page, /budgets and the forecast name the rows", () => {
     importUnattached(PAYDAYS, false);
     const today = "2026-10-31";
+    // ⛔ the rows' days short, beside the checked day in full (review of 92de2b12, LOW: four long dates, comma-joined)
     const clause =
       "4 fall on days already checked, with no deposit attached to it — they are matched to the cent by rows of " +
-      "$1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026 that are not " +
-      "attached to it; the other one falls after Mon, Oct 26, 2026, the last day every account that pay lands in has " +
-      "been checked through.";
+      "$1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it; the other one falls after Mon, Oct " +
+      "26, 2026, the last day every account that pay lands in has been checked through.";
     // his pay's page prints the clause as its body (`PassedPaydaysCard`)
     expect(passedPaydaysWords(seriesDetail(bundle.db, PAY, today).unbankedPaydays!, formatDayLong).unread).toBe(clause);
     // /budgets prints it from its own reading of the month (src/app/budgets/page.tsx)
@@ -964,7 +964,7 @@ describe("a checked payday still inside its days to land: its row is named, and 
     expect(textOf(createElement(UnbankedIncomeNote, { unbanked: f.unbankedIncome }))).toBe(
       "1 payday worth $1,141.92 already passed this month with no deposit attached to it (It America LLC (weekly pay)) " +
         "— not counted above, though EOM cash holds the row that matches it. Pay matched to the cent by a row of " +
-        "$1,141.92 on Thu, Oct 22, 2026 that is not attached to it cannot be projected as arriving; the month strip " +
+        "$1,141.92 on Oct 22 that is not attached to it cannot be projected as arriving; the month strip " +
         "below counts it, because that line is the schedule.",
     );
     // inside its days to land: no warning tone, as without the row
@@ -1068,7 +1068,7 @@ describe("a checked payday still inside its days to land: its row is named, and 
     expect(textOf(createElement(UnbankedIncomeNote, { unbanked: f.unbankedIncome }))).toBe(
       "2 paydays worth $2,283.84 already passed this month with no deposit attached to it (It America LLC (weekly pay)) " +
         "— not counted above, and $1,141.92 of it not in EOM cash. Pay not banked yet, and pay matched to the cent by a " +
-        "row of $1,141.92 on Thu, Oct 8, 2026 that is not attached to it, cannot be projected as arriving; the month " +
+        "row of $1,141.92 on Oct 8 that is not attached to it, cannot be projected as arriving; the month " +
         "strip below counts it, because that line is the schedule.",
     );
     // his pay's page, in the warning's tone: Oct 8 is checked through its days to land, and its row pays nothing

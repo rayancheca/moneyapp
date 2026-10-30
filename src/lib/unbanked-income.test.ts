@@ -151,9 +151,8 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
       { occurrenceCount: n, checkedOccurrenceCount: c, frontier: frontierAt(at), unattached },
       formatDayLong,
     );
-  const rows =
-    "rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026 that are not " +
-    "attached to it";
+  // ⛔ the rows by their own days, short, whatever day format the clause's checked day takes (review of 92de2b12, LOW)
+  const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it";
 
   test("every checked payday matched — his pre-filing October read Oct 31", () => {
     expect(withRows(5, 4, "2026-10-26", OCTOBER.map((d) => matchOn(d)))).toBe(
@@ -166,7 +165,7 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
   test("one checked payday, matched — Oct 22 read Nov 2 with Oct 1, 8 and 15 filed", () => {
     expect(withRows(2, 1, "2026-10-26", [matchOn("2026-10-22")])).toBe(
       "1 falls on a day already checked, with no deposit attached to it — it is matched to the cent by a row of " +
-        "$1,141.92 on Thu, Oct 22, 2026 that is not attached to it; the other one falls after Mon, Oct 26, 2026, the " +
+        "$1,141.92 on Oct 22 that is not attached to it; the other one falls after Mon, Oct 26, 2026, the " +
         "last day every account that pay lands in has been checked through.",
     );
   });
@@ -174,13 +173,13 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
   test("some of the checked paydays: how many, and their rows — beside an account nothing has checked too", () => {
     expect(withRows(5, 4, "2026-10-26", OCTOBER.slice(0, 3).map((d) => matchOn(d)))).toBe(
       "4 fall on days already checked, with no deposit attached to it — 3 of them are matched to the cent by rows of " +
-        "$1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 15, 2026 that are not attached to it; the " +
+        "$1,141.92 on Oct 1, Oct 8, and Oct 15 that are not attached to it; the " +
         "other one falls after Mon, Oct 26, 2026, the last day every account that pay lands in has been checked " +
         "through.",
     );
     expect(withRows(4, 2, null, [matchOn("2026-10-01")])).toBe(
       "2 fall on days already checked, with no deposit attached to it — 1 of them is matched to the cent by a row of " +
-        "$1,141.92 on Thu, Oct 1, 2026 that is not attached to it; for the other 2, the ledger has not checked every " +
+        "$1,141.92 on Oct 1 that is not attached to it; for the other 2, the ledger has not checked every " +
         "account that pay could land in.",
     );
   });
@@ -188,7 +187,7 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
   test("rows the import attached and filed nowhere are said as that", () => {
     expect(withRows(5, 4, "2026-10-26", OCTOBER.map((d) => matchOn(d, true)))).toBe(
       "4 fall on days already checked, with no deposit attached to it and filed as income — they are matched to the " +
-        "cent by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026 " +
+        "cent by rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 " +
         "that are attached to it but not filed as income; the other one falls after Mon, Oct 26, 2026, the last day " +
         "every account that pay lands in has been checked through.",
     );
@@ -235,8 +234,8 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
     );
     expect(checkedAll.unread).toBeNull();
     expect(checkedAll.notProjected).toBe(
-      "Pay that never reaches a bank, and pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026 and Thu, " +
-        "Oct 8, 2026 that are not attached to it, cannot be projected as arriving",
+      "Pay that never reaches a bank, and pay matched to the cent by rows of $1,141.92 on Oct 1 and Oct 8 that are " +
+        "not attached to it, cannot be projected as arriving",
     );
   });
 
@@ -260,7 +259,7 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
         },
         formatDayLong,
       );
-    const oct22 = "a row of $1,141.92 on Thu, Oct 22, 2026 that is not attached to it";
+    const oct22 = "a row of $1,141.92 on Oct 22 that is not attached to it";
     // Oct 22 alone, inside its days to land, its row matched: no "imported", no "not banked yet", and no warning
     expect(words(1, 0, 1, [matchOn("2026-10-22")])).toEqual({
       count: "1 payday",
@@ -275,7 +274,7 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
     );
     // Oct 15's row past its days to land, Oct 22 inside them and no row: the unmatched one is not banked yet
     expect(words(2, 1, 0, [matchOn("2026-10-15")]).notProjected).toBe(
-      "Pay not banked yet, and pay matched to the cent by a row of $1,141.92 on Thu, Oct 15, 2026 that is not " +
+      "Pay not banked yet, and pay matched to the cent by a row of $1,141.92 on Oct 15 that is not " +
         "attached to it, cannot be projected as arriving",
     );
     // …and with no row at all, the words they always were
@@ -394,8 +393,8 @@ describe("passedPaydaysLeftOut — the line under Free to spend, of the paydays 
   };
   const UNREAD =
     "3 fall on days already checked, with no deposit attached to it — they are matched to the cent by rows of " +
-    "$1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that are not attached to it; the other " +
-    "one falls after Mon, Oct 26, 2026, the last day every account that pay lands in has been checked through.";
+    "$1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it; the other one falls after Mon, Oct 26, 2026, " +
+    "the last day every account that pay lands in has been checked through.";
 
   test("the rows the figure holds take back the claim of their own paydays — the payday no row answers keeps it", () => {
     expect(passedPaydaysLeftOut(october, "Free to spend", formatDayLong, october.unattached)?.text).toBe(
@@ -414,8 +413,7 @@ describe("passedPaydaysLeftOut — the line under Free to spend, of the paydays 
     expect(passedPaydaysLeftOut(checked, "Free to spend", formatDayLong, checked.unattached)).toEqual({
       text:
         "3 paydays worth $3,425.76 already passed this month with no deposit attached to it. Pay matched to the cent " +
-        "by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that are not attached to " +
-        "it cannot be projected as arriving.",
+        "by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it cannot be projected as arriving.",
       warning: true,
     });
   });

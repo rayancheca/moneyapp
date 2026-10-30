@@ -82,12 +82,20 @@ export function arrearsSplit({ owedCents, unreadCents, inGraceCents = 0, unattac
  *
  * `amounted`: the read half's words follow its own amount ("$695.04 …"). Without it ("came due Oct 15 and …",
  * "Oct 15 — …") all of it matched leads unamounted, and a part is named by its amount either way.
+ * ⛔ …and the rows "not attached to" what the arrears are said of (`pronoun`), as the unread half's words are: one bill
+ * "it", several "them". 🔴 Review of 92de2b12 (LOW): /budgets' page note, of two bills, read "…matched to the cent by
+ * rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it".
  */
-function readHalfWords(split: ArrearsSplit, notPosted: NotPostedWords, amounted: boolean): string {
+function readHalfWords(
+  split: ArrearsSplit,
+  notPosted: NotPostedWords,
+  amounted: boolean,
+  pronoun: ArrearsPronoun,
+): string {
   const read = formatCents(split.readCents);
   if (split.unattachedCents === 0) return amounted ? `${read} ${notPosted}` : notPosted;
   const is = notPosted === HAS_NOT_POSTED ? "is " : "";
-  const matched = `${is}${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(split.unattached, formatDayShort)}`;
+  const matched = `${is}${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(split.unattached, formatDayShort, pronoun)}`;
   if (split.unattachedCents === split.readCents) return amounted ? `${read} ${matched}` : matched;
   const rest = formatCents(split.readCents - split.unattachedCents);
   return `${formatCents(split.unattachedCents)} ${matched}, and ${rest} ${notPosted}`;
@@ -182,8 +190,8 @@ function daysToPostNotOver(pronoun: ArrearsPronoun): string {
  * A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet" — or, when it
  * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
  */
-export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords): string {
-  const read = readHalfWords(split, notPosted, true);
+export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords, pronoun: ArrearsPronoun = "it"): string {
+  const read = readHalfWords(split, notPosted, true, pronoun);
   const unread = formatCents(split.unreadCents);
   if (unreadWaitsOnDaysToPost(split)) {
     return `${read}, and the days a payment has to post for the other ${unread} are not over yet`;
@@ -203,12 +211,12 @@ export function arrearsClause(
   pronoun: ArrearsPronoun = "it",
 ): string {
   const split = arrearsSplit(reading);
-  if (split.kind === "read") return readHalfWords(split, notPosted, false);
+  if (split.kind === "read") return readHalfWords(split, notPosted, false, pronoun);
   if (split.kind === "unread") {
     if (unreadWaitsOnDaysToPost(split)) return daysToPostNotOver(pronoun);
     return noStatementHasCovered(pronoun);
   }
-  return splitClause(split, notPosted);
+  return splitClause(split, notPosted, pronoun);
 }
 
 /**

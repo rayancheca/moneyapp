@@ -143,12 +143,12 @@ export function silenceMatches(
 
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
-/** What a row is that the series does not count: never attached, or attached and filed as no income. */
-const NOT_ATTACHED = { one: "that is not attached to it", many: "that are not attached to it" };
-const NOT_FILED = {
-  one: "that is attached to it but not filed as income",
-  many: "that are attached to it but not filed as income",
-};
+/** What a row is that the series does not count, said of `it`: never attached, or attached and filed as no income. */
+const notAttached = (it: string) => ({ one: `that is not attached to ${it}`, many: `that are not attached to ${it}` });
+const notFiled = (it: string) => ({
+  one: `that is attached to ${it} but not filed as income`,
+  many: `that are attached to ${it} but not filed as income`,
+});
 
 /** One kind of row by its own day and amount (one amount named once), oldest first. */
 function rowsOfOneKind(
@@ -174,17 +174,21 @@ function rowsOfOneKind(
  * sentence they finish. Every surface that would have claimed absence says this instead (`MATCHED_TO_THE_CENT_BY`).
  * ⚖️ A row attached to the pay and filed as no income is said as that (`UnattachedRow.notFiledAsIncome`) — "that is
  * attached to it but not filed as income" — the unattached first when there are both.
+ * ⛔ "It" is what the sentence sums — one schedule or bill — and a sentence about several paydays or bills says "them",
+ * as its own "with no deposit attached to them" does (`countedDepositWords`). 🔴 Review of 92de2b12 (LOW): /budgets
+ * read "with no deposit attached to them, matched … that are not attached to it".
  */
 export function unattachedRowsWords(
   matches: readonly UnattachedMatch[],
   formatDay: (iso: string) => string,
+  it = "it",
 ): string {
   const byDay = [...matches].sort((a, b) => compareDates(a.row.postedOn, b.row.postedOn));
   const unattached = byDay.filter((m) => m.row.notFiledAsIncome !== true);
-  const notFiled = byDay.filter((m) => m.row.notFiledAsIncome === true);
+  const unfiled = byDay.filter((m) => m.row.notFiledAsIncome === true);
   return [
-    ...(unattached.length === 0 ? [] : [rowsOfOneKind(unattached, formatDay, NOT_ATTACHED)]),
-    ...(notFiled.length === 0 ? [] : [rowsOfOneKind(notFiled, formatDay, NOT_FILED)]),
+    ...(unattached.length === 0 ? [] : [rowsOfOneKind(unattached, formatDay, notAttached(it))]),
+    ...(unfiled.length === 0 ? [] : [rowsOfOneKind(unfiled, formatDay, notFiled(it))]),
   ].join(", and ");
 }
 

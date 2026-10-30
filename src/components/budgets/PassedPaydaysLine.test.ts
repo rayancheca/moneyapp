@@ -52,8 +52,12 @@ const text = (income: PassedPaydaysLineProps["income"]): string =>
     .trim();
 
 const IMPORTS = "That is evidence about what has been imported, not about whether the money was earned.";
+/*
+ * ⛔ …"not attached to them" of the paydays its "with no deposit attached to them" names: one pronoun for one sentence.
+ * 🔴 Review of 92de2b12 (LOW): it read "…with no deposit attached to them, matched … that are not attached to it".
+ */
 const NAMED =
-  "matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it";
+  "matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to them";
 
 describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they are in neither of", () => {
   test("a payday no row answers is counted in neither figure above — the claim stands", () => {
@@ -73,14 +77,29 @@ describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they a
     expect(text(OCT_29)).toBe(
       `3 paydays worth $3,425.76 already passed this month with no deposit attached to them, ${NAMED}. ${IMPORTS}`,
     );
+    // …and of one payday, "it" both times
+    const one = [matchOn("2026-10-22")];
+    expect(
+      text({
+        ...OCT_29,
+        passedUnpaidCents: PAYROLL,
+        passedUnpaidOccurrences: 1,
+        passedUnpaidCheckedOccurrences: 1,
+        passedUnpaidUnattached: one,
+        passedUnpaidInSoFar: one,
+      }),
+    ).toBe(
+      "1 payday worth $1,141.92 already passed this month with no deposit attached to it, matched to the cent by a " +
+        `row of $1,141.92 on Oct 22 that is not attached to it. ${IMPORTS}`,
+    );
   });
 
   test("…and for some: the money no row it holds answers keeps the claim, as part of the paydays' money", () => {
     expect(text(OCT_30)).toBe(
       "4 paydays worth $4,567.68 already passed this month — $1,141.92 of it counted in neither figure above. 3 fall " +
         "on days already checked, with no deposit attached to it — they are matched to the cent by rows of $1,141.92 " +
-        "on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that are not attached to it; the other one " +
-        "falls after Mon, Oct 26, 2026, the last day every account that pay lands in has been checked through.",
+        "on Oct 1, Oct 8, and Oct 22 that are not attached to it; the other one falls after Mon, Oct 26, 2026, the " +
+        "last day every account that pay lands in has been checked through.",
     );
   });
 
