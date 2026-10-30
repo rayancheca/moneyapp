@@ -557,7 +557,8 @@ export function seriesDetail(
   // read "Upcoming charges off the calendar: none scheduled" under "Leaving the forecast: ~$72.74, its one charge" — as
   // one on Mar 11, 2027, inside the year, did too. A longer window only adds days after the ones it held, so a series
   // whose next day is near keeps every day it listed. ⚖️ …its own next day, or where its schedule opens when that is
-  // later (`opensOn`: billed inside another, its carrier's date he typed — default built, not asked, 2026-10-29)
+  // later (`opensOn`: billed inside another, the day of its own that falls due with its carrier's date he typed —
+  // default built, not asked, 2026-10-29)
   const projectable = toProjectable(s);
   const ownNext =
     projectable.opensOn && eff.nextExpectedOn !== null && compareDates(projectable.opensOn, eff.nextExpectedOn) > 0
@@ -635,8 +636,9 @@ export function seriesDetail(
     // opened on Oct 1, past the Sep 24 payday the Sep 23 lump of $4,567.68 paid,
     // and Save with nothing changed took Sep 24 out of the projection settlement
     // walks. The token read "Thursdays" either way.
-    // ⚖️ …stepped as its list is (`projectable`): never before the day its schedule opens — billed inside another, its
-    // carrier's date he typed (default built, not asked, 2026-10-29), the day Save then writes as its own
+    // ⚖️ …stepped as its list is (`projectable`): never before the day its schedule opens — billed inside another, the
+    // day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29), the day
+    // Save then writes as its own
     nextExpectedOn: projects ? rollForwardNextExpected(projectable, today) : eff.nextExpectedOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,

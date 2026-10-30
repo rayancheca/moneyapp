@@ -1258,10 +1258,11 @@ interface ProjectableSeries {
   walkBackBefore?: string | null;
   /**
    * ⚖️ …and where it opens when that is AFTER its anchor: the day its schedule opens as every grader of a bill reads it
-   * (`openingOf`, `DueDays.opensOn`) — billed inside another, its carrier's date he typed. The walk draws no date
-   * before it, here or in the next date it names (`rollForwardNextExpected`), so no reader projects a day no charge of
-   * it can lie on (default built, not asked, 2026-10-29). On or before the anchor, or absent, the anchor opens the walk
-   * (or `firstOn` walks it back). `toProjectable` always sets it.
+   * (`openingOf`, `DueDays.opensOn`) — billed inside another, the day of its own that falls due with its carrier's
+   * date he typed, one of the walk's own steps. The walk draws no date before it, here or in the next date it names
+   * (`rollForwardNextExpected`), so no reader projects a day no charge of it can lie on (default built, not asked,
+   * 2026-10-29). On or before the anchor, or absent, the anchor opens the walk (or `firstOn` walks it back).
+   * `toProjectable` always sets it.
    */
   opensOn?: string | null;
 }
@@ -1694,8 +1695,9 @@ export function seriesIsForecast(
  * never speaks about money out.
  *
  * ⚖️ …and never a date before the day its schedule opens (`ProjectableSeries.opensOn`), as the walk draws none: a
- * schedule built for a projection (`toProjectable`) carries it — billed inside another, its carrier's date he typed —
- * so the sentence and the All tab's Next name the day Upcoming lists first (default built, not asked, 2026-10-29).
+ * schedule built for a projection (`toProjectable`) carries it — billed inside another, the day of its own that falls
+ * due with its carrier's date he typed — so the sentence and the All tab's Next name the day Upcoming lists first
+ * (default built, not asked, 2026-10-29).
  */
 export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
@@ -1939,6 +1941,30 @@ export function dueDayBefore(series: DueDaySchedule, day: string): string | null
   if (!series.nextExpectedOn) return null;
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
   return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, day) - 1);
+}
+
+/**
+ * The due day NEAREST `day` on a series' schedule — `day` itself when it is one, of two as near the earlier — by index
+ * from its anchor, behind it too, as `dueDayBefore` steps: the day his decision 76 says a payment on `day` pays ("the
+ * one it's nearer to (a tie goes to the earlier one)"). Where a series billed inside another opens (`openingOf`): the
+ * day of its own its carrier's date falls due with. Null for a series with no schedule.
+ */
+export function dueDayNearest(series: DueDaySchedule, day: string): string | null {
+  if (!series.nextExpectedOn) return null;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  const steps = signedStepsToReach(series.nextExpectedOn, plan, day);
+  const onOrAfter = stepFrom(series.nextExpectedOn, plan, steps);
+  const before = stepFrom(series.nextExpectedOn, plan, steps - 1);
+  return liesNearerTheLater(day, before, onOrAfter) ? onOrAfter : before;
+}
+
+/**
+ * ⚖️ His decision 76 (2026-10-14): whether `day`, between two due days, lies NEARER the later — a tie is the earlier's.
+ * ONE test for a payment between two due days (`paymentFor`) and for the day of its own a carrier's date falls due
+ * with (`dueDayNearest`).
+ */
+export function liesNearerTheLater(day: string, earlier: string, later: string): boolean {
+  return diffDays(day, later) < diffDays(earlier, day);
 }
 
 /**

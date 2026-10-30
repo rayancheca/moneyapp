@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { paymentFor, paysEarly, type DueDays, type Payment } from "./billing-carriers";
+import { openingOf, paymentFor, paysEarly, type DueDays, type Payment } from "./billing-carriers";
 import { dueDaysOf, ownOpening } from "./recurring";
 
 /** A monthly bill's due days on `anchorDay`, stepped as the projection steps them (`dueDaysOf`) — detection's day. */
@@ -771,5 +771,56 @@ describe("the nearer due day wins (decision 76)", () => {
       expect(graded(lateAug, PREMIUM, days).map(([, p]) => p)).toEqual(lateAugPaid);
       expect(paymentFor(lateAug, "2026-10-11", ahead)?.postedOn).toBe("2026-09-19");
     });
+  });
+});
+
+/*
+ * ⚖️ Where what the rent carries OPENS (`openingOf`): on the day of its OWN that falls due with the rent's date — its
+ * due day nearest that date, a tie the earlier, the day his decision 76 says a payment on that date pays (default
+ * built, not asked, 2026-10-29) — his when the rent's date is his, else the earlier of that day and its own date. 🔴 At
+ * 0ac5d059 it opened on the rent's date itself (review of 0ac5d059): the rent typed Nov 2, the utilities on the 1st
+ * opened on Nov 2, their Nov 1 — what the rent's Nov 2 carries — before it, drawn, owed and listed nowhere. And
+ * reading the LATER of the rent's date and their own passed every test: the rent typed Sep 1 beside their own Nov 1.
+ */
+describe("openingOf — what the rent carries opens on the day of its own that falls due with the rent's date", () => {
+  /** the utilities, monthly on the 1st from `own` (his when `typed`), billed inside a rent dated `rentOn` */
+  const utilities = (own: string, rentOn: string | null, rentTyped: boolean, typed = false) =>
+    openingOf({
+      cadence: "monthly",
+      userCadence: null,
+      intervalDaysAvg: 30,
+      nextExpectedOn: own,
+      userNextExpectedOn: typed ? own : null,
+      nextExpectedAmountCents: -18221,
+      userAmountCents: null,
+      anchorDay: 1,
+      billedWith: { opensOn: rentOn, opensOnHisDate: rentTyped },
+    });
+  const opening = (opensOn: string, opensOnHisDate: boolean) => ({ opensOn, opensOnHisDate });
+
+  test.each([
+    ["2026-11-01", "2026-11-01", "one of their own days, that day"],
+    ["2026-11-02", "2026-11-01", "a day after Nov 1, 29 before Dec 1"],
+    ["2026-11-16", "2026-11-01", "15 days either side: the tie, the earlier"],
+    ["2026-11-17", "2026-12-01", "16 days after Nov 1, 14 before Dec 1"],
+    ["2026-11-30", "2026-12-01", "29 days after Nov 1, a day before Dec 1"],
+    ["2026-10-16", "2026-10-01", "15 days after Oct 1, 16 before Nov 1"],
+  ])("the rent typed %s: the utilities on detection's Sep 1 open on %s, his — %s", (rentOn, opensOn) => {
+    expect(utilities("2026-09-01", rentOn, true)).toEqual(opening(opensOn, true));
+  });
+
+  test("…stepped BACK from their own Nov 1, his or detection's: the rent typed Sep 1 opens them on Sep 1", () => {
+    expect(utilities("2026-11-01", "2026-09-01", true, true)).toEqual(opening("2026-09-01", true));
+    expect(utilities("2026-11-01", "2026-09-01", true)).toEqual(opening("2026-09-01", true));
+    expect(utilities("2026-11-01", "2026-09-02", true)).toEqual(opening("2026-09-01", true));
+  });
+
+  test("the rent on detection's date: the earlier of their own date and their day that falls due with it", () => {
+    expect(utilities("2026-09-01", "2026-11-02", false)).toEqual(opening("2026-09-01", false));
+    expect(utilities("2026-12-01", "2026-11-02", false)).toEqual(opening("2026-11-01", false));
+    // …HIS date on what it carries alone opens nothing apart from the rent
+    expect(utilities("2026-12-01", "2026-11-02", false, true)).toEqual(opening("2026-11-01", false));
+    // …and a rent with no date at all leaves them their own, never his
+    expect(utilities("2026-12-01", null, false, true)).toEqual(opening("2026-12-01", false));
   });
 });

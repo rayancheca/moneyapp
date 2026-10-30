@@ -486,8 +486,9 @@ describe("⚖️ a carrier's payment of two pays two days of what it carries, as
 });
 
 /*
- * ⛔ …and where a carried series' schedule OPENS is its carrier's — the carrier's date he typed, or the earlier of
- * detection's and its own (`openingOf`): a day before the rent's date is no charge of the rent's, so no payment of the
+ * ⛔ …and where a carried series' schedule OPENS is its carrier's — on the day of its own the carrier's date falls due
+ * with: the carrier's date he typed, or the earlier of detection's and its own (`openingOf`; the days apart, below): a
+ * day before the rent's date is no charge of the rent's, so no payment of the
  * rent's catches one up for what it carries either, none is projected (below), and one payment pays the same days of
  * the rent and of what it carries. ⚖️ default built, not asked (2026-10-29), read off §6A 59's "by the rent's own
  * test". 🔴 At 4d6ec2ac the his-date guard read the carried series' own row (review of 4d6ec2ac): a what-if rent at
@@ -694,6 +695,120 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     expect(owed(TODAY)).toEqual([]);
     expect(coming("2026-09-25", RENT)[0]).toBe("2026-11-01");
     expect(coming("2026-09-25", UTIL)[0]).toBe("2026-11-01");
+  });
+
+  /*
+   * ⚖️ …and where it opens is a day of its OWN, the one that falls due with the rent's date: its due day nearest that
+   * date, a tie the earlier, as his decision 76 reads a payment between two due days (`openingOf`, default built, not
+   * asked, 2026-10-29) — so the rent's first month carries its first charge, whichever day of the month each is on.
+   * 🔴 At 0ac5d059 the floor cut by DATE, not by period (review of 0ac5d059): the rent typed Nov 2, the day his posts
+   * (Sep 2, Oct 2), the utilities on detection's Sep 1 — their Nov 1, the charge the rent's Nov 2 carries, lay before
+   * Nov 2 and was drawn, owed and listed nowhere: on Oct 29 Upcoming listed their Dec 1 first beside the rent's Nov 2,
+   * November's forecast left them out and their page and the All tab named Dec 1; on Nov 20 the arrears owed the rent
+   * alone, "A further $2,291.21 came due earlier this month and has not posted." The forbidden direction: an owed
+   * charge hidden. Pinned with the two on different days of the month; every pin before put them on one.
+   */
+  test("…and the rent typed Nov 2, what it carries on the 1st opens on Nov 1: listed, forecast, then owed", () => {
+    rentWith(
+      { rentOn: "2026-11-02", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    const OCT29 = "2026-10-29";
+    // on Oct 29 the readers that look ahead name their Nov 1 with the rent's Nov 2: Upcoming, November's forecast,
+    // their page's list and its sentence, the All tab's Next — and a year of twelve charges, not eleven
+    expect(coming(OCT29, UTIL)).toEqual(["2026-11-01", "2026-12-01"]);
+    expect(coming(OCT29, RENT)).toEqual(["2026-11-02", "2026-12-02"]);
+    expect(labelsIn("2026-11", OCT29)).toEqual(expect.arrayContaining(["What-if (rent)", "Rent utilities & fees"]));
+    const page = seriesDetail(bundle.db, UTIL, OCT29)!;
+    expect([page.nextExpectedOn, page.nextExpected.map((o) => o.date)]).toEqual([
+      "2026-11-01",
+      ["2026-11-01", "2026-12-01", "2027-01-01"],
+    ]);
+    expect(page.annualizedCents).toBe(12 * 18221);
+    expect(listSeries(bundle.db, OCT29).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-01");
+    // …and on Nov 20, read through Nov 19 with neither posted, both are owed: the calendar, the arrears, the runway
+    checkedThrough(bundle.db, "acct", "2026-11-19");
+    const NOV20 = "2026-11-20";
+    expect(unpaid("2026-11", "2026-11-01", NOV20)).toEqual([UTIL]);
+    expect(owed(NOV20)).toEqual([
+      [UTIL, "2026-11-01", 18221],
+      [RENT, "2026-11-02", 229121],
+    ]);
+    expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBe(
+      "A further $2,473.42 came due earlier this month and has not posted.",
+    );
+  });
+
+  /*
+   * …and the same root through the catch-up (`liesBeforeHisDate`), already at ae29cda4: November missed, Dec 10 two
+   * months. 🔴 Their Nov 1 lay before the rent's Nov 2, so it was no charge and the day behind their Dec 1 read as
+   * settled: Dec 10 paid their Dec 1 late and their Jan 1 early, beside the rent's Nov 2 and Dec 2 — on Dec 20 January
+   * drew their Jan 1 "paid early by Dec 10" while the rent's Jan 2 stayed to come, Upcoming listed their Feb 1 next and
+   * the All tab named it (ae29cda4 still drew their Nov 1 unpaid beside it, 0ac5d059 nowhere). Now Dec 10 pays the two
+   * months it pays the rent: their Nov 1 and Dec 1, and their Jan 1 is still to come with the rent's Jan 2.
+   */
+  test("…and November missed, Dec 10's two months pay their Nov 1 and Dec 1 as the rent's: no Jan 1 early", () => {
+    rentWith(
+      { rentOn: "2026-11-02", typed: true, utilOn: "2026-09-01" },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-12-10",
+    );
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    const DEC20 = "2026-12-20";
+    expect(seriesDetail(bundle.db, RENT, DEC20)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-12-10"]);
+    expect(marks("2026-11", "2026-11-01", DEC20)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-10", early: false }],
+    ]);
+    expect(marks("2026-12", "2026-12-01", DEC20)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-10", early: false }],
+    ]);
+    expect(marks("2027-01", "2027-01-01", DEC20)).toEqual([[UTIL, "upcoming", null]]);
+    expect(owed(DEC20)).toEqual([]);
+    expect(coming(DEC20, UTIL)[0]).toBe("2027-01-01");
+    expect(coming(DEC20, RENT)[0]).toBe("2027-01-02");
+    expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
+  });
+
+  /*
+   * ⛔ …and the rent's date BEFORE their own still opens them there: every day of theirs from it on is a charge. 🔴
+   * Nothing pinned it (review of 0ac5d059): every pin put the rent's date on or after theirs, so reading the LATER of
+   * the two — their own Nov 1 — passed every test (430 files, 9,551 tests, the review's run), and a payment of two
+   * caught nothing up and paid a day still to come: the rent typed Sep 1, their own Nov 1 — what a Save of their date
+   * editor with nothing changed types, as it opens on Nov 1 (his ledger copy 2026-10-29) — Jul 1, Aug 2 and Sep 2 at
+   * the rate, Oct 1 missed, Nov 10 two months: their Dec 1 read as paid early by Nov 10, and Upcoming listed their
+   * Jan 1 first beside the rent's Dec 1. Their Oct 1 is a charge, as the rent's is, so Nov 10 pays it and their Nov 1,
+   * and Dec 1 still comes for both.
+   */
+  test.each([
+    ["he typed", true],
+    ["detection's", false],
+  ])("…and the rent typed Sep 1, what it carries on %s Nov 1: Nov 10's two months pay no Dec 1", (_, utilTyped) => {
+    rentWith(
+      { rentOn: "2026-09-01", typed: true, utilOn: "2026-11-01", utilTyped },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-11-10",
+    );
+    checkedThrough(bundle.db, "acct", "2026-11-19");
+    const NOV20 = "2026-11-20";
+    expect(seriesDetail(bundle.db, RENT, NOV20)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-11-10"]);
+    expect(marks("2026-11", "2026-11-01", NOV20)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-11-10", early: false }],
+    ]);
+    expect(marks("2026-12", "2026-12-01", NOV20)).toEqual([
+      [UTIL, "upcoming", null],
+      [RENT, "upcoming", null],
+    ]);
+    expect(owed(NOV20)).toEqual([]);
+    expect(coming(NOV20, UTIL)).toEqual(["2026-12-01", "2027-01-01"]);
+    expect(coming(NOV20, RENT)).toEqual(["2026-12-01", "2027-01-01"]);
   });
 });
 

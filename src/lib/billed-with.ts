@@ -25,7 +25,8 @@ export interface BillingCarrier {
   readonly lastMatchedOn: string | null;
   /**
    * …and where the CARRIER's own schedule opens, and whether that day is his (`ownOpening`): what opens the series
-   * billed inside it too, for every grader and every projection of it (`openingOf`, `DueDays.opensOn`)
+   * billed inside it too — on the day of that series' own that falls due with it — for every grader and every
+   * projection of it (`openingOf`, `DueDays.opensOn`)
    */
   readonly opensOn: string | null;
   readonly opensOnHisDate: boolean;

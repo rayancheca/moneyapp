@@ -294,7 +294,7 @@ export function stillToCome<T extends { date: string }>(
  * list says.
  *
  * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
- * its carrier's date he typed (default built, not asked, 2026-10-29).
+ * the day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29).
  */
 export function nextStillToCome(
   toCome: StillToCome,
