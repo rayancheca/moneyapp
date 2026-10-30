@@ -790,14 +790,17 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * ⛔ …and by a comma before it always, now that `ACCOUNT_READ` ends on a verb: "an account the ledger reads in a
        * deposit attached to it" reads the deposit as where the ledger reads (the merge of batch 8b, 2026-10-30).
        */
-      const deposit = (dayFollows: boolean): string => {
-        if (matched.length === 0) return "";
-        const words = `in ${ownCents <= 0 ? "a deposit" : "deposits"} ${countedDepositWords(matched, "it")}`;
-        return dayFollows ? `, ${words},` : `, ${words}`;
-      };
+      const deposit =
+        matched.length === 0 ? "" : `, in ${ownCents <= 0 ? "a deposit" : "deposits"} ${countedDepositWords(matched, "it")}`;
+      /*
+       * ⛔ …and so is the checked day, deposit or none: "through <day>" is the claim's, never how far the ledger reads.
+       * 🔴 Review of ed1138d (LOW): "only $29,431.90 reached an account the ledger reads through Tue, Jun 30, 2026" said
+       * "read" of the day the rule calls only "checked" (`LAST_CHECKED_DAY`, the same sentence's next clause) — and
+       * falsely, on a fresh e2e seed read Jul 8: Chase Total Checking, where Paycheck lands, has rows to Jul 4.
+       */
       const reached = (dayFollows: boolean): string =>
-        `${ownCents <= 0 ? "none of it" : `only ${formatCents(ownCents)}`} reached ${ACCOUNT_READ}${inside}` +
-        deposit(dayFollows);
+        `${ownCents <= 0 ? "none of it" : `only ${formatCents(ownCents)}`} reached ${ACCOUNT_READ}${inside}${deposit}` +
+        (dayFollows ? "," : "");
       const rowsPart = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, payday)}`;
       const matchedPart = matched.length === 0 ? [] : [`${formatCents(unattachedCents(matched))} is ${rowsPart}`];
       const covered = r.periodsCovered ?? 0;

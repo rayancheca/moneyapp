@@ -279,7 +279,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
     expect(surfaces().september).toEqual([
       "It America LLC (weekly pay) implies $2,000.00 of earnings over Sep 3 – 10, 2026 and none of it reached an " +
-        `account the ledger reads through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. ` +
+        `account the ledger reads, through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. ` +
         "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
         "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
         "cash, paid into an " +
@@ -506,7 +506,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     );
     const [ytd] = spending("2026-01-01", "2026-12-31");
     expect(ytd).toContain(
-      "implies $15,000.00 of earnings over Jun 4 – Sep 10, 2026 and none of it reached an account the ledger reads " +
+      "implies $15,000.00 of earnings over Jun 4 – Sep 10, 2026 and none of it reached an account the ledger reads, " +
         "through Sat, Sep 5, 2026; the other payday falls after that,",
     );
     expect(ytd).toContain(
@@ -606,7 +606,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     ] as const) {
       // ⛔ after "the other payday falls after that, …", which names the checked day — never Aug 7 (review of 337baa7)
       expect(spending(from, to).join(" ")).toContain(
-        `reached an account the ledger reads through Sat, Sep 5, 2026; the other payday falls after that, ` +
+        `reached an account the ledger reads, through Sat, Sep 5, 2026; the other payday falls after that, ` +
           `${CHECKED_DAY}; ${back}.`,
       );
     }

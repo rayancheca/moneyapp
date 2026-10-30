@@ -997,7 +997,7 @@ describe("cashEarningsSectionNotes", () => {
 
   test("a window straddling the frontier scopes the claim to the days that were read", () => {
     const [note] = notes({ ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 1 });
-    expect(note!.body).toContain("none of it reached an account the ledger reads through 2026-08-12");
+    expect(note!.body).toContain("none of it reached an account the ledger reads, through 2026-08-12");
     expect(note!.body).toContain(
       "; the other 3 paydays fall after that, the last day every account that pay lands in has been checked through.",
     );
@@ -1018,7 +1018,7 @@ describe("cashEarningsSectionNotes", () => {
       checkedPeriodsCovered: 3,
     });
     expect(note!.body).toContain(
-      "none of it reached an account the ledger reads through 2026-08-12; the other payday falls after that, the " +
+      "none of it reached an account the ledger reads, through 2026-08-12; the other payday falls after that, the " +
         "last day every account that pay lands in has been checked through.",
     );
     expect(note!.body).not.toContain("the other 1 ");
@@ -1033,8 +1033,25 @@ describe("cashEarningsSectionNotes", () => {
       periodsCovered: 15,
       checkedPeriodsCovered: 10,
     });
-    expect(note!.body).toContain("only $1,447.00 reached an account the ledger reads through 2026-08-12");
+    expect(note!.body).toContain("only $1,447.00 reached an account the ledger reads, through 2026-08-12");
     expect(note!.body).not.toContain("only $1,447.00 reached an account the ledger reads.");
+  });
+
+  /*
+   * ⛔ The checked day is the claim's, set off by a comma — never the object of `ACCOUNT_READ`'s verb. 🔴 Review of
+   * ed1138d (LOW): "only $29,431.90 reached an account the ledger reads, through Tue, Jun 30, 2026" said the ledger
+   * READS the account through that day, "read" of a day the rule calls only "checked" — and false on a fresh e2e seed
+   * read Jul 8, where Chase Total Checking, the account Paycheck lands in, has rows to Jul 4 and balances to Jun 30.
+   */
+  test("the checked day follows a comma, so the claim never says how far the ledger reads", () => {
+    const shapes = [
+      { ...checked, impliedCents: 418_800, unbankedCents: 418_800, periodsCovered: 4, checkedPeriodsCovered: 1 },
+      { ...checked, impliedCents: 1_570_500, bankedCents: 144_700, unbankedCents: 1_425_800, periodsCovered: 15, checkedPeriodsCovered: 10 },
+    ];
+    const [none, only] = shapes.map((over) => notes(over)[0]!.body);
+    expect(none).toContain(`none of it reached ${ACCOUNT_READ}, through 2026-08-12; the other 3 paydays fall after`);
+    expect(only).toContain(`only $1,447.00 reached ${ACCOUNT_READ}, through 2026-08-12; the other 5 paydays fall after`);
+    for (const body of [none, only]) expect(body).not.toMatch(/reads (inside the window )?through/u);
   });
 
   test("a window and a silence read in full keep the sentence exactly as it was", () => {
@@ -1242,7 +1259,7 @@ describe("cashEarningsSectionNotes", () => {
      */
     test("read in part: after the paydays past the checked day, which 'after that' still names", () => {
       expect(lead({ ...checked, periodsCovered: 5, checkedPeriodsCovered: 3 })).toContain(
-        `none of it reached an account the ledger reads through 2026-08-12; the other 2 paydays fall after that, the ` +
+        `none of it reached an account the ledger reads, through 2026-08-12; the other 2 paydays fall after that, the ` +
           `last day every account that pay lands in has been checked through; ${BACK}.`,
       );
     });
@@ -1291,7 +1308,7 @@ describe("cashEarningsSectionNotes", () => {
         expect(
           lead({ ...checked, bankedCents: 104_600, checkedPeriodsCovered: 3, shortfall: { ...OUT, paidOutside: [EARLY] } }),
         ).toContain(
-          "only $1,046.00 reached an account the ledger reads inside the window through 2026-08-12; the other 2 " +
+          "only $1,046.00 reached an account the ledger reads inside the window, through 2026-08-12; the other 2 " +
             "paydays fall after that, the last day every account that pay lands in has been checked through; " +
             `${PAID}; ${BACK}.`,
         );
@@ -1344,7 +1361,7 @@ describe("cashEarningsSectionNotes", () => {
             shortfall: { ...OUT, paidOutside: [paidIn], paidAcross: [AHEAD] },
           }),
         ).toContain(
-          "only $2,092.00 reached an account the ledger reads inside the window through 2026-08-12; the other 2 " +
+          "only $2,092.00 reached an account the ledger reads inside the window, through 2026-08-12; the other 2 " +
             "paydays fall after that, the last day every account that pay lands in has been checked through; " +
             `$1,046.00 (Jul 2) was paid early, by the deposit of 2026-07-01; ${ANOTHER}; ${BACK}.`,
         );
