@@ -31,7 +31,6 @@ import {
   billDueDaysBySeries,
   billPaymentsBySeries,
   dayPaidAs,
-  fallsDueOn,
   onTimePayment,
   paymentFor,
   paysEarly,
@@ -53,7 +52,7 @@ import {
   hasStoppedForecasting,
   MIN_OCCURRENCES,
   populationStddev,
-  projectOwnDays,
+  projectOccurrences,
   seriesEvidence,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
@@ -635,8 +634,8 @@ export function recurringCalendar(
   };
   /**
    * A bill's occurrence paid by a payment this grid does not draw on its day — its own, landed in another month, or its
-   * carrier's (§6A 59): drawn paid on its own day at its own amount, naming the payment (`paidWith`), and settling $0.00
-   * here, because the money is on the payment's row, counted there, once.
+   * carrier's (§6A 59): drawn paid on the day it falls due (`SeriesOccurrence.date`) at its own amount, naming the
+   * payment (`paidWith`), and settling $0.00 here, because the money is on the payment's row, counted there, once.
    */
   const pushPaidElsewhere = (
     s: { id: string; name: string; kind: SeriesKind },
@@ -893,8 +892,16 @@ export function recurringCalendar(
      * all: Jun 4's $1,047.00 read "toward no payday" beside an income card that had earned four cash weeks that month.
      */
     const projectable = paydayProjectable(s, settlements.get(s.id), today);
-    // its own days on this grid — each still graded on the day it falls due (`fallsDueOn`, below)
-    const occurrences = projectOwnDays(projectable, monthStart, monthEnd);
+    /*
+     * ⚖️ Each drawn on the day it FALLS DUE (`SeriesOccurrence.date`, `fallsDueOn`) — billed inside another on its
+     * carrier's step, the later of its own day and the carrier's day it pairs with (default (B), built, not asked,
+     * 2026-10-30) — the cell, the month and the footer's Expected the forecast card above the grid holds it in, and the
+     * day its verdict is taken on; asked paid on its own day (`ownDate`). 🔴 Drawn on its own day (review of
+     * aa05a56d): the rent on the 1st, the utilities retyped Oct 25 — on Oct 29 October drew their Oct 25 "upcoming" and
+     * counted it in its Expected beside an October card that held them nowhere, as they fall due with the rent's Nov 1;
+     * the rent typed Nov 16, November drew their Nov 1 "upcoming" on Nov 10, a day already past.
+     */
+    const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days —
     // its carrier's payments on the carrier's day each pairs with
@@ -972,8 +979,8 @@ export function recurringCalendar(
         // the series' tolerance is this occurrence, drawn on the day it landed —
         // one on this grid before one in another month (`paymentNamedFor`) —
         // or, none on time, the one that pays it early or late (`paymentFor`):
-        // the rent paid Oct 5 is its Oct 1, drawn once
-        const paid = paymentNamedFor(payments, o.date, dueDays);
+        // the rent paid Oct 5 is its Oct 1, drawn once — asked of its OWN day (`ownDate`), which `paymentFor` pairs
+        const paid = paymentNamedFor(payments, o.ownDate, dueDays);
         if (paid !== undefined && !paid.carried && insideMonth(paid.postedOn)) continue;
         /*
          * ⚖️ …which may be in ANOTHER month, the rent paid Sep 30 for Oct 1: drawn paid on its own day, naming the day
@@ -983,10 +990,11 @@ export function recurringCalendar(
          * by its payment of Jul 28, 2026".
          *
          * ⚖️ …and one billed inside another's payment is paid by its carrier's payment for that period — the arrears'
-         * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on its own day, naming the
-         * payment (`paidWith`), and settling $0.00 here: its money is on the carrier's row, counted there, once. The
-         * payment named is the one the carrier's own occurrence is drawn by (`paymentNamedFor`): beside a rent paid in
-         * halves either side of the edge, the half on this grid.
+         * own test (`carrierPaymentsBySeries`, implied by §6A 59, 2026-10-08). Drawn paid on the day it falls due
+         * (`date`), naming the payment (`paidWith`) — early by that day, the one the grid draws it on — and settling
+         * $0.00 here: its money is on the carrier's row, counted there, once. The payment named is the one the
+         * carrier's own occurrence is drawn by (`paymentNamedFor`): beside a rent paid in halves either side of the
+         * edge, the half on this grid.
          */
         if (paid !== undefined) {
           const carrier = paid.carried && s.billedWith !== null ? carrierWord(s.billedWith.name) : null;
@@ -996,13 +1004,13 @@ export function recurringCalendar(
       }
 
       /*
-       * ⚖️ Past or still to come on the day it FALLS DUE (`fallsDueOn`): billed inside another on its carrier's step,
-       * the later of its own day and the carrier's day it pairs with — so a day of what the rent carries is drawn
+       * ⚖️ Past or still to come on the day it FALLS DUE (`date`, `fallsDueOn`): billed inside another on its carrier's
+       * step, the later of its own day and the carrier's day it pairs with — so a day of what the rent carries is drawn
        * missed only once the rent's day is read past, never before (default (B), built, not asked, 2026-10-30), the
        * arrears' own window (`projectOccurrences`). 🔴 On its own day, the rent typed Nov 16 and nothing of November
        * posted, November drew the utilities' Nov 1 missed on Nov 10, six days before the rent's Nov 16 came.
        */
-      const dueOn = fallsDueOn(projectable.pairedWith, o.date);
+      const dueOn = o.date;
       const isFuture = compareDates(dueOn, today) >= 0;
       // The state and its reason are one decision, taken once. Splitting them
       // is how `budgetVerdict` came to print a headline beside a definition that

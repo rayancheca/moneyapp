@@ -18,7 +18,14 @@ import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { asMoneyIn, billDueDaysBySeries, billPaymentsBySeries, paymentFor, type DueDays } from "./billing-carriers";
+import {
+  asMoneyIn,
+  billDueDaysBySeries,
+  billPaymentsBySeries,
+  fallsDueOn,
+  paymentFor,
+  type DueDays,
+} from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
@@ -256,13 +263,16 @@ export function settledPaydaysForSeries(
  *
  * ⛔ NOT a RATE: N months hold N payments of a monthly bill whatever day they are asked on, paid or not
  * (`scheduledOccurrences` — the committed book, the car card).
+ *
+ * ⛔ Each asked on its OWN day (`SeriesOccurrence.ownDate`) — the due day a grader pairs with its carrier's itself
+ * (`paymentFor`) — and kept dated by the day it falls due (`date`), the day every list prints.
  */
-export function stillToCome<T extends { date: string }>(
+export function stillToCome<T extends { ownDate: string }>(
   toCome: StillToCome,
   series: { id: string },
   occurrences: readonly T[],
 ): T[] {
-  return occurrences.filter((o) => toCome(series.id, o.date));
+  return occurrences.filter((o) => toCome(series.id, o.ownDate));
 }
 
 /**
@@ -296,6 +306,12 @@ export function stillToCome<T extends { date: string }>(
  *
  * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
  * the day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29).
+ *
+ * ⚖️ …and NAMED by the day it falls due (`fallsDueOn`), as its list dates it (`SeriesOccurrence.date`): billed inside
+ * another on its carrier's step, the later of its own day and the carrier's day it pairs with (default (B), built,
+ * not asked, 2026-10-30) — the rent typed Nov 16, the utilities' Nov 1 is next on Nov 16. Stepped and asked paid on
+ * its own days, as the list's are. 🔴 It named the own day (review of aa05a56d): on Nov 10 the All tab's Next read
+ * "Nov 1", a day already past, beside an Upcoming tab listing them with the rent's Nov 16.
  */
 export function nextStillToCome(
   toCome: StillToCome,
@@ -304,13 +320,16 @@ export function nextStillToCome(
 ): string | null {
   const eff = toProjectable(series);
   let next = rollForwardNextExpected(eff, today);
-  // past a paid day to the walk's next own day — a day of what the rent carries may fall due after the next of its own
+  // past a paid day to the walk's next own day — asked paid on its own day, as `stillToCome` asks each
   while (next !== null && !toCome(series.id, next)) next = walkDayAfter(eff, next);
-  return next;
+  return next === null ? null : fallsDueOn(eff.pairedWith, next);
 }
 
-/** Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date. */
-export type StillToCome = (seriesId: string, date: string) => boolean;
+/**
+ * Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date: a day of
+ * its OWN schedule (`SeriesOccurrence.ownDate`), which a grader pairs with its carrier's itself (`paymentFor`).
+ */
+export type StillToCome = (seriesId: string, ownDate: string) => boolean;
 
 /**
  * What `stillToComeReader` reads of a series: its kind, and for a bill its grace, the carrier it is billed with and its
@@ -371,11 +390,11 @@ export function stillToComeReader(
   // carrier's day each pairs with — with nothing late asked of a day from today on (above)
   const graded = billDueDaysBySeries(bills);
   const dueDays = new Map(bills.map((s) => [s.id, nothingLateFrom(graded.get(s.id)!, today)] as const));
-  return (seriesId, date) => {
+  return (seriesId, ownDate) => {
     const paydays = settled.get(seriesId);
-    if (paydays !== undefined) return !paydays.has(date);
+    if (paydays !== undefined) return !paydays.has(ownDate);
     const days = dueDays.get(seriesId);
-    return days === undefined || paymentFor(payments.get(seriesId) ?? [], date, days) === undefined;
+    return days === undefined || paymentFor(payments.get(seriesId) ?? [], ownDate, days) === undefined;
   };
 }
 

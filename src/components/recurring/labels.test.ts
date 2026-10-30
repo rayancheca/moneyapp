@@ -347,6 +347,8 @@ describe("staleOccurrenceEntries", () => {
     kind: "income",
     cadence: "weekly",
     date: "2026-07-09",
+    // billed on its own: its own day is the day it falls due
+    ownDate: over.date ?? "2026-07-09",
     amountCents: 104600,
     anchorDayOfMonth: null, // weekly: day-stepped, so it never clamps
     ...over,
@@ -1234,6 +1236,7 @@ describe("awaiting statements: the age stays, the lateness goes", () => {
       kind: "income",
       cadence: "weekly",
       date: "2026-10-08",
+      ownDate: "2026-10-08",
       amountCents: 114_192,
       anchorDayOfMonth: null,
       staleness: unread,

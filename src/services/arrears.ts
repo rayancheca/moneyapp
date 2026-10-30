@@ -167,7 +167,8 @@ export function overdueForSeries(
   const paymentsBySeries = billPaymentsBySeries(db, live);
   // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens, each day
   // paired with the carrier's own day of that period (`pairingOf`) — and each owed only once it falls due
-  // (`projectOccurrences` holds it by `fallsDueOn`): never before the carrier's day it pairs with
+  // (`projectOccurrences` holds it by `fallsDueOn`): never before the carrier's day it pairs with. ⛔ Asked paid on its
+  // OWN day (`ownDate`), which `paymentFor` pairs; owed, and named "came due", on the day it fell due (`date`)
   const dueDaysBySeries = billDueDaysBySeries(live);
 
   const series: BudgetTailSeries[] = [];
@@ -178,7 +179,7 @@ export function overdueForSeries(
     const dueDays = dueDaysBySeries.get(s.id)!;
     const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
-      .filter((o) => paymentFor(payments, o.date, dueDays) === undefined);
+      .filter((o) => paymentFor(payments, o.ownDate, dueDays) === undefined);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;

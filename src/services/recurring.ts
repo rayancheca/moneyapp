@@ -1134,7 +1134,24 @@ export interface SeriesOccurrence {
   name: string;
   kind: SeriesKind;
   cadence: Cadence;
+  /**
+   * ⚖️ The day it FALLS DUE (`fallsDueOn`): its own day — or, billed inside another on its carrier's step, the later
+   * of that and the carrier's day it pairs with (default (B), built, not asked, 2026-10-30). ONE day for every reader
+   * that holds, names or draws it — the window it is in, the date a sentence or a list prints, the cell the calendar
+   * draws it in, the paycheck it is due by — so none can read another. 🔴 It was its own day while the windows held
+   * it by this one (review of aa05a56d): the rent typed Nov 1, the utilities on the 25th — their Oct 25, held in
+   * November, was re-filtered out of it by the category forecast and counted in no month; the rent typed Nov 16, their
+   * Nov 1 was due by a Nov 12 paycheck on the dashboard, "next Nov 1" on Nov 10 and "came due Dec 1" of a day due Dec
+   * 16. What a grader asks paid is `ownDate`.
+   */
   date: string;
+  /**
+   * The day of its OWN schedule it is (`stepFrom` its anchor) — `date` itself billed on its own. ⛔ What a grader asks
+   * paid (`paymentFor`'s due day: the arrears, `stillToCome`, the calendar's `paymentNamedFor`), which pairs it with
+   * its carrier's day itself (`DueDays.pairedWith`) — never `date`, a day that is not on its schedule when it falls due
+   * with its carrier's — and what a row of its own is matched against (`projectOwnDays`, the first-posting rule).
+   */
+  ownDate: string;
   amountCents: number;
   /**
    * The day-of-month the series is really billed on, for a calendar-stepped
@@ -1144,7 +1161,8 @@ export interface SeriesOccurrence {
    * ⛔ It exists because `date` alone cannot answer whether an occurrence is
    * inside a window of whole calendar months. February clamps the 28th, 29th,
    * 30th and 31st onto ONE date, and those four series need different answers
-   * at the boundary — see `MonthHorizon` in `lib/committed`.
+   * at the boundary — see `MonthHorizon` in `lib/committed`. ⚠️ It is `ownDate`'s day: asked only of the series' own
+   * days (`scheduledOccurrences`, `projectOwnDays`), where `date` is `ownDate`.
    */
   anchorDayOfMonth: number | null;
   /**
@@ -1725,7 +1743,10 @@ export function seriesIsForecast(
  * (default built, not asked, 2026-10-29). ⚖️ …and the first day that FALLS DUE from today on (`firstStepFallingDue`):
  * billed inside another on its carrier's step, a day of its own still to come with the carrier's day it pairs with,
  * though its own day has passed — the utilities' Nov 1 on Nov 10, beside the rent's Nov 16 (default (B), built, not
- * asked, 2026-10-30) — so its editor saves the day still to come, never one past it.
+ * asked, 2026-10-30) — so its editor saves the day still to come, never one past it. ⛔ Its OWN day, always: what the
+ * editor saves is the series' own schedule, so on Nov 10 it opens on their Nov 1 — on the rent's Nov 16 a Save with
+ * nothing changed would retype them onto the 16th. A date that says when it is still to come names the day that one
+ * falls due on (`fallsDueOn`): Upcoming's, the All tab's Next (`nextStillToCome`), the page's list.
  */
 export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
@@ -1885,21 +1906,26 @@ export function oneChargeDays(
  * ⚖️ …held by the day each FALLS DUE on (`fallsDueOn`): billed inside another on its carrier's step, the later of its
  * own day and the carrier's day it pairs with (default (B), built, not asked, 2026-10-30) — so a day of what the rent
  * carries before `from` whose rent day is from `from` on is in the window, still to come, and one inside it whose rent
- * day lies past `to` is a later window's. Its own day is still the occurrence's `date`. ONE window for every reader
- * that asks what came due or is still to come: the arrears (`overdueForSeries`), Upcoming and the forecasts, /budgets'
- * tail, the page's list. 🔴 Held by its own day, the rent typed Nov 16 and nothing of November posted, the utilities'
- * Nov 1 was in the arrears on Nov 10, six days before the rent's Nov 16 came (46f19f15's known gap) — and, owed no
- * earlier than that, it would have been in no window at all until Nov 17. A reader that DRAWS or MATCHES a series'
- * own days — the calendar's grid, the first-posting rule — reads `projectOwnDays`.
+ * day lies past `to` is a later window's. ⚖️ …and DATED by it: that day is the occurrence's `date`, its own day its
+ * `ownDate` — so the window it is held in and the day every reader re-reads, prints or draws are one. ONE window and
+ * one day for every reader that asks what came due or is still to come: the arrears (`overdueForSeries`) and the
+ * forecast's "came due", Upcoming and the dashboard's "due by your next paycheck", the forecasts and their "next", the
+ * category forecast, /budgets' tail, the page's list, the calendar's grid. 🔴 Held by its own day, the rent typed Nov
+ * 16 and nothing of November posted, the utilities' Nov 1 was in the arrears on Nov 10, six days before the rent's Nov
+ * 16 came (46f19f15's known gap) — and, owed no earlier than that, it would have been in no window at all until Nov 17.
+ * 🔴 Held by this day but dated by its own (review of aa05a56d), a reader that re-read `date` read another day — the
+ * category forecast re-filtered their Oct 25, held in November with the rent's Nov 1, out of November, and it was
+ * counted in no month. A reader that MATCHES a row of its own against a series' own days, or a rate that counts them
+ * — the first-posting rule, the committed book — reads `projectOwnDays`. A grader asks `ownDate` paid.
  */
 export function projectOccurrences(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
   return walkOccurrences(series, from, to, series.pairedWith ?? null);
 }
 
 /**
- * `projectOccurrences` held by each occurrence's OWN day, whatever day it falls due on: the series' own days inside
- * [from, to] — what the calendar draws on its grid (its verdict still asks `fallsDueOn`), and what the first-posting
- * rule matches a row of the series' own against. Billed on its own, the two are one walk.
+ * `projectOccurrences` held and dated by each occurrence's OWN day, whatever day it falls due on: the series' own days
+ * inside [from, to], `date` each one's `ownDate` — what the first-posting rule matches a row of the series' own
+ * against, and the days a rate counts (`scheduledOccurrences`). Billed on its own, the two are one walk.
  */
 export function projectOwnDays(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
   return walkOccurrences(series, from, to, null);
@@ -1946,22 +1972,24 @@ function walkOccurrences(
 
   const occurrences: SeriesOccurrence[] = [];
   for (let i = firstStep; ; i++) {
-    const date = stepFrom(anchor, plan, i);
-    if (compareDates(date, last) > 0) break;
+    const ownDate = stepFrom(anchor, plan, i);
+    if (compareDates(ownDate, last) > 0) break;
     // ⚖️ …falling due past `to`, a later window's — and every day after it, as each falls due after the one before
-    if (compareDates(fallsDueOn(pairedWith, date), to) > 0) break;
+    const date = fallsDueOn(pairedWith, ownDate);
+    if (compareDates(date, to) > 0) break;
     // a step back from the anchor is drawn only in the past or where money reached (`walkBackBefore`); beyond, the
     // anchor's walk opens
-    if (i < 0 && series.walkBackBefore && compareDates(date, series.walkBackBefore) >= 0) continue;
+    if (i < 0 && series.walkBackBefore && compareDates(ownDate, series.walkBackBefore) >= 0) continue;
     occurrences.push({
       seriesId: series.id,
       name: series.name,
       kind: series.kind,
       cadence: series.cadence,
       date,
+      ownDate,
       // ⚖️ its own day's rate (§6A 55) — a cash week at $1,047.00, a payroll week at $1,141.92. Never null: a series
       // with no rate now projected nothing above.
-      amountCents: rateOn(series, date)!,
+      amountCents: rateOn(series, ownDate)!,
       anchorDayOfMonth,
       staleness: series.staleness,
     });
@@ -1985,7 +2013,8 @@ function notBeforeItOpens(anchor: string, opensOn: string | null | undefined, da
  * inside another on its carrier's step, a day of its own before that one whose carrier's day it pairs with is still
  * from `day` on (default (B), built, not asked, 2026-10-30): the utilities' Nov 1 asked on Nov 10, with the rent's
  * Nov 16. One reading for the list a walk draws (`projectOccurrences`) and the one next date it names
- * (`rollForwardNextExpected`), so the page's sentence and the All tab's Next name the day Upcoming lists first.
+ * (`rollForwardNextExpected`), so the All tab's Next names the day Upcoming lists first — that step's day falling due
+ * (`nextStillToCome`) — and the page's sentence opens its editor on that step's own day.
  */
 function firstStepFallingDue(
   anchor: string,

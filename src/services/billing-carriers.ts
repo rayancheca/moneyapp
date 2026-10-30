@@ -946,12 +946,13 @@ export function billDueDaysBySeries(
  * the 1st — their Nov 1 is the rent's Nov 16, their Dec 1 its Dec 16, their Jan 1 its Jan 16 — so whatever pays the
  * rent's Dec 16 (Dec 17, on time) pays their Dec 1, and nothing else does, and their Jan 1 still comes with the rent's
  * Jan 16. A day of theirs falls due on the later of its own day and the rent's day it pairs with (`fallsDueOn`): owed,
- * or drawn missed, only once that rent day is, and until then still to come. 🔴 Until then the tie's day read on its
- * own grace (46f19f15's known gap): the rent typed Nov 16, nothing of November posted, on Nov 10 (read through Nov 9)
- * November drew their Nov 1 missed and the runway read "A further $182.21 came due earlier this month and has not
- * posted." six days before the rent's Nov 16 came. Now their Nov 1 is still to come with it — Upcoming, November's
- * forecast, /budgets' tail, their page and the All tab hold it — and owed with it from Nov 17. On a step of its own (an
- * annual item inside a monthly rent) the payment nearest each of its days pays it, as before (`pairingOf`).
+ * or drawn missed, only once that rent day is, and until then still to come — and dated by that day on every reader
+ * (`SeriesOccurrence.date`). 🔴 Until then the tie's day read on its own grace (46f19f15's known gap): the rent typed
+ * Nov 16, nothing of November posted, on Nov 10 (read through Nov 9) November drew their Nov 1 missed and the runway
+ * read "A further $182.21 came due earlier this month and has not posted." six days before the rent's Nov 16 came.
+ * Now their Nov 1 is still to come with it — Upcoming, November's forecast, /budgets' tail, their page and the All tab
+ * hold it, and name it Nov 16 — and owed with it from Nov 17. On a step of its own (an annual item inside a monthly
+ * rent) the payment nearest each of its days pays it, as before (`pairingOf`).
  *
  * ⚠️ The cost, the safe way: a date he types on the rent past what it carries takes their earlier periods off every
  * surface, paid ones too. On the same copy with only his rent retyped Nov 1 (or Nov 2), September and October no longer
@@ -1044,7 +1045,11 @@ function stepsAlike(a: CarrierSchedule, b: CarrierSchedule): boolean {
  * missed, before the rent's day it pairs with is, nor before its own day; until then it is still to come (default
  * built, not asked, 2026-10-30). ONE reading for every window a reader holds a day in — the arrears' month, Upcoming's
  * days, a month's forecast, /budgets' tail, the page's list and its next date (`projectOccurrences`,
- * `rollForwardNextExpected`) — and for the calendar's verdict on the day (`settledVerdict`).
+ * `rollForwardNextExpected`) — and for the calendar's verdict on the day (`settledVerdict`). ⚖️ …and the day each of
+ * those names or draws it on: the occurrence's `date` (`SeriesOccurrence.date`; its own day is `ownDate`, what a
+ * grader asks paid) and the All tab's Next (`nextStillToCome`). 🔴 Held by it but dated by its own day (review of
+ * aa05a56d), a reader that re-read the date read another: the category forecast counted their Oct 25 in no month, the
+ * dashboard counted their Nov 1 due by a Nov 12 paycheck before the rent's Nov 16, and "next Nov 1" named a day past.
  */
 export function fallsDueOn(pairedWith: CarrierPairing | null | undefined, day: string): string {
   const carrierOn = pairedWith?.carrierDayOf(day) ?? null;

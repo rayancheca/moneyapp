@@ -249,6 +249,8 @@ function upcomingBills(db: AppDatabase, today: string): UpcomingBills {
   // decision 2026-09-28). 🔴 On a fixture, the agent's Oct 31 interest stood in for his Nov 5 pay, so "due by
   // your next paycheck" stopped counting bills five days short
   const nextPaycheck = horizon.find((o) => o.kind === "income") ?? null;
+  // ⚖️ due by it on the day each falls due (`SeriesOccurrence.date`) — never its own day: 🔴 compared by that (review
+  // of aa05a56d), the rent typed Nov 16, the utilities' Nov 1 it carries was due by a Nov 12 paycheck before the rent
   const beforePaycheck = nextPaycheck
     ? {
         date: nextPaycheck.date,

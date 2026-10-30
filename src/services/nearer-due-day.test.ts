@@ -14,8 +14,10 @@ import { arrearsSentence } from "@/lib/committed";
 import { arrearsThisMonth } from "./arrears";
 import { billingCarriers, billPaymentsBySeries } from "./billing-carriers";
 import { budgetOverdue, budgetTail } from "./budgets";
+import { predictCategory } from "./category-forecast";
 import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
+import { dashboardData } from "./dashboard";
 import { forecastForMonth } from "./forecast";
 import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
@@ -718,24 +720,25 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
       "2026-10-02",
     );
     const OCT29 = "2026-10-29";
-    // on Oct 29 the readers that look ahead name their Nov 1 with the rent's Nov 2: Upcoming, November's forecast,
-    // their page's list and its sentence, the All tab's Next — and a year of twelve charges, not eleven
-    expect(coming(OCT29, UTIL)).toEqual(["2026-11-01", "2026-12-01"]);
+    // on Oct 29 the readers that look ahead name their Nov 1 with the rent's Nov 2 — the day it falls due (default (B),
+    // 2026-10-30; their own Nov 1 until the review of aa05a56d): Upcoming, November's forecast, their page's list, the
+    // All tab's Next — its sentence's editor their own Nov 1 — and a year of twelve charges, not eleven
+    expect(coming(OCT29, UTIL)).toEqual(["2026-11-02", "2026-12-02"]);
     expect(coming(OCT29, RENT)).toEqual(["2026-11-02", "2026-12-02"]);
     expect(labelsIn("2026-11", OCT29)).toEqual(expect.arrayContaining(["What-if (rent)", "Rent utilities & fees"]));
     const page = seriesDetail(bundle.db, UTIL, OCT29)!;
     expect([page.nextExpectedOn, page.nextExpected.map((o) => o.date)]).toEqual([
       "2026-11-01",
-      ["2026-11-01", "2026-12-01", "2027-01-01"],
+      ["2026-11-02", "2026-12-02", "2027-01-02"],
     ]);
     expect(page.annualizedCents).toBe(12 * 18221);
-    expect(listSeries(bundle.db, OCT29).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-01");
+    expect(listSeries(bundle.db, OCT29).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-02");
     // …and on Nov 20, read through Nov 19 with neither posted, both are owed: the calendar, the arrears, the runway
     checkedThrough(bundle.db, "acct", "2026-11-19");
     const NOV20 = "2026-11-20";
-    expect(unpaid("2026-11", "2026-11-01", NOV20)).toEqual([UTIL]);
+    expect(unpaid("2026-11", "2026-11-02", NOV20).sort()).toEqual([RENT, UTIL]);
     expect(owed(NOV20)).toEqual([
-      [UTIL, "2026-11-01", 18221],
+      [UTIL, "2026-11-02", 18221],
       [RENT, "2026-11-02", 229121],
     ]);
     expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBe(
@@ -763,17 +766,19 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     checkedThrough(bundle.db, "acct", "2026-12-19");
     const DEC20 = "2026-12-20";
     expect(seriesDetail(bundle.db, RENT, DEC20)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-12-10"]);
-    expect(marks("2026-11", "2026-11-01", DEC20)).toEqual([
+    // each drawn and named on the rent's day it falls due with (default (B); its own 1st until the review of aa05a56d)
+    const theirs = (key: string, day: string) => marks(key, day, DEC20).filter(([id]) => id === UTIL);
+    expect(theirs("2026-11", "2026-11-02")).toEqual([
       [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-10", early: false }],
     ]);
-    expect(marks("2026-12", "2026-12-01", DEC20)).toEqual([
+    expect(theirs("2026-12", "2026-12-02")).toEqual([
       [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-10", early: false }],
     ]);
-    expect(marks("2027-01", "2027-01-01", DEC20)).toEqual([[UTIL, "upcoming", null]]);
+    expect(theirs("2027-01", "2027-01-02")).toEqual([[UTIL, "upcoming", null]]);
     expect(owed(DEC20)).toEqual([]);
-    expect(coming(DEC20, UTIL)[0]).toBe("2027-01-01");
+    expect(coming(DEC20, UTIL)[0]).toBe("2027-01-02");
     expect(coming(DEC20, RENT)[0]).toBe("2027-01-02");
-    expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
+    expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-02");
   });
 
   /*
@@ -831,11 +836,14 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     checkedThrough(bundle.db, "acct", "2026-11-19");
     const NOV20 = "2026-11-20";
     expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toEqual({ postedOn: "2026-11-16", dueDaysPast: 0 });
-    expect(marks("2026-11", "2026-11-01", NOV20)).toEqual([
+    // drawn on the rent's Nov 16 their Nov 1 falls due with, and Dec 1 next with its Dec 16 (default (B); their own
+    // 1st until the review of aa05a56d)
+    expect(marks("2026-11", "2026-11-01", NOV20)).toEqual([]);
+    expect(marks("2026-11", "2026-11-16", NOV20).filter(([id]) => id === UTIL)).toEqual([
       [UTIL, "paid", { carrier: "the rent", postedOn: "2026-11-16", early: false }],
     ]);
     expect(owed(NOV20)).toEqual([]);
-    expect(coming(NOV20, UTIL)[0]).toBe("2026-12-01");
+    expect(coming(NOV20, UTIL)[0]).toBe("2026-12-16");
   });
 
   /*
@@ -859,9 +867,12 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     checkedThrough(bundle.db, "acct", "2026-11-22");
     const NOV23 = "2026-11-23";
     expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toBeNull();
-    expect(unpaid("2026-11", "2026-11-01", NOV23)).toEqual([UTIL]);
+    // owed, drawn and named on the rent's Nov 16 their Nov 1 falls due with (default (B); their own Nov 1 until the
+    // review of aa05a56d)
+    expect(unpaid("2026-11", "2026-11-01", NOV23)).toEqual([]);
+    expect(unpaid("2026-11", "2026-11-16", NOV23).sort()).toEqual([RENT, UTIL]);
     expect(owed(NOV23)).toEqual([
-      [UTIL, "2026-11-01", 18221],
+      [UTIL, "2026-11-16", 18221],
       [RENT, "2026-11-16", 229121],
     ]);
     expect(arrearsSentence(committedBook(bundle.db, NOV23))).toBe(
@@ -1051,30 +1062,33 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     );
     checkedThrough(bundle.db, "acct", "2026-12-19");
     const DEC20 = "2026-12-20";
-    expect(marks("2026-11", "2026-11-01", DEC20)).toEqual([
+    // each drawn on the rent's day it falls due with — their Nov 1 on its Nov 16, Dec 1 on Dec 16, Jan 1 on Jan 16
+    // (their own 1st until the review of aa05a56d)
+    const theirs = (key: string, day: string) => marks(key, day, DEC20).filter(([id]) => id === UTIL);
+    expect(theirs("2026-11", "2026-11-16")).toEqual([
       [UTIL, "paid", { carrier: "the rent", postedOn: "2026-11-16", early: false }],
     ]);
-    expect(marks("2026-12", "2026-12-01", DEC20)).toEqual([
+    expect(theirs("2026-12", "2026-12-16")).toEqual([
       [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-17", early: false }],
     ]);
-    expect(marks("2027-01", "2027-01-01", DEC20)).toEqual([[UTIL, "upcoming", null]]);
+    expect(theirs("2027-01", "2027-01-16")).toEqual([[UTIL, "upcoming", null]]);
     // nothing owed: the arrears, the runway's "A further …", /budgets' row, their page, December's forecast
     expect(owed(DEC20)).toEqual([]);
     expect(arrearsSentence(committedBook(bundle.db, DEC20))).toBeNull();
     expect(budgetOverdue(bundle.db, categoryId, "2026-12-01", DEC20).series).toEqual([]);
     expect(seriesDetail(bundle.db, UTIL, DEC20)!.overdue).toBeNull();
     expect(detailsIn("2026-12", DEC20).filter((d) => d.includes("came due"))).toEqual([]);
-    // …and their Jan 1 comes with the rent's Jan 16: Upcoming, January's forecast, their page's list and its
-    // sentence, the All tab's Next
-    expect(coming(DEC20, UTIL)[0]).toBe("2027-01-01");
+    // …and their Jan 1 comes with the rent's Jan 16: Upcoming, January's forecast, their page's list, the All tab's
+    // Next — the sentence's editor on their own Jan 1
+    expect(coming(DEC20, UTIL)[0]).toBe("2027-01-16");
     expect(coming(DEC20, RENT)[0]).toBe("2027-01-16");
     expect(labelsIn("2027-01", DEC20)).toEqual(expect.arrayContaining(["What-if (rent)", "Rent utilities & fees"]));
     const page = seriesDetail(bundle.db, UTIL, DEC20)!;
     expect([page.nextExpectedOn, page.nextExpected.map((o) => o.date)]).toEqual([
       "2027-01-01",
-      ["2027-01-01", "2027-02-01", "2027-03-01"],
+      ["2027-01-16", "2027-02-16", "2027-03-16"],
     ]);
-    expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
+    expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-16");
   });
 
   /*
@@ -1096,25 +1110,34 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     );
     checkedThrough(bundle.db, "acct", "2026-11-09");
     const NOV10 = "2026-11-10";
-    expect(marks("2026-11", "2026-11-01", NOV10)).toEqual([[UTIL, "upcoming", null]]);
+    // drawn upcoming on the day it falls due, the rent's Nov 16 — never on its own Nov 1, a day already past
+    expect(marks("2026-11", "2026-11-01", NOV10)).toEqual([]);
+    expect(marks("2026-11", "2026-11-16", NOV10)).toEqual([
+      [UTIL, "upcoming", null],
+      [RENT, "upcoming", null],
+    ]);
     expect(owed(NOV10)).toEqual([]);
     expect(arrearsSentence(committedBook(bundle.db, NOV10))).toBeNull();
     expect(budgetOverdue(bundle.db, categoryId, "2026-11-01", NOV10).series).toEqual([]);
-    // …still to come with the rent's Nov 16 — and their Dec 1 with its Dec 16
-    expect(coming(NOV10, UTIL)).toEqual(["2026-11-01", "2026-12-01"]);
+    // …still to come with the rent's Nov 16 — and their Dec 1 with its Dec 16 — and named by those days: Upcoming,
+    // November's forecast, /budgets' tail, their page's list and the All tab's Next
+    expect(coming(NOV10, UTIL)).toEqual(["2026-11-16", "2026-12-16"]);
     expect(coming(NOV10, RENT)).toEqual(["2026-11-16", "2026-12-16"]);
     expect(labelsIn("2026-11", NOV10)).toEqual(expect.arrayContaining(["What-if (rent)", "Rent utilities & fees"]));
+    expect(detailsIn("2026-11", NOV10)).toContain("1 × -$182.21 (monthly), next Nov 16");
     expect(budgetTail(bundle.db, categoryId, "2026-11-30", NOV10).series.map((s) => [s.id, s.nextDate])).toEqual([
-      [UTIL, "2026-11-01"],
+      [UTIL, "2026-11-16"],
       [RENT, "2026-11-16"],
     ]);
     const page = seriesDetail(bundle.db, UTIL, NOV10)!;
-    expect([page.nextExpectedOn, page.nextExpected.map((o) => o.date), page.overdue]).toEqual([
-      "2026-11-01",
-      ["2026-11-01", "2026-12-01", "2027-01-01"],
+    expect([page.nextExpected.map((o) => o.date), page.overdue]).toEqual([
+      ["2026-11-16", "2026-12-16", "2027-01-16"],
       null,
     ]);
-    expect(listSeries(bundle.db, NOV10).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-01");
+    expect(listSeries(bundle.db, NOV10).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-16");
+    // ⛔ …and the sentence's editor opens on their OWN Nov 1, still to come: what its Save writes as their date. On
+    // the rent's Nov 16 a Save with nothing changed would retype them onto the 16th.
+    expect(page.nextExpectedOn).toBe("2026-11-01");
   });
 
   /*
@@ -1214,13 +1237,156 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     pay("t-util-dec18", UTIL, "2026-12-18", -18221);
     checkedThrough(bundle.db, "acct", "2026-12-26");
     const DEC27 = "2026-12-27";
+    // owed, and drawn, on the rent's day each falls due with (their own 1st until the review of aa05a56d)
     expect(owed(DEC27)).toEqual([
-      [UTIL, "2026-12-01", 18221],
+      [UTIL, "2026-12-16", 18221],
       [RENT, "2026-12-16", 229121],
     ]);
-    expect(marks("2027-01", "2027-01-01", DEC27)).toEqual([
+    expect(marks("2027-01", "2027-01-16", DEC27).filter(([id]) => id === UTIL)).toEqual([
       [UTIL, "paid", { carrier: null, postedOn: "2026-12-18", early: true }],
     ]);
+  });
+
+  /*
+   * ⚖️ (B) …and a day of theirs is HELD, NAMED AND DRAWN on the day it falls due — the later of its own day and the
+   * rent's day it pairs with (`fallsDueOn`) — by every reader: an occurrence's `date` IS that day (`projectOccurrences`),
+   * and its own day (`ownDate`) is only what a grader asks paid (`paymentFor`). 🔴 At aa05a56d the windows held it by
+   * that day while `date` stayed its own (review of aa05a56d), so every reader that re-read `date` read another day:
+   * the category forecast re-filtered it out of the month it fell due in and never counted it, the dashboard counted
+   * it due before a paycheck that comes first, and every sentence, list and grid named or drew its own day.
+   */
+  test("⚖️ (B) …on the 25th, the rent typed Nov 1: November's category forecast counts their Oct 25 with it", () => {
+    rentWith(
+      { rentOn: "2026-11-01", typed: true, utilOn: "2026-09-25", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    checkedThrough(bundle.db, "acct", "2026-10-29");
+    const OCT30 = "2026-10-30";
+    // 🔴 at aa05a56d $2,291.21, "1 expected recurring charge": their Oct 25, held in November, re-filtered out by day
+    const predicted = predictCategory(bundle.db, categoryId, "Housing", OCT30).forecast;
+    expect([predicted.recurringCents, predicted.parts[0]!.basis]).toEqual([
+      229121 + 18221,
+      "2 expected recurring charges",
+    ]);
+    // …the month /recurring's forecast holds it in, named by the day it falls due — never "next Oct 25"
+    expect(detailsIn("2026-11", OCT30)).toContain("1 × -$182.21 (monthly), next Nov 1");
+  });
+
+  test("⚖️ (B) …the rent typed Nov 16: due by the Nov 12 paycheck leaves out their Nov 1, due with its Nov 16", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        ...bill("pay", "Weekly pay", 114192, "2026-11-12"),
+        kind: "income",
+        cadence: "weekly",
+        intervalDaysAvg: 7,
+        anchorDay: null,
+      })
+      .run();
+    checkedThrough(bundle.db, "acct", "2026-11-09");
+    const NOV10 = "2026-11-10";
+    const { upcoming } = dashboardData(bundle.db, NOV10);
+    // 🔴 at aa05a56d -$182.21: their Nov 1 compared by its own day, before a paycheck their Nov 16 comes after
+    expect(upcoming.beforePaycheck).toEqual({ date: "2026-11-12", cents: 0 });
+    // …and the strip lists it on the rent's Nov 16, beside the rent — never "Rent utilities & fees Nov 1" first
+    expect(
+      upcoming.items.filter((i) => i.seriesId === UTIL || i.seriesId === RENT).map((i) => [i.seriesId, i.date]),
+    ).toEqual([
+      [UTIL, "2026-11-16"],
+      [RENT, "2026-11-16"],
+    ]);
+  });
+
+  test("⚖️ (B) …paid Nov 16, December unpaid: on Dec 10 their Dec 1 is next Dec 16, on Dec 20 it came due Dec 16", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+    );
+    checkedThrough(bundle.db, "acct", "2026-12-09");
+    // 🔴 at aa05a56d "next Dec 1" on Dec 10 — a day already past — and "came due Dec 1 and has not posted" on Dec 20
+    expect(detailsIn("2026-12", "2026-12-10")).toContain("1 × -$182.21 (monthly), next Dec 16");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    const DEC20 = "2026-12-20";
+    expect(detailsIn("2026-12", DEC20)).toContain("1 × -$182.21 (monthly), came due Dec 16 and has not posted");
+    expect(owed(DEC20)).toEqual([
+      [UTIL, "2026-12-16", 18221],
+      [RENT, "2026-12-16", 229121],
+    ]);
+    expect(seriesDetail(bundle.db, UTIL, DEC20)!.overdue!.date).toBe("2026-12-16");
+    // …and the calendar draws it missed on that day, beside the rent — nothing of theirs on their own Dec 1
+    expect(marks("2026-12", "2026-12-01", DEC20)).toEqual([]);
+    expect(unpaid("2026-12", "2026-12-16", DEC20).sort()).toEqual([RENT, UTIL]);
+  });
+
+  /*
+   * ⚖️ (B) …and "paid early" is measured against the day the grid draws it on, the day it falls due: the rent typed Nov
+   * 16 and paid Nov 16, then Dec 5 — nearer its Dec 16 (decision 76), so early for it — pays their Dec 1, which falls
+   * due with that Dec 16: drawn there "paid early with the rent's payment of Dec 5". Measured against their own Dec 1 it
+   * would read as paid on its day, four days after it.
+   */
+  test("⚖️ (B) …the rent's Dec 5, early for its Dec 16: their Dec 1 is drawn on Dec 16, paid early by it", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-05",
+    );
+    checkedThrough(bundle.db, "acct", "2026-12-09");
+    const DEC10 = "2026-12-10";
+    expect(marks("2026-12", "2026-12-16", DEC10)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-05", early: true }],
+    ]);
+    expect(owed(DEC10)).toEqual([]);
+    expect(coming(DEC10, UTIL)[0]).toBe("2027-01-16");
+  });
+
+  test("⚖️ (B) …on the 25th, the rent typed Sep 1: each day of theirs is drawn, forecast and owed on the rent's 1st", () => {
+    rentWith(
+      { rentOn: "2026-09-01", typed: true, utilOn: "2026-10-25", utilTyped: true, noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    checkedThrough(bundle.db, "acct", "2026-10-28");
+    const OCT29 = "2026-10-29";
+    // 🔴 at aa05a56d October drew their Oct 25 "upcoming" and counted it in its Expected, beside a card holding none —
+    // their Oct 25 falls due with the rent's Nov 1, and nothing of theirs before it is projected (their date opens them)
+    const october = recurringCalendar(bundle.db, "2026-10", OCT29);
+    expect(Object.values(october.entriesByDay).flat().filter((e) => e.seriesId === UTIL)).toEqual([]);
+    expect(october.upcomingNetCents).toBe(0);
+    expect(labelsIn("2026-10", OCT29)).not.toContain("Rent utilities & fees");
+    // …and November draws, forecasts and names their Oct 25 on the rent's Nov 1
+    expect(marks("2026-11", "2026-11-01", OCT29)).toEqual([
+      [UTIL, "upcoming", null],
+      [RENT, "upcoming", null],
+    ]);
+    expect(detailsIn("2026-11", OCT29)).toContain("1 × -$182.21 (monthly), next Nov 1");
+    // …and, nothing of November posted, it came due Nov 1 with the rent — never "came due Oct 25"
+    checkedThrough(bundle.db, "acct", "2026-11-04");
+    const NOV5 = "2026-11-05";
+    expect(owed(NOV5)).toEqual([
+      [UTIL, "2026-11-01", 18221],
+      [RENT, "2026-11-01", 229121],
+    ]);
+    expect(detailsIn("2026-11", NOV5)).toContain("1 × -$182.21 (monthly), came due Nov 1 and has not posted");
   });
 });
 

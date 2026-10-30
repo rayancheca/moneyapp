@@ -48,8 +48,10 @@ import {
  *    posted on or before today;
  *  - the amount equals the effective amount EXACTLY, sign included;
  *  - the row posted within the series' own `toleranceDays` of one of the
- *    occurrences its walk draws on its own days (`projectOwnDays`, the
- *    calendar's). That walk only steps FORWARD from
+ *    occurrences its walk draws on its own days (`projectOwnDays` — the
+ *    calendar's days billed on its own; billed inside another, the calendar
+ *    draws each on the day it falls due with its carrier's, which no row of its
+ *    own is matched against). That walk only steps FORWARD from
  *    the schedule's next date (`stepsToReach` never goes below step 0), so a
  *    commitment registered as starting on the 15th cannot claim a charge a
  *    month earlier — the same arbiter arrears and the calendar use;

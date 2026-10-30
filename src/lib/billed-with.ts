@@ -45,7 +45,8 @@ export interface BillingCarrier {
    * the carrier's day the same number of steps on, so each payment of the carrier's pays exactly the one of theirs its
    * own day carries. Checked against a calendar: the rent typed Nov 16, the utilities on the 1st — their Nov 1 is the
    * rent's Nov 16, their Dec 1 the rent's Dec 16, their Jan 1 the rent's Jan 16: whatever pays the rent's Dec 16 pays
-   * their Dec 1, and nothing else does; and their Dec 1 is owed, or drawn missed, only once the rent's Dec 16 is. ⛔
+   * their Dec 1, and nothing else does; and their Dec 1 falls due on the rent's Dec 16 — still to come until then, owed
+   * or drawn missed only from then, and named, listed and drawn on that day by every reader (`fallsDueOn`). ⛔
    * REQUIRED, `userEndsOn`'s reason: a carrier built without it would leave every day of what it carries to the
    * payment nearest it, silently.
    */

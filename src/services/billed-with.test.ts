@@ -522,8 +522,10 @@ describe("a merge of the carrier — the link follows the rent to the series it 
     const where = () => ({
       upcoming: upcomingOccurrences(bundle.db, TODAY_DEC, 60).some((o) => o.seriesId === UTIL),
       arrears: arrearsThisMonth(bundle.db, new Set([UTIL]), TODAY_DEC).series.length > 0,
+      // ⚖️ drawn on the day their Dec 1 falls due, the live carrier's Dec 2 it pairs with (default (B), 2026-10-30;
+      // on their own Dec 1 until the review of aa05a56d)
       december:
-        recurringCalendar(bundle.db, "2026-12", TODAY_DEC).entriesByDay["2026-12-01"]?.find((e) => e.seriesId === UTIL)
+        recurringCalendar(bundle.db, "2026-12", TODAY_DEC).entriesByDay["2026-12-02"]?.find((e) => e.seriesId === UTIL)
           ?.paidWith ?? null,
       card: subscriptionsCard(bundle.db, TODAY_DEC)!.live.some((l) => l.seriesId === UTIL),
       evidence: listSeries(bundle.db, TODAY_DEC).find((s) => s.id === UTIL)!.evidence,
