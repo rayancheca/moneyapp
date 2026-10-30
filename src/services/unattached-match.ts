@@ -13,11 +13,12 @@ import {
 import { loadCategoryIndex, payDayRows, type CategoryIndex } from "./analytics";
 
 /**
- * Per series, the rows that match the days a surface is about to call missed — paydays it would say "did not reach a
- * bank", due days it would say "has not posted" — to the cent, within the series' own tolerance, sitting unattached
- * (`lib/unattached-match`, the rule and its 🔴). ⛔ ONE predicate, every caller: the arrears (`arrearsInWindow`), the
- * income mirror (`unbankedIncomeForSeries`), the pay readings (`cashEarningsReadings`) and the recurring calendar
- * (`recurringCalendar`, through `settledVerdict`) ask it here, and no surface matches a row of its own.
+ * Per series, the rows that match the days a surface is about to call missed — paydays it would say passed "with no
+ * deposit", "not banked yet" or "did not reach a bank" (every checked one no deposit paid in full), due days it would
+ * say "has not posted" — to the cent, within the series' own tolerance, sitting unattached (`lib/unattached-match`, the
+ * rule and its 🔴; the days asked, `asksForUnattachedMatch`). ⛔ ONE predicate, every caller: the arrears
+ * (`arrearsInWindow`), the income mirror (`unbankedIncomeForSeries`), the pay readings (`cashEarningsReadings`) and the
+ * recurring calendar (`recurringCalendar`, through `settledVerdict`) ask it here, and no surface matches a row of its own.
  *
  * A row is a candidate when it is ACTIVE, has NO series link and no transfer pairing (a transfer's leg is attached, to
  * its other leg), is dated on or before today (nothing after today has arrived), and sits on the series' account — or,

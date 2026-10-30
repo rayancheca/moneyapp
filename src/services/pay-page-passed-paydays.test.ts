@@ -190,6 +190,7 @@ function othersRead() {
       occurrenceCount: f.occurrenceCount,
       checkedOccurrenceCount: f.checkedOccurrenceCount,
       pastGraceOccurrenceCount: f.pastGraceOccurrenceCount,
+      inGraceUnattachedCount: f.inGraceUnattachedCount,
       frontier: f.frontier,
     },
     budgets: {
@@ -211,6 +212,7 @@ describe("a pay series' own page lists the paydays that passed this month with n
       checkedOccurrenceCount: 0,
       pastGraceOccurrenceCount: 0,
       unattached: [],
+      inGraceUnattachedCount: 0,
       frontier: { kind: "day", through: "2026-08-12" },
       paydays: [
         { date: "2026-09-03", amountCents: 100_000 },
@@ -221,7 +223,7 @@ describe("a pay series' own page lists the paydays that passed this month with n
     const others = othersRead();
     expect(reading).toEqual(others.forecast);
     // /budgets prints no warning, so it reads the split alone
-    const { pastGraceOccurrenceCount: _grace, ...split } = reading;
+    const { pastGraceOccurrenceCount: _grace, inGraceUnattachedCount: _inGrace, ...split } = reading;
     expect(split).toEqual(others.budgets);
   });
 

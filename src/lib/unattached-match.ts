@@ -3,7 +3,7 @@ import { formatCents } from "@/lib/money";
 
 /**
  * A ROW THAT MATCHES A DAY TO THE CENT, SITTING THERE UNATTACHED — the one rule every surface asks before it calls a
- * payday "did not reach a bank" or a due day "has not posted".
+ * payday "with no deposit", "not banked yet" or "did not reach a bank", or a due day "has not posted".
  *
  * 🔴 Measured on his ledger copy 2026-10-29, after the Wells Fargo statement of Sep 25 → Oct 26 was imported and before
  * he filed it: Earned vs banked read "4 paydays have passed since Sep 24 with no deposit. 4 of them fall on days the
@@ -250,6 +250,35 @@ export interface NeverSplit {
 export function neverSplit(neverCents: number, matched: readonly UnattachedMatch[]): NeverSplit {
   const matchedCents = Math.max(0, Math.min(neverCents, unattachedCents(matched)));
   return { cents: neverCents, matchedCents, matched: matchedCents === 0 ? [] : matched };
+}
+
+/** The never split the words say beside a "not banked yet" figure, and what of that figure no row answers. */
+export interface NamedTogether {
+  /** the never part with the not-banked-yet part's matched money joined to it — what `neverClauses` says */
+  readonly said: NeverSplit;
+  /** of the not-banked-yet figure, the money no row answers — said "not banked yet", in a surface's own words */
+  readonly notYetLeftCents: number;
+}
+
+/**
+ * ⛔ ONE SPLIT of a "never reached a bank" figure and the "not banked yet" figure beside it (`unbankedSplit`), each by
+ * the rows the one rule matched to its own paydays (`neverSplit`): every matched row is named once, in the never part's
+ * clause — a row of a payday still inside its days to land too, its money said as matched, never "not banked yet" — and
+ * what no row answers keeps its words. The figures are unchanged; only the words that say their money move. Earned vs
+ * banked's difference (`gapOf`) and /spending's shortfall note (`payShortfallNote`) say it through this one split.
+ * 🔴 Review of 304c59a4 (MEDIUM): his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read
+ * Oct 24 (Wells Fargo read to that day), the card said "$1,141.92 is for paydays whose days to land run past Oct 24 … —
+ * so it is not banked yet" and /spending "$941.92 is not banked yet; Oct 22's days to land run past …" beside the row.
+ */
+export function namedTogether(never: NeverSplit, notYet: NeverSplit): NamedTogether {
+  return {
+    said: {
+      cents: never.cents + notYet.matchedCents,
+      matchedCents: never.matchedCents + notYet.matchedCents,
+      matched: [...never.matched, ...notYet.matched],
+    },
+    notYetLeftCents: notYet.cents - notYet.matchedCents,
+  };
 }
 
 /**

@@ -83,10 +83,18 @@ export interface UnbankedIncomeSeries extends BudgetTailSeries {
    */
   pastGraceOccurrenceCount: number;
   /**
-   * Of the paydays checked through their days to land (`pastGraceOccurrenceCount`), those a row matches to the cent
-   * that sits unattached (`unattachedMatchesBySeries`), oldest first — never "did not reach a bank", and still unbanked.
+   * Of the CHECKED paydays (`checkedOccurrenceCount`) — inside their days to land too — those a row matches to the cent
+   * that sits unattached (`unattachedMatchesBySeries`), oldest first: never "with no deposit imported", "not banked yet"
+   * nor "did not reach a bank", and still unbanked. 🔴 Review of 304c59a4 (MEDIUM): asked only past the days to land,
+   * so a payday still inside them had no row here — and no figure holding its row took its claim back (`leftOutOf`).
    */
   unattached: readonly UnattachedMatch[];
+  /**
+   * Of `unattached`, the rows for paydays still inside their days to land — the rest are past them, of the warning's
+   * `pastGraceOccurrenceCount` — so the forecast's subject says which pay is not banked yet and which never reaches a
+   * bank of the paydays no row answers (`PassedPaydaysReading.inGraceUnattachedCount`).
+   */
+  inGraceUnattachedCount: number;
 }
 
 export interface UnbankedIncome {
@@ -471,17 +479,24 @@ export function unbankedIncomeForSeries(
 
   const read = paydaysUnmetInWindow(db, livePaySeries(db, seriesIds), periodStart, today);
   if (read.length === 0) return { totalCents: 0, series: [] };
-  // ⛔ the paydays the warning would call never banked, asked the one rule for a row matching them unattached — beside
-  // every other live pay schedule's in the same window, so a schedule's own page gives a row to the schedule the
-  // forecast does (`rivals`, review of e6ad55a)
-  const unattachedOf = unattachedMatchesBySeries(db, pastGraceDays(read), today, {
+  /*
+   * ⛔ the paydays a sentence would call absent — every CHECKED one, "with no deposit", inside its days to land too
+   * (`asksForUnattachedMatch`) — asked the one rule for a row matching them unattached, beside every other live pay
+   * schedule's in the same window, so a schedule's own page gives a row to the schedule the forecast does (`rivals`,
+   * review of e6ad55a). 🔴 Review of 304c59a4 (MEDIUM): asked only past the days to land, so on his ledger copy with
+   * Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to that day), the tile,
+   * /budgets and the forecast each said the payday was outside a figure that held the row.
+   */
+  const unattachedOf = unattachedMatchesBySeries(db, checkedDays(read), today, {
     rivals: () =>
-      pastGraceDays(
+      checkedDays(
         paydaysUnmetInWindow(db, livePaySeries(db, liveSeriesIdsBut(db, seriesIds, "income")), periodStart, today),
       ),
   });
 
   const series = read.map(({ s, occ, checkedThrough, checked, pastGrace }): UnbankedIncomeSeries => {
+    const unattached = unattachedOf.get(s.id) ?? [];
+    const pastGraceDates = new Set(pastGrace.map((o) => o.date));
     return {
       id: s.id,
       name: s.name,
@@ -496,7 +511,8 @@ export function unbankedIncomeForSeries(
       checkedCents: checked.reduce((sum, o) => sum + o.amountCents, 0),
       pastGraceOccurrenceCount: pastGrace.length,
       occurrenceDates: occ.map((o) => o.date),
-      unattached: unattachedOf.get(s.id) ?? [],
+      unattached,
+      inGraceUnattachedCount: unattached.filter((m) => !pastGraceDates.has(m.date)).length,
     };
   });
   series.sort((a, b) => compareDates(a.nextDate, b.nextDate) || a.name.localeCompare(b.name));
@@ -535,10 +551,10 @@ interface UnmetPaydays {
   pastGrace: ReturnType<typeof projectOccurrences>;
 }
 
-/** Each series' paydays checked through their days to land — what a surface would call never banked. */
-function pastGraceDays(read: readonly UnmetPaydays[]): ReadonlyMap<string, readonly ExpectedDay[]> {
+/** Each series' checked paydays — what a surface would call "with no deposit", not banked yet or never banked. */
+function checkedDays(read: readonly UnmetPaydays[]): ReadonlyMap<string, readonly ExpectedDay[]> {
   return new Map(
-    read.map(({ s, pastGrace }) => [s.id, pastGrace.map((o) => ({ date: o.date, amountCents: o.amountCents }))]),
+    read.map(({ s, checked }) => [s.id, checked.map((o) => ({ date: o.date, amountCents: o.amountCents }))]),
   );
 }
 
@@ -638,8 +654,10 @@ export interface UnbankedIncomeTotals {
   checkedOccurrenceCount: number;
   /** of those, the paydays checked through their days to land too — the warning's (`pastGraceOccurrenceCount`) */
   pastGraceOccurrenceCount: number;
-  /** of those, the paydays a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`) */
+  /** of the checked paydays, those a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`) */
   unattached?: readonly UnattachedMatch[];
+  /** of `unattached`, the rows for paydays still inside their days to land (`UnbankedIncomeSeries`). Absent: none */
+  inGraceUnattachedCount?: number;
   /**
    * How far the accounts the pay lands in were checked, across every series
    * (`sharedFrontier`): the one day they share, `per-schedule` when they were
@@ -658,6 +676,7 @@ export function unbankedIncomeTotals(u: UnbankedIncome): UnbankedIncomeTotals {
     checkedOccurrenceCount: u.series.reduce((n, s) => n + s.checkedOccurrenceCount, 0),
     pastGraceOccurrenceCount: u.series.reduce((n, s) => n + s.pastGraceOccurrenceCount, 0),
     unattached: u.series.flatMap((s) => s.unattached),
+    inGraceUnattachedCount: u.series.reduce((n, s) => n + s.inGraceUnattachedCount, 0),
     frontier: sharedFrontier(u.series.map((s) => s.checkedThrough)),
     names: u.series.map((s) => s.name),
   };

@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
+import { createElement, type ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { PassedPaydaysLine } from "@/components/budgets/PassedPaydaysLine";
+import { UnbankedIncomeNote } from "@/components/recurring/ForecastCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -800,6 +804,254 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
     expect(read("2026-10-01", "2026-10-31")).toContain(
       "since the last deposit on Thu, Sep 24, 2026 — that money sits in the rows named above, not attached to the " +
         "schedule, was held as cash",
+    );
+  });
+});
+
+/** A rendered sentence as a reader reads it: its words, the markup gone. */
+const textOf = (element: ReactElement): string =>
+  renderToStaticMarkup(element)
+    .replace(/<!-- -->/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** /spending's October notes, read `today` */
+const octoberNotes = (today: string): string =>
+  cashEarningsSectionNotes({
+    rows: cashEarningsReadings(bundle.db, { from: "2026-10-01", to: "2026-10-31", today, withChecked: true }),
+    formatDay: formatDayLong,
+  })
+    .map((n) => n.body)
+    .join(" ");
+
+/*
+ * ⛔ The one rule is asked of every payday the ledger has CHECKED — inside its days to land too: "with no deposit" and
+ * "not banked yet" are claims of absence a row there contradicts, as "never reached a bank" is. 🔴 Review of 304c59a4
+ * (MEDIUM — a regression from ae29cda4 by 9e715b7b): it was asked only once a payday's days to land were checked
+ * (`pastGraceDays`). His ledger copy with Oct 22's +$1,141.92 detached — filed Salary, attached to nothing — read Oct 24
+ * (Wells Fargo read to that day, Oct 22 inside its 3 days to land): the tile "1 payday worth $1,141.92 already passed
+ * this month with no deposit imported — not in Free to spend", /budgets "… with no deposit against it — counted in
+ * neither figure above", the forecast "… — not counted above, and not in EOM cash", over the very $734.74, $4,767.68
+ * and $7,137.82 the unmodified copy reads: every figure held the row. His own schedule reaches it — a statement ending
+ * 0–2 days after a Thursday payday, that payroll row filed but not attached.
+ */
+describe("a checked payday still inside its days to land: its row is named, and no figure holding it leaves it out", () => {
+  const IN_GRACE = "2026-10-24";
+  const ROW = "a row of $1,141.92 on Oct 22 that is not attached to it";
+  /** Oct 1, 8 and 15 paid and filed; Oct 22's payroll filed Salary from the review queue and attached to nothing */
+  function oct22FiledNotAttached(): string {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    return row("2026-10-22", 114_192, { categoryId: salary });
+  }
+
+  test("the forecast's note, his pay's page and /budgets name the row, and no figure holding it is said to leave it out", () => {
+    const id = oct22FiledNotAttached();
+    const f = forecastCurrentMonth(bundle.db, IN_GRACE);
+    expect(f.unbankedIncome).toMatchObject({ totalCents: 114_192, checkedOccurrenceCount: 1, pastGraceOccurrenceCount: 0 });
+    // EOM cash holds it through Wells Fargo's balance, "in so far" counts it
+    expect(f.unbankedIncome.inEomCash?.map((m) => m.row.id)).toEqual([id]);
+    expect(textOf(createElement(UnbankedIncomeNote, { unbanked: f.unbankedIncome }))).toBe(
+      "1 payday worth $1,141.92 already passed this month with no deposit attached to it (It America LLC (weekly pay)) " +
+        "— not counted above, though EOM cash holds the row that matches it. Pay matched to the cent by a row of " +
+        "$1,141.92 on Thu, Oct 22, 2026 that is not attached to it cannot be projected as arriving; the month strip " +
+        "below counts it, because that line is the schedule.",
+    );
+    // inside its days to land: no warning tone, as without the row
+    expect(passedPaydaysWords(f.unbankedIncome, formatDayLong).warning).toBe(false);
+    expect(passedPaydaysWords(seriesDetail(bundle.db, PAY, IN_GRACE).unbankedPaydays!, formatDayShort)).toEqual({
+      count: "1 payday",
+      passed: "already passed this month with no deposit attached to it",
+      unread: null,
+      notProjected: `Pay matched to the cent by ${ROW} cannot be projected as arriving`,
+      warning: false,
+    });
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", IN_GRACE);
+    expect(income.postedCents).toBe(4 * 114_192);
+    expect(income.passedUnpaidInSoFar.map((m) => m.row.id)).toEqual([id]);
+    expect(textOf(createElement(PassedPaydaysLine, { income }))).toBe(
+      `1 payday worth $1,141.92 already passed this month with no deposit attached to it, matched to the cent by ${ROW}. ` +
+        "That is evidence about what has been imported, not about whether the money was earned.",
+    );
+  });
+
+  // ⛔ …and without the row, the claims and their words stand: it is the payday no figure holds, not banked yet
+  test("without the row, Oct 22 is not banked yet and left out of every figure", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    const f = forecastCurrentMonth(bundle.db, IN_GRACE);
+    expect(textOf(createElement(UnbankedIncomeNote, { unbanked: f.unbankedIncome }))).toBe(
+      "1 payday worth $1,141.92 already passed this month with no deposit imported (It America LLC (weekly pay)) — not " +
+        "counted above, and not in EOM cash. Pay not banked yet cannot be projected as arriving; the month strip below " +
+        "counts it, because that line is the schedule.",
+    );
+    const income = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", IN_GRACE);
+    expect(textOf(createElement(PassedPaydaysLine, { income }))).toBe(
+      "1 payday worth $1,141.92 already passed this month with no deposit against it — counted in neither figure " +
+        "above. That is evidence about what has been imported, not about whether the money was earned.",
+    );
+  });
+
+  test("the calendar's Oct 22 names the row — never 'not banked yet' — and settles none of it", () => {
+    oct22FiledNotAttached();
+    const october = recurringCalendar(bundle.db, "2026-10", IN_GRACE);
+    const mark = october.entriesByDay["2026-10-22"]!.find((e) => e.seriesId === PAY && e.transactionId === null)!;
+    expect(mark).toMatchObject({ state: "unsettled", unsettledReason: "matched_unattached", settledCents: null });
+    expect(unsettledWords(mark)).toBe(`matched to the cent by ${ROW}`);
+  });
+
+  test("Earned vs banked and /spending name the row — never 'with no deposit' nor 'not banked yet' of Oct 22", () => {
+    oct22FiledNotAttached();
+    const line = incomeCard(bundle.db, IN_GRACE)!.pay[0]!;
+    expect(line.verdict).toBe(
+      `1 payday has passed since Oct 15 with no deposit attached to this schedule: it is matched to the cent by ${ROW} ` +
+        "— a schedule is called stale only after 3 quiet periods, so this is not a warning yet.",
+    );
+    expect(line.gapLabel).toBe(`all of it is matched to the cent by ${ROW}.`);
+    // ⛔ the figures are unchanged: Oct 22's pay is still not banked yet, and nothing the row holds is banked
+    expect(line.notBankedYetCents).toBe(114_192);
+    expect(line.bankedCents).toBe(7 * 114_192);
+    expect(octoberNotes(IN_GRACE)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        `inside the window and $1,141.92 is matched to the cent by ${ROW}.`,
+    );
+  });
+
+  // ⛔ …and beside a payday past its days to land that no row answers, that one never reaches a bank — in warning tone
+  test("Oct 15 past its days to land with no row, Oct 22's row inside them: each payday in its own words", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 2)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-10-22", 114_192, { categoryId: salary });
+    const words = passedPaydaysWords(forecastCurrentMonth(bundle.db, IN_GRACE).unbankedIncome, formatDayShort);
+    expect(words).toMatchObject({
+      passed: "already passed this month with no deposit attached to it",
+      notProjected: `Pay that never reaches a bank, and pay matched to the cent by ${ROW}, cannot be projected as arriving`,
+      warning: true,
+    });
+    const line = incomeCard(bundle.db, IN_GRACE)!.pay[0]!;
+    expect(line.gapLabel).toBe(`$1,141.92 of it never reached a bank; $1,141.92 is matched to the cent by ${ROW}.`);
+  });
+
+  /*
+   * ⛔ …and a STALE silence the same: the row of the payday still inside its days to land is named with the others, on
+   * covered days, never "its pay is not banked yet". The shape of his pre-filing copy read the day after the statement's
+   * Friday: four payroll rows attached to nothing, Oct 22 checked and inside its days to land.
+   */
+  test("a stale silence whose last payday is inside its days to land names its row with the others", () => {
+    importUnattached(PAYDAYS, false);
+    const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it";
+    expect(incomeCard(bundle.db, IN_GRACE)!.pay[0]!.verdict).toBe(
+      "4 paydays have passed since Sep 24 with no deposit attached to this schedule. 4 of them fall on days the records " +
+        `already cover, through Oct 24 — they are matched to the cent by ${rows}. Whether it was earned is a different ` +
+        "question, and this card cannot answer it.",
+    );
+    const note = octoberNotes(IN_GRACE);
+    expect(note).toContain("that money sits in the rows named above, not attached to the schedule, was held as cash");
+    expect(note).not.toContain("not banked yet");
+  });
+
+  /*
+   * ⛔ …and where two paydays are inside their days to land — a schedule given more days than a week — one with a row
+   * and one without: the row's payday is named on covered days with the others, never "and their days to land", and
+   * the other keeps its "not banked yet".
+   */
+  test("two paydays inside their days to land, a row for one: no days to land claimed of the row's payday", () => {
+    bundle.db.update(recurringSeries).set({ toleranceDays: 10 }).where(eq(recurringSeries.id, PAY)).run();
+    importUnattached(["2026-10-08", "2026-10-22"], false);
+    const verdict = incomeCard(bundle.db, IN_GRACE)!.pay[0]!.verdict;
+    expect(verdict).toContain(
+      "2 of them fall on days the records already cover, through Oct 24 — they are matched to the cent by rows of " +
+        "$1,141.92 on Oct 8 and Oct 22 that are not attached to it; Oct 15's days to land run past Oct 24, the last day " +
+        "every account that pay lands in has been checked through — so its pay is not banked yet",
+    );
+    expect(verdict).not.toContain("days to land, fall");
+  });
+
+  // ⛔ …and without it, each keeps its "not banked yet", the checked day named as what the days to land run past
+  test("without the row, Earned vs banked and /spending say Oct 22's pay is not banked yet", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    const line = incomeCard(bundle.db, IN_GRACE)!.pay[0]!;
+    expect(line.verdict).toBe(
+      "1 payday has passed since Oct 15 with no deposit — a schedule is called stale only after 3 quiet periods, so " +
+        "this is not a warning yet.",
+    );
+    expect(line.gapLabel).toBe(
+      "all of it is for paydays whose days to land run past Oct 24, the last day every account that pay lands in has " +
+        "been checked through — so it is not banked yet.",
+    );
+    expect(octoberNotes(IN_GRACE)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        "inside the window and $1,141.92 is not banked yet; Oct 22's days to land run past Sat, Oct 24, 2026, the last " +
+        "day every account that pay lands in has been checked through.",
+    );
+  });
+});
+
+/*
+ * ⛔ …and of a payday a SMALLER deposit paid on its own day: what is left of it is counted among the money that never
+ * reached a bank, so the one rule is asked of it too, at the payday's own amount. 🔴 Review of 304c59a4 (MEDIUM, there
+ * before it — 8b): `paydaysNeverBanked` dropped every payday its settlement answered, short or whole. His pre-filing
+ * copy with the five October payroll rows filed Salary from the review queue (four attached to nothing; the import had
+ * attached Oct 15's off-cycle $200.00), read Oct 29: /spending's October "… of which $200.00 was banked inside the
+ * window, $941.92 never reached a bank, and $3,425.76 is matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and
+ * Oct 22 …", Earned vs banked "$12,058.92 of it never reached a bank; $3,425.76 is matched …" — the $941.92 is Oct
+ * 15's, whose +$1,141.92 on Wells Fargo, filed Salary and in "in so far" $4,767.68, no surface named.
+ */
+describe("a payday a smaller deposit paid on its own day: the row matching it to the cent is named for the rest", () => {
+  test("his pre-filing copy filed from the review queue: Oct 15's row is named with the other three", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS) row(day, 114_192, { categoryId: salary });
+    row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
+    const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it";
+    expect(octoberNotes(TODAY)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $200.00 was banked " +
+        `inside the window and $4,367.68 is for the paydays of Oct 1, Oct 8, Oct 15, and Oct 22, which ${rows} match to ` +
+        "the cent.",
+    );
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(line.gapLabel).toBe(
+      `all of it is for the paydays of Oct 1, Oct 8, Oct 15, and Oct 22, which ${rows} match to the cent.`,
+    );
+  });
+
+  test("Oct 15 alone: its $200.00 banked, and the rest named by the row that matches the payday", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of ["2026-10-01", "2026-10-08", "2026-10-22"]) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
+    expect(octoberNotes(TODAY)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,625.76 was banked " +
+        "inside the window and $941.92 never reached a bank.",
+    );
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached a bank");
+    const id = row("2026-10-15", 114_192, { categoryId: salary });
+    const named = "a row of $1,141.92 on Oct 15 that is not attached to it matches to the cent";
+    expect(octoberNotes(TODAY)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,625.76 was banked " +
+        `inside the window and $941.92 is for the payday of Oct 15, which ${named}.`,
+    );
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(line.gapLabel).toBe(`all of it is for the payday of Oct 15, which ${named}.`);
+    // ⛔ it pays nothing: Oct 15 stays paid short by its own $200.00, and the banked figure holds none of the row
+    expect(line.bankedCents).toBe(7 * 114_192 + 20_000);
+    const oct15 = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-15"]!.filter((e) => e.seriesId === PAY);
+    expect(oct15.map((e) => [e.state, e.settledCents])).toEqual([["paid_different", 20_000]]);
+    expect(oct15.some((e) => e.transactionId === id)).toBe(false);
+  });
+
+  // ⛔ a payday its deposit paid IN FULL is never asked: a row of its amount beside it answers no other payday's money
+  test("a payday paid in full is never asked: its twin row is no answer to another payday's shortfall", () => {
+    const salary = categoryId("Salary", "Income");
+    for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-10-15", 114_192, { categoryId: salary });
+    // Oct 22 never banked, and nothing near it
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached a bank");
+    expect(octoberNotes(TODAY)).toBe(
+      "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        "inside the window and $1,141.92 never reached a bank.",
     );
   });
 });

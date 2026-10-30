@@ -914,6 +914,41 @@ describe("dashboardData: spending pace", () => {
           "matched to the cent by a row of $1,000.00 on Jun 30 that is not attached to it cannot be projected as arriving.",
       );
     });
+
+    /*
+     * ⛔ …and of a payday CHECKED but still inside its days to land: the one rule is asked of it too, so a row the
+     * figure holds takes its claim back and is named. 🔴 Review of 304c59a4 (MEDIUM — a regression from ae29cda4 by
+     * 9e715b7b): it was asked only past the days to land, so his ledger copy with Oct 22's +$1,141.92 filed Salary and
+     * attached to nothing, read Oct 24 (Wells Fargo read to that day), said "1 payday worth $1,141.92 already passed
+     * this month with no deposit imported — not in Free to spend. Pay not banked yet cannot be projected as arriving."
+     * over the very ≈ $734.74 the unmodified copy reads.
+     */
+    test("a row the figure holds for a checked payday still inside its days to land takes its claim back", () => {
+      const { wells } = weeklyPayFoundJul2("2026-07-10");
+      // Jul 9 is checked (Jul 10) and inside its 3 days to land (through Jul 12)
+      filedFromTheReviewQueue(wells, "2026-07-09", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-11").pace!;
+      expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
+        warning: false,
+      });
+    });
+
+    // ⛔ …while without the row it is the payday the figure leaves out, not banked yet — the claim and its words stand
+    test("without the row, a checked payday inside its days to land is left out of the figure, not banked yet", () => {
+      weeklyPayFoundJul2("2026-07-10");
+      const pace = dashboardData(bundle.db, "2026-07-11").pace!;
+      expect(pace.freeToSpendCents).toBe(1000_00 + 3 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut).toEqual({
+        text:
+          "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay not " +
+          "banked yet cannot be projected as arriving.",
+        warning: false,
+      });
+    });
   });
 });
 

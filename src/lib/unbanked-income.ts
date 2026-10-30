@@ -342,6 +342,12 @@ export interface PassedPaydaysReading extends UnbankedIncomeReading {
    * still answer them on a day the ledger has not read. Only these are a warning.
    */
   pastGraceOccurrenceCount: number;
+  /**
+   * Of `unattached`, the rows for paydays still inside their days to land (`UnbankedIncomeSeries.inGraceUnattachedCount`)
+   * — the others are past them — so the subject says of the paydays no row answers which pay is not banked yet and
+   * which never reaches a bank. Absent: none (every row answers a payday past its days to land).
+   */
+  inGraceUnattachedCount?: number;
 }
 
 /** How the forecast's note and a pay series' own page word the paydays that passed this month with no deposit. */
@@ -387,14 +393,18 @@ function notProjectedSubject(
   const rows = rowsNamed
     ? "pay those rows match"
     : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  /*
+   * ⛔ …a row answers a payday inside its days to land as well as one past them (`inGraceUnattachedCount`), and of the
+   * paydays no row answers the pay is "never reaches a bank" once one of them is past its days to land, "not banked
+   * yet" while none is. 🔴 Review of 304c59a4 (MEDIUM): the rows were asked of paydays past their days to land alone,
+   * so his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to
+   * that day), said "Pay not banked yet cannot be projected as arriving" beside the row.
+   */
+  const unmatched = r.checkedOccurrenceCount - matched.length;
+  const unmatchedPastGrace = r.pastGraceOccurrenceCount - (matched.length - (r.inGraceUnattachedCount ?? 0));
+  const unmatchedWords = unmatchedPastGrace > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
   const checked =
-    r.pastGraceOccurrenceCount === 0
-      ? ["Pay not banked yet"]
-      : matched.length === 0
-        ? ["Pay that never reaches a bank"]
-        : matched.length >= r.pastGraceOccurrenceCount
-          ? [`P${rows.slice(1)}`]
-          : ["Pay that never reaches a bank", rows];
+    unmatched <= 0 ? [`P${rows.slice(1)}`] : matched.length === 0 ? [unmatchedWords] : [unmatchedWords, rows];
   /*
    * ⚖️ Default built, not asked (2026-10-21): with paydays after the checked day among them, the subject names those
    * too, in its own words for them. 🔴 "Pay not banked yet cannot be projected as arriving" closed a note whose other

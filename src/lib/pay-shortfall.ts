@@ -290,19 +290,27 @@ export function paydaysNotBankedYet(
 }
 
 /**
- * The window's passed paydays no deposit settled that were checked through their days to land
- * (`paydayLandingIsRead`), oldest first, each at its own amount — the paydays every surface would call "did not reach a
- * bank" / "never reached a bank", which the one rule for an unattached match is asked about
- * (`services/unattached-match`) before any of them says so. The complement of `paydaysNotBankedYet` among the checked.
+ * The window's passed paydays the ledger has CHECKED (`paydayIsRead`) that no deposit paid IN FULL — none settled them,
+ * or the one that did held less than the payday (its `portions`) — oldest first, each at its own amount: the paydays a
+ * sentence would call absent, which the one rule for an unattached match is asked about (`services/unattached-match`,
+ * `asksForUnattachedMatch`) before any of them says so. "With no deposit", "not banked yet" inside the days to land
+ * (`paydaysNotBankedYet`), "never reached a bank" past them — and of a payday paid short, what is left of it, which the
+ * difference counts among the money that never reached a bank (`unbankedSplit`).
+ *
+ * 🔴 Review of 304c59a4 (MEDIUM, both halves): asked past the days to land alone, so his ledger copy with Oct 22's
+ * +$1,141.92 filed Salary and attached to nothing, read Oct 24, said "not banked yet" and "with no deposit" beside the
+ * row; and of settled paydays never, short or whole, so his pre-filing copy with the payroll filed from the review queue
+ * (Oct 15's $200.00 attached, its +$1,141.92 not), read Oct 29, said "$941.92 never reached a bank" of Oct 15's rest.
  */
-export function paydaysNeverBanked(
-  s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy">,
+export function paydaysNoDepositPaidInFull(
+  s: Pick<SettlementWalked, "paydays" | "deposits" | "settledBy" | "portions">,
   w: PayShortfallWindow,
 ): readonly { date: string; amountCents: number }[] {
+  const paidCents = new Map<string, number>();
+  for (const p of s.portions) paidCents.set(p.paydayOn, (paidCents.get(p.paydayOn) ?? 0) + p.cents);
   return duePaydays(s, w)
-    .filter((o) => !s.settledBy.has(o.date))
     .filter((o) => paydayIsRead(o.date, w.checkedThrough))
-    .filter((o) => paydayLandingIsRead(o.date, w.toleranceDays, w.checkedThrough))
+    .filter((o) => !s.settledBy.has(o.date) || (paidCents.get(o.date) ?? 0) < o.amountCents)
     .sort((a, b) => compareDates(a.date, b.date))
     .map((o) => ({ date: o.date, amountCents: o.amountCents }));
 }

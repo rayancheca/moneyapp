@@ -364,7 +364,8 @@ export interface OccurrenceReading {
  *
  * ⛔ …and `unattached`, the row the one rule matched to this day (`services/unattached-match`, asked of the days
  * `asksForUnattachedMatch` names), outranks the absence it would answer: "matched_unattached", the row named — never a
- * red ✕, never "never reached a bank", and never paid by it. A day nobody has read keeps its own reason, a row or not.
+ * red ✕, never "never reached a bank" nor "not banked yet", and never paid by it. A day nobody has read keeps its own
+ * reason, a row or not.
  */
 export function settledVerdict(
   kind: SeriesKind,
@@ -402,18 +403,19 @@ export function settledVerdict(
 
 /**
  * THE DAYS THE ONE RULE IS ASKED ABOUT (`services/unattached-match`) — a past occurrence no posting paid that another
- * surface would call absent: a payday checked through its days to land (`paydayLandingIsRead` — Earned vs banked's,
- * /spending's and the forecast's "never reached a bank"), and a due day read with its grace (`dueDayIsRead` — the
- * arrears' read half, "has not posted"). ⛔ The calendar asks exactly these, so a row is never spent on a day no other
- * surface would match it to. 🔴 Review of de31d22 (HIGH): it asked none, and drew "never reached a bank" and a red ✕
- * beside the rows the forecast card and /recurring's Next column named.
+ * surface would call absent: a payday the ledger has CHECKED (`paydayIsRead` — "with no deposit" on the forecast's note,
+ * the tile, /budgets and Earned vs banked; inside its days to land "not banked yet", past them "never reached a bank"),
+ * and a due day read with its grace (`dueDayIsRead` — the arrears' read half, "has not posted"). ⛔ The calendar asks
+ * exactly these — the income mirror (`unbankedIncomeForSeries`) and the pay readings (`paydaysNoDepositPaidInFull`) the
+ * same of a payday — so a row is never spent on a day no other surface would match it to. 🔴 Review of de31d22 (HIGH):
+ * it asked none, and drew "never reached a bank" and a red ✕ beside the rows the forecast card and /recurring's Next
+ * column named. 🔴 Review of 304c59a4 (MEDIUM): it asked a payday only past its days to land, so on his ledger copy with
+ * Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to that day), Oct 22 drew "not
+ * banked yet" and the forecast's note above it "with no deposit imported" beside the row.
  */
 export function asksForUnattachedMatch(kind: SeriesKind, occurrenceDate: string, reading: OccurrenceReading): boolean {
   if (absenceIsEvidence(kind)) return dueDayIsRead(occurrenceDate, reading.dueDay);
-  return (
-    paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough) &&
-    paydayLandingIsRead(occurrenceDate, reading.paydayLandingDays, reading.paydaysCheckedThrough)
-  );
+  return paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
 }
 
 /** The fields `forecastConfidence` reads — a subset of a `recurring_series` row. */

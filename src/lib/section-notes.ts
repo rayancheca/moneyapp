@@ -2,6 +2,7 @@ import { arrearsTail, NOT_POSTED } from "./arrears-reading";
 import {
   countedDepositWords,
   MATCHED_TO_THE_CENT_BY,
+  namedTogether,
   neverClauses,
   neverSplit,
   notCountedWords,
@@ -882,6 +883,9 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * rows named above".
        */
       const silent = silenceMatches(r.unattachedPaydays ?? [], r.lastBankedOn);
+      // ⛔ …and "not banked yet" only of the paydays none of them answers — a row's payday is where its money sits, a
+      // payday still inside its days to land too (review of 304c59a4, MEDIUM)
+      const notYetUnanswered = inGrace.filter((d) => !silent.some((m) => m.date === d));
       const namedAbove =
         silent.length === matched.length && silent.every((s) => matched.some((m) => m.row.id === s.row.id));
       const sitsIn = namedAbove
@@ -903,8 +907,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
         ...(measuredRead && (through === null || readSilence < r.periodsSinceBanked)
           ? [notLookedForDeposits(unlooked)]
           : []),
-        ...(inGrace.length > 0 && r.checkedThrough
-          ? [payNotBankedYet(inGrace, r.checkedThrough, payday, input.formatDay)]
+        ...(notYetUnanswered.length > 0 && r.checkedThrough
+          ? [payNotBankedYet(notYetUnanswered, r.checkedThrough, payday, input.formatDay)]
           : []),
       ]);
       notes.push({
@@ -1043,11 +1047,21 @@ function payShortfallNote(
   // the paydays inside the span the lead names, so the span's year is theirs
   const payday = (iso: string): string => formatDayShortIn(iso, s.lastReadOn ?? iso);
   const outside = paidOutsidePhrases(s.paidOutside, payday, formatDay);
+  /*
+   * ⛔ …and of each part, what the rows the one rule matched to the window's read paydays answer (`neverSplit`) — a row
+   * of a payday still inside its days to land named with the others, once (`namedTogether`), never "not banked yet".
+   * 🔴 Review of 304c59a4 (MEDIUM): his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read
+   * Oct 24, said "$941.92 is not banked yet; Oct 22's days to land run past Sat, Oct 24, 2026, …" beside the row.
+   */
+  const matched = unattachedAmong(unattached, s.firstReadOn, s.lastReadOn);
+  const inGraceMatched = matched.filter((m) => s.notBankedYetPaydays.includes(m.date));
+  const { said, notYetLeftCents } = namedTogether(
+    neverSplit(s.neverBankedCents, matched.filter((m) => !inGraceMatched.includes(m))),
+    neverSplit(s.notBankedYetCents, inGraceMatched),
+  );
   // ⚖️ "never" only past a payday's days to land (`unbankedSplit`); inside them, the forecast's "not banked yet"
-  const notYet = s.notBankedYetCents > 0 ? [`${formatCents(s.notBankedYetCents)} is not banked yet`] : [];
-  // ⛔ …and of it, what the rows the one rule matched to the window's read paydays answer (`neverSplit`)
-  const neverPart = neverSplit(s.neverBankedCents, unattachedAmong(unattached, s.firstReadOn, s.lastReadOn));
-  const never = neverClauses(neverPart, payday, { ofIt: false, bare: false });
+  const notYet = notYetLeftCents > 0 ? [`${formatCents(notYetLeftCents)} is not banked yet`] : [];
+  const never = neverClauses(said, payday, { ofIt: false, bare: false });
   const rest = [...outside, ...notYet, ...never];
 
   const noPaydayFrom = depositsOf(s.towardNoPayday.map((d) => d.depositOn), formatDay);
@@ -1064,14 +1078,14 @@ function payShortfallNote(
         ? `, and all of it was banked inside the window${noPayday}`
         : `, of which ${AND_LIST.format([banked, ...rest])}`
       : outside.length === 0 && notYet.length === 0
-        ? noneBankedSplit(neverPart, rest, payday)
+        ? noneBankedSplit(said, rest, payday)
         : outside.length === 0 && never.length === 0
           ? ", and none of it is banked yet"
           : `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 
   // why it is not banked yet, beside the claim: the days its deposits have to land run past the checked day — the
-  // stale verdict's words on Earned vs banked (`daysToLandRunPast`)
-  const days = s.notBankedYetPaydays;
+  // stale verdict's words on Earned vs banked (`daysToLandRunPast`) — of the paydays no row answers
+  const days = s.notBankedYetPaydays.filter((d) => !inGraceMatched.some((m) => m.date === d));
   const grace =
     days.length > 0 && checkedThrough ? `; ${daysToLandRunPast(days, checkedThrough, payday, formatDay)}` : "";
   // ⛔ the days the parenthesis named are named once: the rest of their money is "the same deposit's" (review of the

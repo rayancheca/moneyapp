@@ -418,6 +418,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inGraceUnattachedCount: 0,
       inEomCash: [],
       names: [],
     });
@@ -487,6 +488,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inGraceUnattachedCount: 0,
       inEomCash: [],
       names: ["Payroll"],
     });
@@ -513,6 +515,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inGraceUnattachedCount: 0,
       inEomCash: [],
       names: [],
     });
@@ -586,6 +589,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inGraceUnattachedCount: 0,
       inEomCash: [],
       names: ["Payroll"],
     });

@@ -6,7 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import { compareDates, todayIso } from "@/lib/dates";
 import { cashEarnings, type CashEarnings, type PaySeries } from "@/lib/cash-earnings";
 import {
-  paydaysNeverBanked,
+  paydaysNoDepositPaidInFull,
   payShortfall,
   silentPaydaysNotBankedYet,
   type PayShortfall,
@@ -88,13 +88,15 @@ export interface CashEarningsReading extends CashEarnings {
    */
   checkedSilentNotBankedYet?: readonly string[];
   /**
-   * Of the schedule's passed paydays no deposit settled, checked through their days to land — those every surface
-   * would call "did not reach a bank" (`paydaysNeverBanked`) — the ones a row matches to the cent that sits
-   * unattached (`unattachedMatchesBySeries`), over the schedule's whole life, oldest first: each reader takes its own
-   * window's or its silence's. Never banked by it — still in the difference, still unpaid — and never called absent.
-   * 🔴 His ledger copy 2026-10-29 (before his filing): "so the pay did not reach a bank" and "none of it reached an
-   * account" of Oct 1, 8, 15 and 22 beside four +$1,141.92 payroll rows on Wells Fargo, unattached. Present only with
-   * `withChecked`, and empty when nothing is checked.
+   * Of the schedule's passed paydays the ledger has checked that no deposit paid in full — those a sentence would call
+   * absent (`paydaysNoDepositPaidInFull`): "with no deposit", "not banked yet" inside their days to land, "did not
+   * reach a bank" past them, and the rest of one paid short — the ones a row matches to the cent that sits unattached
+   * (`unattachedMatchesBySeries`), over the schedule's whole life, oldest first: each reader takes its own window's or
+   * its silence's, and says a row of a payday still inside its days to land where it would have said "not banked yet".
+   * Never banked by it — still in the difference, still unpaid — and never called absent. 🔴 His ledger copy 2026-10-29
+   * (before his filing): "so the pay did not reach a bank" and "none of it reached an account" of Oct 1, 8, 15 and 22
+   * beside four +$1,141.92 payroll rows on Wells Fargo, unattached. Present only with `withChecked`, and empty when
+   * nothing is checked.
    */
   unattachedPaydays?: readonly UnattachedMatch[];
   /**
@@ -450,8 +452,8 @@ export function cashEarningsReadings(
 
   const readings: CashEarningsReading[] = [];
   const checkedOf = withChecked ? checkedThroughBySeries(db, today) : null;
-  // each schedule's paydays it would call never banked, asked the one rule together below
-  const neverBySeries = new Map<string, readonly ExpectedDay[]>();
+  // each schedule's paydays it would call absent, asked the one rule together below
+  const absentBySeries = new Map<string, readonly ExpectedDay[]>();
 
   for (const s of series) {
     /*
@@ -561,11 +563,11 @@ export function cashEarningsReadings(
       });
       continue;
     }
-    // ⛔ the one rule, asked of every payday the schedule would call never banked (`unattachedMatchesBySeries`) — below,
-    // with every other schedule's
-    neverBySeries.set(
+    // ⛔ the one rule, asked of every payday the schedule would call absent — checked, and paid in full by no deposit
+    // (`paydaysNoDepositPaidInFull`) — below, with every other schedule's (`unattachedMatchesBySeries`)
+    absentBySeries.set(
       s.id,
-      paydaysNeverBanked(settlement, {
+      paydaysNoDepositPaidInFull(settlement, {
         from: startedOn,
         to: today,
         today,
@@ -614,9 +616,9 @@ export function cashEarningsReadings(
    * one schedule. 🔴 Review of e6ad55a (MEDIUM): asked schedule by schedule, two pay schedules of one amount on one
    * account each took the one row both could answer, and Earned vs banked named it under both lines.
    */
-  const unattachedOf = unattachedMatchesBySeries(db, neverBySeries, today);
+  const unattachedOf = unattachedMatchesBySeries(db, absentBySeries, today);
   if (unattachedOf.size === 0) return readings;
   return readings.map((r) =>
-    neverBySeries.has(r.seriesId) ? { ...r, unattachedPaydays: unattachedOf.get(r.seriesId) ?? [] } : r,
+    absentBySeries.has(r.seriesId) ? { ...r, unattachedPaydays: unattachedOf.get(r.seriesId) ?? [] } : r,
   );
 }

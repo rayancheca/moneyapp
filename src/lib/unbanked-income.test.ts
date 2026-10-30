@@ -239,6 +239,49 @@ describe("unbankedIncomeFrontierClause — the checked paydays a row matches to 
         "Oct 8, 2026 that are not attached to it, cannot be projected as arriving",
     );
   });
+
+  /*
+   * ⛔ A row answers a payday still inside its days to land as well as one past them (`inGraceUnattachedCount`), and the
+   * paydays no row answers are "never reaches a bank" once one of them is past its days to land, "not banked yet" while
+   * none is. 🔴 Review of 304c59a4 (MEDIUM): his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to
+   * nothing, read Oct 24 (Wells Fargo read to that day), said "with no deposit imported" and "Pay not banked yet" beside
+   * the row — the rows were asked of paydays past their days to land alone.
+   */
+  test("a row of a payday still inside its days to land: named, and the pay no row answers keeps its own words", () => {
+    const words = (checked: number, pastGrace: number, inGraceRows: number, unattached: readonly UnattachedMatch[]) =>
+      passedPaydaysWords(
+        {
+          occurrenceCount: checked,
+          checkedOccurrenceCount: checked,
+          pastGraceOccurrenceCount: pastGrace,
+          frontier: frontierAt("2026-10-24"),
+          unattached,
+          inGraceUnattachedCount: inGraceRows,
+        },
+        formatDayLong,
+      );
+    const oct22 = "a row of $1,141.92 on Thu, Oct 22, 2026 that is not attached to it";
+    // Oct 22 alone, inside its days to land, its row matched: no "imported", no "not banked yet", and no warning
+    expect(words(1, 0, 1, [matchOn("2026-10-22")])).toEqual({
+      count: "1 payday",
+      passed: "already passed this month with no deposit attached to it",
+      unread: null,
+      notProjected: `Pay matched to the cent by ${oct22} cannot be projected as arriving`,
+      warning: false,
+    });
+    // Oct 15 past its days to land and no row, Oct 22's row inside them: the unmatched one never reaches a bank
+    expect(words(2, 1, 1, [matchOn("2026-10-22")]).notProjected).toBe(
+      `Pay that never reaches a bank, and pay matched to the cent by ${oct22}, cannot be projected as arriving`,
+    );
+    // Oct 15's row past its days to land, Oct 22 inside them and no row: the unmatched one is not banked yet
+    expect(words(2, 1, 0, [matchOn("2026-10-15")]).notProjected).toBe(
+      "Pay not banked yet, and pay matched to the cent by a row of $1,141.92 on Thu, Oct 15, 2026 that is not " +
+        "attached to it, cannot be projected as arriving",
+    );
+    // …and with no row at all, the words they always were
+    expect(words(1, 0, 0, []).notProjected).toBe("Pay not banked yet cannot be projected as arriving");
+    expect(words(1, 0, 0, []).passed).toBe("already passed this month with no deposit imported");
+  });
 });
 
 describe("sharedFrontier — the one day several schedules were checked through, if there is one", () => {

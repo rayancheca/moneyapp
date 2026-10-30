@@ -1625,6 +1625,7 @@ export function forecastForMonth(
       occurrenceCount: 0,
       checkedOccurrenceCount: 0,
       pastGraceOccurrenceCount: 0,
+      inGraceUnattachedCount: 0,
       frontier: { kind: "unchecked" },
       names: [],
     },

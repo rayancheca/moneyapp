@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { formatDayShort } from "@/lib/format-date";
 import {
   countedDepositWords,
+  namedTogether,
   neverClauses,
   neverSplit,
   notCountedWords,
@@ -272,5 +273,43 @@ describe("neverSplit and neverClauses — the never figure, less what the rows a
     expect(neverClauses(neverSplit(114192, four.slice(0, 1)), fmt, { ofIt: false, bare: false })).toEqual([
       "$1,141.92 is matched to the cent by a row of $1,141.92 on Oct 1 that is not attached to it",
     ]);
+  });
+});
+
+/*
+ * ⛔ The "not banked yet" figure beside the never one is split by its own rows too, and every row is named once, in the
+ * never part's clause — a row of a payday still inside its days to land among them. 🔴 Review of 304c59a4 (MEDIUM): his
+ * ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24, said "not banked yet" of Oct
+ * 22 beside the row on the card and on /spending.
+ */
+describe("namedTogether — the never and not-banked-yet figures, every row they match named once", () => {
+  const four: UnattachedMatch[] = ["2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22"].map((d, i) => ({
+    date: d,
+    row: row(String(i), d, 114192),
+  }));
+  const fmt = formatDayShort;
+
+  it("joins the not-banked-yet part's matched money to the never part's words, and leaves the rest its own", () => {
+    // Oct 1, 8 and 15 past their days to land, matched; Oct 22 inside them, matched
+    const both = namedTogether(neverSplit(342576, four.slice(0, 3)), neverSplit(114192, four.slice(3)));
+    expect(both.notYetLeftCents).toBe(0);
+    expect(neverClauses(both.said, fmt, { ofIt: true, bare: true })).toEqual([
+      "all of it is matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached " +
+        "to it",
+    ]);
+    // nothing never reached a bank, and Oct 22's row answers the not-banked-yet part's $941.92 (netted): capped
+    const capped = namedTogether(neverSplit(0, []), neverSplit(94192, four.slice(3)));
+    expect(capped.notYetLeftCents).toBe(0);
+    expect(neverClauses(capped.said, fmt, { ofIt: false, bare: false })).toEqual([
+      "$941.92 is for the payday of Oct 22, which a row of $1,141.92 on Oct 22 that is not attached to it matches to " +
+        "the cent",
+    ]);
+  });
+
+  it("with no row of a payday inside its days to land, the never split and the not-banked-yet figure as they were", () => {
+    const never = neverSplit(228384, four.slice(0, 1));
+    expect(namedTogether(never, neverSplit(114192, []))).toEqual({ said: never, notYetLeftCents: 114192 });
+    // two paydays inside their days to land, a row for one: the other's money keeps its "not banked yet"
+    expect(namedTogether(neverSplit(0, []), neverSplit(228384, four.slice(3))).notYetLeftCents).toBe(114192);
   });
 });

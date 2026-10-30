@@ -1,6 +1,7 @@
 import {
   countedDepositWords,
   matchedOfWords,
+  namedTogether,
   neverClauses,
   neverSplit,
   notCountedWords,
@@ -169,6 +170,11 @@ interface Gap {
   /** the rows `unattachedCents` is — each matching a payday of the window to the cent, unattached — oldest first */
   unattached: readonly UnattachedMatch[];
   /**
+   * …and the rows the one rule matched to the paydays `notBankedYetCents` is for — still inside their days to land —
+   * named with `unattached` in `gapLabel`, never "not banked yet" (`namedTogether`); still in `notBankedYetCents`.
+   */
+  notBankedYetUnattached: readonly UnattachedMatch[];
+  /**
    * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
    * a day of its own, in /spending's words (`withMoneyOut`)
    */
@@ -179,6 +185,8 @@ interface Gap {
 interface InGrace {
   cents: number;
   frontier: UnbankedFrontier;
+  /** the rows the one rule matched to its paydays, which the words name with the never part's (`namedTogether`) */
+  unattached: readonly UnattachedMatch[];
 }
 
 /**
@@ -204,9 +212,12 @@ function gapOf(
   const { gapCents, unreadGapCents, readGapCents } = payGap(impliedCents, bankedCents, unreadImpliedCents);
   // ⛔ …and the one split of its read part (`unbankedSplit`): "never reached a bank" only past the days to land
   const { notBankedYetCents, neverCents } = unbankedSplit(readGapCents, inGrace.cents);
-  // ⛔ …and of that, what rows sitting unattached match to the cent (`lib/unattached-match`): named, still counted —
-  // the one split, /spending's shortfall note's too (`neverSplit`)
+  // ⛔ …and of each, what rows sitting unattached match to the cent (`lib/unattached-match`): named, still counted —
+  // the one split, /spending's shortfall note's too (`neverSplit`, `namedTogether`): every row named once, a row of a
+  // payday still inside its days to land too, never "not banked yet"
   const never = neverSplit(neverCents, unattached);
+  const notYet = neverSplit(notBankedYetCents, inGrace.unattached);
+  const { said, notYetLeftCents } = namedTogether(never, notYet);
   return {
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
@@ -215,10 +226,11 @@ function gapOf(
     neverCents,
     unattachedCents: never.matchedCents,
     unattached: never.matched,
+    notBankedYetUnattached: notYet.matched,
     gapLabel: withMoneyOut(
-      notBankedYetCents > 0
-        ? inGraceGapLabel(never, { ...inGrace, cents: notBankedYetCents }, unreadGapCents, frontier)
-        : gapLabelFor(gapCents, unreadGapCents, never, frontier),
+      notYetLeftCents > 0
+        ? inGraceGapLabel(said, { ...inGrace, cents: notYetLeftCents }, unreadGapCents, frontier)
+        : gapLabelFor(gapCents, unreadGapCents, said, frontier),
       wentBackOut,
     ),
   };
@@ -349,9 +361,9 @@ export interface IncomePayLine extends Gap {
    */
   checkedSilentNotBankedYet: readonly string[];
   /**
-   * Of the silence's paydays checked through their days to land, those a row matches to the cent that sits unattached
-   * (`CashEarningsReading.unattachedPaydays`), oldest first — never "the pay did not reach a bank", never "with no
-   * deposit", and still counted in the silence.
+   * Of the silence's checked paydays — inside their days to land too — those a row matches to the cent that sits
+   * unattached (`CashEarningsReading.unattachedPaydays`), oldest first — never "the pay did not reach a bank", never
+   * "with no deposit" nor "not banked yet", and still counted in the silence.
    */
   silenceUnattached: readonly UnattachedMatch[];
   /** earliest day the accounts this pay lands in stop being checked */
@@ -594,8 +606,15 @@ function staleChecked(
   matched: readonly UnattachedMatch[] = [],
 ): string {
   const covered = `on days the records already cover, through ${formatDayShort(checkedThrough)}`;
+  /*
+   * ⛔ …and "not banked yet" only of the paydays no row matches either: a row of a payday still inside its days to land
+   * is named with the others, never "its pay is not banked yet" — and then the paydays it is named with are said to
+   * fall on covered days, never with their days to land (review of 304c59a4, MEDIUM: Oct 22's row, read Oct 24).
+   */
+  const matchedInGrace = matched.filter((m) => notBankedYet.includes(m.date));
+  const notYet = notBankedYet.filter((d) => !matchedInGrace.some((m) => m.date === d));
   // ⛔ "did not reach a bank" only of the paydays no row matches unattached (`silenceUnattached`): those are named
-  const pastCount = checked - notBankedYet.length;
+  const pastCount = checked - notYet.length;
   const didNot =
     matched.length === 0
       ? "so the pay did not reach a bank"
@@ -608,13 +627,17 @@ function staleChecked(
       ? ""
       : `; ${theOtherFall(unlooked)} after ${formatDayShort(checkedThrough)}` +
         `${dayNamed ? "" : `, ${LAST_CHECKED_DAY}`} — so ${notLookedForDeposits(unlooked)}`;
-  if (notBankedYet.length === 0) return `${checked} of them fall ${covered} — ${didNot}${after(false)}`;
+  if (notYet.length === 0) return `${checked} of them fall ${covered} — ${didNot}${after(false)}`;
 
   // `why` names the checked day in full
-  const why = payNotBankedYet(notBankedYet, checkedThrough, formatDayShort, formatDayShort);
-  const past = checked - notBankedYet.length;
-  if (past === 0) return `${checked} of them fall ${covered}, but ${why}${after(true)}`;
-  const them = past === 1 ? "1 of them, and its days to land, falls" : `${past} of them, and their days to land, fall`;
+  const why = payNotBankedYet(notYet, checkedThrough, formatDayShort, formatDayShort);
+  if (pastCount === 0) return `${checked} of them fall ${covered}, but ${why}${after(true)}`;
+  const them =
+    matchedInGrace.length > 0
+      ? `${pastCount} of them ${pastCount === 1 ? "falls" : "fall"}`
+      : pastCount === 1
+        ? "1 of them, and its days to land, falls"
+        : `${pastCount} of them, and their days to land, fall`;
   return `${them} ${covered} — ${didNot}; ${why}${after(true)}`;
 }
 
@@ -680,16 +703,20 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     // ⚖️ …and of the checked paydays, those no deposit settled still inside their days to land: not banked yet — over
     // the window for the difference, and over the silence for the verdict (the reading's `checkedSilentNotBankedYet`)
     const settlement = checkedThrough === null ? null : paydaySettlement(db, r.seriesId, today, idx);
-    const inGraceCents =
+    const inGrace =
       settlement === null || checkedThrough === null
-        ? 0
+        ? { paydays: [], cents: 0 }
         : paydaysNotBankedYet(settlement, {
             from: windowFrom,
             to: today,
             today,
             checkedThrough,
             toleranceDays: r.toleranceDays,
-          }).cents;
+          });
+    // the window's paydays the one rule matched unattached (`unattachedPaydays`) — those still inside their days to
+    // land are the not-banked-yet part's, the rest the never part's (`namedTogether` names them all once)
+    const windowMatched = (r.unattachedPaydays ?? []).filter((m) => compareDates(m.date, windowFrom) >= 0);
+    const inGraceMatched = windowMatched.filter((m) => inGrace.paydays.includes(m.date));
 
     const base = {
       seriesId: r.seriesId,
@@ -721,10 +748,9 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         r.bankedCents,
         unreadImpliedCents,
         frontier,
-        { cents: inGraceCents, frontier },
+        { cents: inGrace.cents, frontier, unattached: inGraceMatched },
         r.wentBackOut ?? [],
-        // the window's paydays the one rule matched unattached (`unattachedPaydays`)
-        (r.unattachedPaydays ?? []).filter((m) => compareDates(m.date, windowFrom) >= 0),
+        windowMatched.filter((m) => !inGrace.paydays.includes(m.date)),
       ),
     };
     return { ...base, verdict: verdictFor(base) };
@@ -746,6 +772,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       {
         cents: inGrace.reduce((s, l) => s + l.notBankedYetCents, 0),
         frontier: sharedFrontier(inGrace.map((l) => l.checkedThrough)),
+        unattached: pay.flatMap((l) => l.notBankedYetUnattached),
       },
       pay.flatMap((l) => l.wentBackOut),
       pay.flatMap((l) => l.unattached),

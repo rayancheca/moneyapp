@@ -364,8 +364,15 @@ function unbankedPaydaysOf(
   const unbanked = unbankedIncomeThisMonth(db, new Set([s.id]), today);
   const passed = unbanked.series[0];
   if (passed === undefined) return null;
-  const { totalCents, occurrenceCount, checkedOccurrenceCount, pastGraceOccurrenceCount, frontier, unattached } =
-    unbankedIncomeTotals(unbanked);
+  const {
+    totalCents,
+    occurrenceCount,
+    checkedOccurrenceCount,
+    pastGraceOccurrenceCount,
+    frontier,
+    unattached,
+    inGraceUnattachedCount,
+  } = unbankedIncomeTotals(unbanked);
   return {
     totalCents,
     occurrenceCount,
@@ -373,6 +380,7 @@ function unbankedPaydaysOf(
     pastGraceOccurrenceCount,
     frontier,
     unattached,
+    inGraceUnattachedCount,
     paydays: passed.occurrenceDates.map((date, i) => ({ date, amountCents: passed.occurrenceCents[i]! })),
   };
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { cashEarnings, type PaySeries } from "./cash-earnings";
 import { formatDayLong } from "./format-date";
 import {
+  paydaysNoDepositPaidInFull,
   payShortfall,
   silentPaydaysNotBankedYet,
   wentBackOutPhrase,
@@ -978,5 +979,51 @@ describe("silentPaydaysNotBankedYet — the silence opens where cashEarnings ope
     expect(silentPaydaysNotBankedYet(nothingSettled(paydays), silence)).toEqual([]);
     const before = { ...silence, lastBankedOn: "2026-09-02" };
     expect(silentPaydaysNotBankedYet(nothingSettled(paydays), before)).toEqual(["2026-09-03"]);
+  });
+});
+
+/**
+ * The paydays the one rule for an unattached match is asked about (`paydaysNoDepositPaidInFull`): every passed payday
+ * the ledger has CHECKED that no deposit paid in full — none settled it, inside its days to land or past them, or the
+ * one that did held less than the payday. 🔴 Review of 304c59a4 (MEDIUM, both halves): it asked past the days to land
+ * alone (Oct 22 read Oct 24 said "not banked yet" beside its row), and never of a payday a smaller deposit settled (Oct
+ * 15's $200.00 left "$941.92 never reached a bank" beside the +$1,141.92 that matches it).
+ */
+describe("paydaysNoDepositPaidInFull — the checked paydays a sentence would call absent", () => {
+  const october = thursdays("2026-10-01", "2026-10-29").map((date) => ({ date, amountCents: PAYROLL }));
+  const asked = (deposits: AttributedDeposit[], checkedThrough: string | null) => {
+    const s = settlePaydaysBackwards({ occurrences: october, deposits, toleranceDays: 3 });
+    return paydaysNoDepositPaidInFull(
+      { paydays: october, deposits, settledBy: s.settledBy, portions: s.portions },
+      { from: "2026-10-01", to: "2026-10-31", today: "2026-10-29", checkedThrough, toleranceDays: 3 },
+    ).map((o) => [o.date, o.amountCents]);
+  };
+  // Oct 1 paid in full, Oct 15 by its off-cycle $200.00 alone, Oct 8 and 22 by nothing
+  const HIS: AttributedDeposit[] = [
+    { postedOn: "2026-10-01", amountCents: PAYROLL },
+    { postedOn: "2026-10-15", amountCents: 20_000 },
+  ];
+
+  test("past its days to land, inside them, and paid short — each at the payday's own amount", () => {
+    // checked through Sat Oct 24: Oct 22 is checked and inside its 3 days to land
+    expect(asked(HIS, "2026-10-24")).toEqual([
+      ["2026-10-08", PAYROLL],
+      ["2026-10-15", PAYROLL],
+      ["2026-10-22", PAYROLL],
+    ]);
+  });
+
+  test("never a payday nobody has looked for, nor one a deposit paid in full", () => {
+    // checked through Wed Oct 21: Oct 22 and Oct 29 are after it
+    expect(asked(HIS, "2026-10-21")).toEqual([
+      ["2026-10-08", PAYROLL],
+      ["2026-10-15", PAYROLL],
+    ]);
+    expect(asked(HIS, null)).toEqual([]);
+    // Oct 15's day banked the payday whole: it is paid, and not asked
+    expect(asked([...HIS, { postedOn: "2026-10-15", amountCents: PAYROLL }], "2026-10-24")).toEqual([
+      ["2026-10-08", PAYROLL],
+      ["2026-10-22", PAYROLL],
+    ]);
   });
 });
