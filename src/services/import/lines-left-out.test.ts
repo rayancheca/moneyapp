@@ -19,8 +19,8 @@ import {
   reasonCarriedAlready,
 } from "@/lib/left-out-acknowledgement";
 import { ledgerCheckMode } from "@/lib/witness-floor";
-import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
-import { acknowledgementsMatchingNothing, linesLeftOut, type LineLeftOut } from "./lines-left-out";
+import { writeLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
+import { acknowledgementsMatchingNothing, linesLeftOut, readLeftOutAcknowledgements, type LineLeftOut } from "./lines-left-out";
 import { PROFILES } from "./profiles";
 import { importStatementFiles, type ImportInput } from "./service";
 import type { AccountHint, ParsedStatement, ParserProfile } from "./types";
