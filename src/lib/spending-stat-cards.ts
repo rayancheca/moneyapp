@@ -46,8 +46,8 @@ export interface SpendingStatCardSpec {
 export interface SpendingStatCardFacts {
   /**
    * ⚖️ §6A 68: the dashboard's words under its Income dash, for this window (`noIncomeDayCheckedWindowNote` — of one
-   * day, "the day has not been checked", 2026-10-29) — where no income was found and not one of its days is checked
-   * where the pay lands (`CashFlow.incomeUnread`)
+   * day, "Sep 25, 2026 has not been checked", the day named, 2026-10-29) — where no income was found and not one of its
+   * days is checked where the pay lands (`CashFlow.incomeUnread`)
    */
   incomeUnread?: string | null;
   /** ⚖️ Decision 72: the period proof's days read only in part and their line (`Provenance.partlyRead`, Where it went's) */

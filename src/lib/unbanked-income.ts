@@ -195,7 +195,8 @@ export interface NamedWindow {
  * ⚖️ §6A 68 of ANY window (2026-10-29): "not one day of Q4 2026 has been checked in the accounts that pay lands in" —
  * and of a window ONE day long "Sep 25, 2026 has not been checked …", the table's words for one day
  * (`noIncomeDayCheckedOf`) with the day named. /spending's graph hovers it of the days a running total sums
- * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …". 🔴 The hover built it from the point's axis label
+ * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …", and captions it of the whole run — a whole month
+ * by its name, "October 2026" (`calendarWindowLabel`, 2026-10-30). 🔴 The hover built it from the point's axis label
  * until 2026-10-29 ("not one day through 14 …"), which read only for a day: his ledger copy hovered "… through Sep
  * 26–30 …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, "… through Oct '26 …" over a window of years.
  */

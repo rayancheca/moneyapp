@@ -263,32 +263,74 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
   });
 
   /* ⚖️ §6A 68: the lines draw what the tooltip prints — no running Income or Net through days nobody has looked at */
+  const unreadDay = (key: string, spendingCents: number): CashFlowBucket => ({
+    ...monthBucket(key, 0, spendingCents, null),
+    from: key,
+    to: key,
+    incomeUnread: true,
+  });
+  const graphOf = (buckets: CashFlowBucket[]): CashFlow => ({
+    buckets,
+    incomeSeries: [],
+    spendingSeries: [],
+    totals: {} as CashFlow["totals"],
+    pace: null,
+    spendingUnaccounted: null,
+    incomeUnread: true,
+  });
+  const caption = (d: CashFlow) =>
+    textOf(renderToStaticMarkup(createElement(CashFlowGraph, { data: d, projection: null })));
+
   test("a window whose income nobody has looked for draws Spent alone, and its caption says why", () => {
-    const unread = (key: string, spendingCents: number): CashFlowBucket => ({
-      ...monthBucket(key, 0, spendingCents, null),
-      incomeUnread: true,
-    });
-    const october = [unread("2026-10-01", 21_661), unread("2026-10-02", 19_758)];
-    const data: CashFlow = {
-      buckets: october,
-      incomeSeries: [],
-      spendingSeries: [],
-      totals: {} as CashFlow["totals"],
-      pace: null,
-      spendingUnaccounted: null,
-      incomeUnread: true,
-    };
+    const data = graphOf([unreadDay("2026-10-01", 21_661), unreadDay("2026-10-02", 19_758)]);
     const tree = CashFlowGraph({ data, projection: null });
     const plotted = chartDataIn(tree);
     expect(plotted.map((p) => [p.earnedCum, p.netCum])).toEqual([[null, null], [null, null]]);
     expect(plotted.map((p) => p.spentCum)).toEqual([21_661, 41_419]);
-    const caption = (d: CashFlow) =>
-      textOf(renderToStaticMarkup(createElement(CashFlowGraph, { data: d, projection: null })));
+    // ⚖️ …of the days the lines leave undrawn, in the hover's words for them (`noIncomeDayCheckedIn`, 2026-10-30)
     expect(caption(data)).toContain(
-      "Income and Net are not drawn while not one day has been checked in the accounts that pay lands in.",
+      "Income and Net are not drawn while not one day of Oct 1 – 2, 2026 has been checked in the accounts that pay " +
+        "lands in.",
     );
     // a window read as before carries no such caption
     expect(caption({ ...data, buckets: quarter, incomeUnread: false })).not.toContain("pay lands in");
+  });
+
+  /*
+   * ⛔ ONE WORDING FOR ONE WINDOW (`noIncomeDayCheckedIn`): of one day, "has not been checked", the day named. 🔴 His
+   * ledger copy 2026-10-29 (Wells Fargo checked through Sep 24), `?period=2026-09-25&cash=graph`: the caption read "…
+   * while not one day has been checked …" under a hover saying "Sep 25, 2026 has not been checked in the accounts that
+   * pay lands in" and an Income card saying the same, so the page's two lens captions followed two rules.
+   */
+  test("a window one day long: the caption says that day has not been checked, as its hover and card do", () => {
+    const said = caption(graphOf([unreadDay("2026-09-25", 5_863)]));
+    expect(said).toContain(
+      "Income and Net are not drawn while Sep 25, 2026 has not been checked in the accounts that pay lands in.",
+    );
+    expect(said).not.toContain("not one day");
+  });
+
+  /*
+   * ⚖️ …and a whole calendar month by its name, as the page's Income card and the dashboard name it
+   * (`calendarWindowLabel`, default built, not asked, 2026-10-30). 🔴 His ledger copy 2026-10-29, `?period=2026-Q4`
+   * `&cash=graph`: the hover read "not one day of Oct 1 – 31, 2026 has been checked …" beside the chart lens's "…of the
+   * month…" for the same bucket.
+   */
+  test("a run that is a whole month is called by the month's name, in the hover and the caption", () => {
+    const q4 = [
+      { ...monthBucket("2026-10", 0, 160_300, null), to: "2026-10-31", incomeUnread: true },
+      { ...monthBucket("2026-11", 0, 0, "future"), to: "2026-11-30" },
+      { ...monthBucket("2026-12", 0, 0, "future"), to: "2026-12-31" },
+    ];
+    const said = caption(graphOf(q4));
+    expect(said).toContain(
+      "Income and Net are not drawn while not one day of October 2026 has been checked in the accounts that pay " +
+        "lands in.",
+    );
+    expect(said).not.toContain("Oct 1 – 31");
+    const hover = render({ ...point("2026-10", "Oct"), earnedCum: 0 }, null, { from: "2026-10-01", to: "2026-10-31" });
+    expect(hover).toContain("not one day of October 2026 has been checked in the accounts that pay lands in");
+    expect(hover).not.toContain("Oct 1 – 31");
   });
 
   test("a line with a segment to draw carries no marks", () => {

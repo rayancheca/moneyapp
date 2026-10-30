@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { comparePeriods } from "./compared-windows";
 import { addCalendarMonths, compareDates, periodBounds } from "./dates";
 import {
+  calendarWindowLabel,
   dayWindowLabel,
   ALL_TIME_FLOOR,
   currentPeriodLabel,
@@ -599,6 +600,33 @@ describe("dayWindowLabel — a window named by its own two ends", () => {
 
   test("the same day-of-month in two months is still two days", () => {
     expect(dayWindowLabel("2026-07-25", "2026-08-25")).toBe("Jul 25 – Aug 25, 2026");
+  });
+});
+
+/*
+ * ⚖️ A window that IS a calendar period is called by the period's name — the label `resolvePeriod` gives the page of
+ * those very days — and any other by its two ends (default built, not asked, 2026-10-30). 🔴 His ledger copy
+ * 2026-10-29, `/spending?period=2026-Q4&cash=graph`: the running total's hover named October "Oct 1 – 31, 2026", beside
+ * an Income card saying "Q4 2026" and a dashboard saying "October 2026".
+ */
+describe("calendarWindowLabel — a calendar period by its name, any other window by its ends", () => {
+  test("a whole month, quarter or year reads as the page of those days is titled", () => {
+    expect(calendarWindowLabel("2026-10-01", "2026-10-31")).toBe("October 2026");
+    expect(calendarWindowLabel("2026-02-01", "2026-02-28")).toBe("February 2026");
+    expect(calendarWindowLabel("2026-10-01", "2026-12-31")).toBe("Q4 2026");
+    expect(calendarWindowLabel("2026-01-01", "2026-12-31")).toBe("2026");
+    for (const key of ["2026-10", "2026-Q4", "2026"]) {
+      const p = resolvePeriod({ period: key }, TODAY);
+      expect(calendarWindowLabel(p.from, p.to)).toBe(p.label);
+    }
+  });
+
+  test("any other window by its own two ends — a day, part of a month, two whole months", () => {
+    expect(calendarWindowLabel("2026-10-01", "2026-10-01")).toBe("Oct 1, 2026");
+    expect(calendarWindowLabel("2026-10-01", "2026-10-30")).toBe("Oct 1 – 30, 2026");
+    expect(calendarWindowLabel("2026-10-02", "2026-10-31")).toBe("Oct 2 – 31, 2026");
+    expect(calendarWindowLabel("2026-10-01", "2026-11-30")).toBe("Oct 1 – Nov 30, 2026");
+    expect(calendarWindowLabel("2025-10-01", "2026-10-31")).toBe("Oct 1, 2025 – Oct 31, 2026");
   });
 });
 

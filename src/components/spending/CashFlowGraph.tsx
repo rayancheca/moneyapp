@@ -22,8 +22,8 @@ import {
 } from "@/lib/cash-flow-cumulative";
 import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { dayWindowLabel } from "@/lib/period";
-import { noIncomeDayCheckedIn } from "@/lib/unbanked-income";
+import { calendarWindowLabel } from "@/lib/period";
+import { noIncomeDayCheckedIn, type NamedWindow } from "@/lib/unbanked-income";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
 /**
@@ -70,6 +70,7 @@ interface CashFlowGraphProps {
  * $0.00 · Spent $1,603.00 · Net −$1,603.00", Wells Fargo checked through Sep 24.
  * ⚖️ …of the days it sums (`incomeUnread`, `runningIncomeUnreadDays`), "not one day of Sep 26 – Oct 31, 2026 has been
  * checked …", never of its axis label (2026-10-29). 🔴 His ledger copy 2026-10-29: "not one day through Sep 26–30 …".
+ * ⚖️ …named as the caption names them (`namedDays`): a whole month "October 2026", never "Oct 1 – 31, 2026".
  */
 export function RunningTotalTooltip({
   point: row,
@@ -117,7 +118,7 @@ export function RunningTotalTooltip({
           </div>
           {unread && (
             <div className="mt-1 text-ink-muted first-letter:uppercase">
-              {noIncomeDayCheckedIn({ ...incomeUnread, label: dayWindowLabel(incomeUnread.from, incomeUnread.to) })}
+              {noIncomeDayCheckedIn(namedDays(incomeUnread))}
             </div>
           )}
         </>
@@ -130,6 +131,15 @@ export function RunningTotalTooltip({
       )}
     </div>
   );
+}
+
+/**
+ * The days a running Income sums where nobody has looked, as a §6A 68 sentence names them (`noIncomeDayCheckedIn`): a
+ * calendar month, quarter or year by its name, any other window by its two ends (`calendarWindowLabel`). ⛔ One naming
+ * for the hover and the caption, so the two cannot name one run apart.
+ */
+function namedDays(days: { from: string; to: string }): NamedWindow {
+  return { ...days, label: calendarWindowLabel(days.from, days.to) };
 }
 
 /** recharts' own dot radius — the size it gives a series of a single point */
@@ -176,6 +186,8 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   // ⚖️ §6A 68: the points the lines leave without Income and Net, each with the days it sums — the hover's dash and its
   // sentence read the same set
   const incomeUnread = runningIncomeUnreadDays(buckets);
+  // …and the whole run's days, the last point's: what the caption says the lines leave undrawn
+  const unreadRun = [...incomeUnread.values()].at(-1) ?? null;
 
   return (
     <figure className="m-0" aria-label="Running totals for the period — cumulative income, spending, and net">
@@ -287,10 +299,13 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
           </span>
         )}
         {/* ⚖️ §6A 68: a legend naming two lines the graph leaves undrawn says why, as the table lens says it under its
-            dashes. 🔴 His ledger copy 2026-10-21: October's lens names Income and Net over no line of either. */}
-        {incomeUnread.size > 0 && (
+            dashes. 🔴 His ledger copy 2026-10-21: October's lens names Income and Net over no line of either.
+            ⛔ …of the run's days, in the one wording for a window (`noIncomeDayCheckedIn`, 2026-10-30). 🔴 His ledger
+            copy 2026-10-29, `?period=2026-09-25`: "…while not one day has been checked …" under a hover and an
+            Income card saying "Sep 25, 2026 has not been checked …" — the chart lens's caption went through the rule. */}
+        {unreadRun !== null && (
           <span className="basis-full text-ink-faint">
-            Income and Net are not drawn while not one day has been checked in the accounts that pay lands in.
+            Income and Net are not drawn while {noIncomeDayCheckedIn(namedDays(unreadRun))}.
           </span>
         )}
       </figcaption>
