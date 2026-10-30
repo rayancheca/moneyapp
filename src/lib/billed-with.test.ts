@@ -20,6 +20,7 @@ const RENT: BillingCarrier = {
   lastMatchedOn: "2026-09-02",
   opensOn: "2026-09-01",
   opensOnHisDate: true,
+  opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
 };
 const TODAY = "2026-10-08";
 

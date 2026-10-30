@@ -667,6 +667,7 @@ describe("seriesStaleness", () => {
         lastMatchedOn: a,
         opensOn: "2026-09-01",
         opensOnHisDate: true,
+        opensPaidBy: null,
       })),
     ];
     // ⛔ …and with a schedule its end has closed: Aug 1 is the next day, and nothing is left inside a Jul 1 end. 🔴 The

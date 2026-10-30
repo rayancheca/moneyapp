@@ -1398,7 +1398,7 @@ export function toProjectable(
 
 /** What a projection reads of the carrier a series is billed with (`openingOf`) — `null` for one billed on its own. */
 export interface CarriedBy {
-  readonly billedWith: Pick<BillingCarrier, "opensOn" | "opensOnHisDate"> | null;
+  readonly billedWith: Pick<BillingCarrier, "opensOn" | "opensOnHisDate" | "opensPaidBy"> | null;
 }
 
 const INACTIVE_MISS_LIMIT = 1.5;
@@ -1947,7 +1947,8 @@ export function dueDayBefore(series: DueDaySchedule, day: string): string | null
  * The due day NEAREST `day` on a series' schedule — `day` itself when it is one, of two as near the earlier — by index
  * from its anchor, behind it too, as `dueDayBefore` steps: the day his decision 76 says a payment on `day` pays ("the
  * one it's nearer to (a tie goes to the earlier one)"). Where a series billed inside another opens (`openingOf`): the
- * day of its own its carrier's date falls due with. Null for a series with no schedule.
+ * day of its own nearest the payment that paid its carrier's opening day — or, none yet, nearest that day itself. Null
+ * for a series with no schedule.
  */
 export function dueDayNearest(series: DueDaySchedule, day: string): string | null {
   if (!series.nextExpectedOn) return null;
@@ -1959,9 +1960,29 @@ export function dueDayNearest(series: DueDaySchedule, day: string): string | nul
 }
 
 /**
+ * The due day `steps` due days after `dueOn` on a series' schedule — before it when negative — `dueOn` one of its due
+ * days, by index from its anchor, behind it too, as `dueDayBefore` steps. Null for a series with no schedule.
+ */
+export function dueDayStepped(series: DueDaySchedule, dueOn: string, steps: number): string | null {
+  if (!series.nextExpectedOn) return null;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  return stepFrom(series.nextExpectedOn, plan, signedStepsToReach(series.nextExpectedOn, plan, dueOn) + steps);
+}
+
+/**
+ * How many due days `to` lies after `from` on a series' schedule — negative when before — each one of its due days,
+ * by index from its anchor (`dueDayStepped`'s steps). 0 for a series with no schedule.
+ */
+export function dueDaysApart(series: DueDaySchedule, from: string, to: string): number {
+  if (!series.nextExpectedOn) return 0;
+  const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
+  return signedStepsToReach(series.nextExpectedOn, plan, to) - signedStepsToReach(series.nextExpectedOn, plan, from);
+}
+
+/**
  * ⚖️ His decision 76 (2026-10-14): whether `day`, between two due days, lies NEARER the later — a tie is the earlier's.
- * ONE test for a payment between two due days (`paymentFor`) and for the day of its own a carrier's date falls due
- * with (`dueDayNearest`).
+ * ONE test for a payment between two due days (`paymentFor`) and for the day of its own a carrier's opening day falls
+ * due with (`dueDayNearest`, `openingOf`).
  */
 export function liesNearerTheLater(day: string, earlier: string, later: string): boolean {
   return diffDays(day, later) < diffDays(earlier, day);

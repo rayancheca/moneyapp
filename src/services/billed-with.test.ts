@@ -48,13 +48,17 @@ const TODAY = "2026-10-08";
 const RENT = "rent";
 const UTIL = "util";
 const GYM = "gym";
-/** the rent as what it carries reads it: its newest charge, and where its schedule opens — detection's Sep 1 here */
+/**
+ * the rent as what it carries reads it: its newest charge, where its schedule opens — detection's Sep 1 here — and the
+ * payment that paid that day, Sep 2's, on time
+ */
 const RENT_CARRIER = {
   id: RENT,
   name: "Flamingo South Beach (rent)",
   lastMatchedOn: "2026-09-02",
   opensOn: "2026-09-01",
   opensOnHisDate: false,
+  opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
 };
 
 const now = () => new Date().toISOString();
@@ -440,13 +444,15 @@ describe("a merge of the carrier — the link follows the rent to the series it 
   test("its carrier is the series the rent was merged into — last seen Dec 2, not the ended rent's Sep 2", () => {
     link();
     mergeRentIntoDetectedSeries();
-    // …and where it opens is the live series' too: detection's Jan 2, 2027, never the ended rent's Sep 1
+    // …and where it opens is the live series' too: detection's Jan 2, 2027, never the ended rent's Sep 1 — and what
+    // paid it is the live series' payment of that day, none yet (Dec 2 is Dec 2's)
     expect(billingCarriers(bundle.db).get(UTIL)).toEqual({
       id: WF,
       name: "Flamingo South Beach",
       lastMatchedOn: "2026-12-02",
       opensOn: "2027-01-02",
       opensOnHisDate: false,
+      opensPaidBy: null,
     });
     const line = subscriptionsCard(bundle.db, TODAY_DEC)!.live.find((l) => l.seriesId === UTIL)!;
     expect(line.billedWithLabel).toBe("billed with Flamingo South Beach, last seen Dec 2");

@@ -1,20 +1,24 @@
+import { cache } from "react";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
-import type { BillingCarrier } from "@/lib/billed-with";
+import type { BillingCarrier, OpeningPayment } from "@/lib/billed-with";
 import { compareDates, diffDays } from "@/lib/dates";
 import { daysThatPaid, occurrencesOf, paidAheadDays, readsPerOccurrence } from "@/lib/posted-average";
 import { seriesAmountCents } from "@/lib/series-kind";
 import {
   dueDayNearest,
+  dueDaysApart,
   dueDaysOf,
+  dueDayStepped,
   effectiveSchedule,
   effectiveSeries,
   liesNearerTheLater,
   ownOpening,
   resolveMergeTarget,
   type CarriedBy,
+  type EffectiveSchedule,
   type ScheduleOpening,
   type SeriesOverrides,
 } from "./recurring";
@@ -35,9 +39,9 @@ import {
  * rent" again — never the ended rent's word on one surface and the live series' on another (review of §6A 59,
  * resolved 2026-10-13; pinned in billed-with.test.ts, "after the merge every surface names…").
  *
- * ⚖️ …and so does WHERE IT OPENS: the live carrier's own opening (`ownOpening`) — its date, his or detection's — which
- * opens what it carries, on the day of its own that falls due with it, for every grader and every projection
- * (`openingOf`), read here once with the rest.
+ * ⚖️ …and so does WHERE IT OPENS: the live carrier's own opening (`ownOpening`) — its date, his or detection's — and
+ * the payment that paid it (`openingPaymentsOfRender`), which open what it carries, on the day of its own that falls
+ * due with it, for every grader and every projection (`openingOf`), read here once with the rest.
  *
  * Two small queries rather than a self-join: `aliasedTable` breaks drizzle's row inference (see `seriesHues`), and on
  * a ledger with no link the second is never asked. The second reads every series, as detection's merge map does — a
@@ -63,16 +67,71 @@ export function billingCarriers(db: Pick<AppDatabase, "select">): ReadonlyMap<st
     .all();
   const byId = new Map(series.map((s) => [s.id, s] as const));
   const mergedById = new Map(series.map((s) => [s.id, s.mergedIntoId] as const));
-  const carriers: (readonly [string, BillingCarrier])[] = [];
-  for (const c of carried) {
+  const live = carried.flatMap((c) => {
     const liveId = resolveMergeTarget(c.carrierId!, mergedById);
-    if (liveId === c.id) continue;
-    // the column REFERENCES the table and a merge names a series in it, so every carrier is there
-    const carrier = byId.get(liveId)!;
-    const { id, name, lastMatchedOn } = carrier;
-    carriers.push([c.id, { id, name, lastMatchedOn, ...ownOpening(carrier) }]);
+    return liveId === c.id ? [] : [[c.id, liveId] as const];
+  });
+  if (live.length === 0) return new Map();
+  // one string of the carriers, sorted: `cache` keys on its arguments as passed
+  const paidBy = openingPaymentsOfRender(db, [...new Set(live.map(([, liveId]) => liveId))].sort().join(","));
+  return new Map(
+    live.map(([carriedId, liveId]) => {
+      // the column REFERENCES the table and a merge names a series in it, so every carrier is there
+      const carrier = byId.get(liveId)!;
+      const { id, name, lastMatchedOn } = carrier;
+      const opensPaidBy = paidBy.get(id) ?? null;
+      return [carriedId, { id, name, lastMatchedOn, ...ownOpening(carrier), opensPaidBy }] as const;
+    }),
+  );
+}
+
+/**
+ * ⚡ MEMOISED FOR ONE SERVER RENDER — `react`'s `cache`, for `buildPortfolio`'s reason (`services/portfolio`): the
+ * carriers' opening payments (`openingPayments`), keyed by their ids, comma-joined. Each is read off every posting of
+ * its carrier, as its graders read them, and `transactions` has no index on the series link, so one read scans every
+ * row — 0.6 ms on his ledger copy 2026-10-29 (13,026 rows), against 0.09 ms for the rest of a `billingCarriers` call,
+ * which /budgets' pace statuses alone make 62 times a render. `cache()` does not memoise outside a render, so tests
+ * and scripts read it fresh every call.
+ */
+const openingPaymentsOfRender = cache(function openingPaymentsOfRender(
+  db: Pick<AppDatabase, "select">,
+  carrierIds: string,
+): ReadonlyMap<string, OpeningPayment> {
+  const carriers = db
+    .select()
+    .from(recurringSeries)
+    .where(inArray(recurringSeries.id, carrierIds.split(",")))
+    .all();
+  return openingPayments(db, carriers);
+});
+
+/**
+ * ⚖️ Per carrier, the payment that PAID where its own schedule opens by its own test — `paymentFor` over the postings
+ * and due days its own graders read (`billPaymentsBySeries`, `billDueDaysBySeries`), his date included — with how many
+ * of its due days that payment's own day, its due day nearest it, lies past the opening day (`OpeningPayment`); none
+ * while nothing has paid it. What says which day of a series billed inside it its first period carries (`openingOf`;
+ * default built, not asked, 2026-10-29). ⛔ Read as billed on its own — one hop: the link's one writer refuses a
+ * carrier billed with another (`scripts/link-utilities-to-rent.ts`).
+ */
+function openingPayments(
+  db: Pick<AppDatabase, "select">,
+  carriers: readonly (SeriesOverrides & { id: string; toleranceDays: number })[],
+): ReadonlyMap<string, OpeningPayment> {
+  const rows = carriers.map((c) => ({ ...c, billedWith: null }));
+  const payments = billPaymentsBySeries(db, rows);
+  const dueDays = billDueDaysBySeries(rows);
+  const out = new Map<string, OpeningPayment>();
+  for (const c of carriers) {
+    const days = dueDays.get(c.id)!;
+    if (days.opensOn === null) continue;
+    const paid = paymentFor(payments.get(c.id) ?? [], days.opensOn, days);
+    if (paid === undefined) continue;
+    // its own day, as decision 76 reads a payment between two: the opening day itself, or one either side of it
+    const schedule = effectiveSchedule(c);
+    const ownDay = dueDayNearest(schedule, paid.postedOn)!;
+    out.set(c.id, { postedOn: paid.postedOn, dueDaysPast: dueDaysApart(schedule, days.opensOn, ownDay) });
   }
-  return new Map(carriers);
+  return out;
 }
 
 /**
@@ -151,13 +210,15 @@ export interface DueDays {
    * from it on is a charge (`couldHaveCharged`). One before it is none once it is his date (`opensOnHisDate`), else
    * none before it and before every payment — so no payment of two catches it up (`paymentFor`'s catch-up; default
    * built, not asked, 2026-10-23). Billed on its own, its anchor, where its projection starts. Billed inside another,
-   * the day of its OWN that falls due with its CARRIER's date (`dueDayNearest`: its due day nearest it, a tie the
-   * earlier) — the carrier's date he typed: its projection floored there, starting at its own anchor only when that
-   * is later; detection's: the earlier of that day and its own anchor, which opens its projection (default built, not
-   * asked, 2026-10-29): the payments are the carrier's, and so is the test. Always one of its own days. 🔴 Until then
-   * "where every reader's projection of a bill starts" was false of what the rent carries: its projection opened at
-   * its own date, before the rent's he typed (review of 68c837ce — `openingOf`); 🔴 and then at the rent's date
-   * itself, after the day of its own the rent's first month carries (review of 0ac5d059).
+   * the day of its OWN that falls due with its CARRIER's opening day — the one the carrier's payment of that day pays,
+   * its due day nearest that payment; none yet, its due day nearest that day, a tie the earlier (`openingOf`) — the
+   * carrier's date he typed: its projection floored there, starting at its own anchor only when that is later;
+   * detection's: the earlier of that day and its own anchor, which opens its projection (default built, not asked,
+   * 2026-10-29): the payments are the carrier's, and so is the test. Always one of its own days. 🔴 Until then "where
+   * every reader's projection of a bill starts" was false of what the rent carries: its projection opened at its own
+   * date, before the rent's he typed (review of 68c837ce — `openingOf`); 🔴 then at the rent's date itself, after the
+   * day of its own the rent's first month carries (review of 0ac5d059); 🔴 then on its day nearest the rent's date
+   * even once paid, a day a payment posted a day or two after that date may never pay (review of ec7fd198).
    */
   readonly opensOn: string | null;
   /**
@@ -496,9 +557,16 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
  *
  * ⚠️ "The same period" is the carried occurrence's own day: a series billed inside another falls due with it (his
  * utilities and his rent are both due on the 1st), so the carrier's occurrence of that period is the one on that day.
- * Apart, a day of the carrier's falls due with the carried series' day NEAREST it, a tie the earlier — the day its
- * payment there pays, by his decision 76 — and the carrier's date opens it there (`openingOf`): the rent typed Nov 2
- * opens the utilities on their Nov 1 (default built, not asked, 2026-10-29; review of 0ac5d059).
+ * Apart, the carrier's opening day falls due with the carried series' day its PAYMENT of that day pays — its day
+ * nearest that payment, by his decision 76 — and opens it there (`openingOf`): the rent typed Nov 16 and paid Nov 17
+ * opens the utilities on their Dec 1, which Nov 17 pays early; paid ON Nov 16, on their Nov 1, which it pays late; and,
+ * no payment of it yet, on their day nearest the date, a tie the earlier — the rent typed Nov 2, their Nov 1 (default
+ * built, not asked, 2026-10-29; reviews of 0ac5d059 and ec7fd198). 🔴 At ec7fd198 "the day its payment there pays" was
+ * read off the date itself, which a payment a day after it need not pay (review of ec7fd198). ⚠️ Each later day of
+ * theirs is still paid by the payment nearest it (`paymentFor`): a rent paid on Nov 16, the tie, then Dec 17, a day
+ * past it, pays their Nov 1 late and their Jan 1 early, and on Dec 20 December draws their Dec 1 missed, owed $182.21
+ * beside a rent paid on time (a temp database) — a known gap, the safe way round for December; latent, his rent and
+ * what it carries both fall due on the 1st.
  *
  * ⛔ Amounts are not asked: the carrier's payment pays what is billed inside it whatever it adds up to — as a covering
  * posting pays the bill it covers (`overdueForSeries`). Its money is on the carrier's row, counted there, once.
@@ -507,7 +575,7 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
  * no link.
  */
 function carrierPaymentsBySeries(
-  db: AppDatabase,
+  db: Pick<AppDatabase, "select">,
   rows: readonly { id: string; billedWith: BillingCarrier | null }[],
 ): ReadonlyMap<string, readonly BillPayment[]> {
   const carried = rows.filter((r): r is typeof r & { billedWith: BillingCarrier } => r.billedWith !== null);
@@ -549,7 +617,7 @@ export interface BillPayment extends Payment {
  * day of any grader's.
  */
 function postingsBySeries(
-  db: AppDatabase,
+  db: Pick<AppDatabase, "select">,
   tolerance: ReadonlyMap<string, number>,
   carried: boolean,
 ): Map<string, BillPayment[]> {
@@ -613,7 +681,7 @@ interface PaymentDays {
 
 /** Per series, its `PaymentDays` — read off its rows and its own row, one query for all of them. */
 function paymentDays(
-  db: AppDatabase,
+  db: Pick<AppDatabase, "select">,
   rows: readonly { seriesId: string | null; postedOn: string; amountCents: number }[],
 ): ReadonlyMap<string, PaymentDays> {
   const bySeries = new Map<string, { postedOn: string; amountCents: number }[]>();
@@ -665,7 +733,7 @@ function paymentDays(
  * 1 paid while the forecast card, the Upcoming tab, the dashboard strip and the rent's page still listed it coming.
  */
 export function billPaymentsBySeries(
-  db: AppDatabase,
+  db: Pick<AppDatabase, "select">,
   rows: readonly { id: string; toleranceDays: number; billedWith: BillingCarrier | null }[],
 ): ReadonlyMap<string, readonly BillPayment[]> {
   if (rows.length === 0) return new Map();
@@ -678,8 +746,9 @@ export function billPaymentsBySeries(
  * ⛔ The due days every grader of a bill's day reads it by (`paymentFor`), keyed by series id — its schedule's steps
  * (`dueDaysOf`: its days either side, `DueDays.before` and `DueDays.after`, its own — billed inside another, it falls
  * due with its carrier) and where it OPENS (`openingOf`: billed inside another, on the day of its own its CARRIER's
- * date falls due with — the day every projection of it opens on too). The arrears, the calendar and every reader that
- * looks ahead (`stillToComeReader`) each read these, so none can grade the utilities' Oct 1 apart from the rent's.
+ * opening day falls due with, the one the carrier's payment of it pays — the day every projection of it opens on
+ * too). The arrears, the calendar and every reader that looks ahead (`stillToComeReader`) each read these, so none can
+ * grade the utilities' Oct 1 apart from the rent's.
  *
  * 🔴 Each grader read a carried series' opening off its own row (review of 4d6ec2ac): a what-if rent at -$2,291.21
  * typed Oct 1, the utilities carried on detection's Oct 1 — his ledger's shape, the rent typed Sep 1 and the utilities
@@ -733,11 +802,15 @@ export function billDueDaysBySeries(
  * detection's Oct 1. Pinned in nearer-due-day.test.ts ("…on time for his Oct 1"), with the review's two controls, and
  * on every reader that looks ahead and the first-posting rule (recurring-first-posting.test.ts).
  *
- * ⚖️ …and the carrier's date is read as a day of ITS OWN: the due day of what it carries that falls due with it — its
- * day nearest the carrier's date, a tie the earlier (`dueDayNearest`), the day his decision 76 says a payment on that
- * date pays — so the carrier's first period carries its first charge, whatever day of the month each falls on, and
- * where it opens is always one of its own days (default built, not asked, 2026-10-29; ⛔ the safe side of the tie: the
- * earlier opens more). 🔴 At 0ac5d059 the floor cut by DATE, not by period (review of 0ac5d059): his rent retyped Nov 2,
+ * ⚖️ …and the carrier's opening is read as a day of ITS OWN: the one the carrier's PAYMENT of that day pays
+ * (`BillingCarrier.opensPaidBy`, read by the carrier's own test, `paymentFor`, his date included) — its due day nearest
+ * that payment, as his decision 76 reads a payment between two due days, stepped back as many of its own days as the
+ * payment's own day lies past the opening day (a payment of two that caught the opening day up from the next: the day
+ * behind the one nearest it) — and only while no payment has paid it, its day nearest the carrier's date, a tie the
+ * earlier: the day a payment ON that date would pay (default built, not asked, 2026-10-29; ⛔ the safe side of the tie:
+ * the earlier opens more, owed with the carrier once read past). So the payment that pays the carrier's first period
+ * pays its first charge, whatever day of the month each falls on, and where it opens is always one of its own days.
+ * 🔴 At 0ac5d059 the floor cut by DATE, not by period (review of 0ac5d059): his rent retyped Nov 2,
  * the day it posts (Sep 2, Oct 2), dropped the utilities' Nov 1 — the charge his Nov 2 carries — off every surface, on
  * the same copy: on Oct 29 Upcoming listed their Dec 1 first beside the rent's Nov 2, November's forecast lost "Rent
  * utilities & fees -$182.21 (monthly), next Nov 1" and its spend moved from -$10,835.73 to -$10,653.52, their page and
@@ -753,6 +826,32 @@ export function billDueDaysBySeries(
  * nearer-due-day.test.ts ("…the rent typed Nov 2", "…the rent typed Sep 1") and on the day itself in
  * billing-carriers.test.ts.
  *
+ * 🔴 At ec7fd198 that day was read off the carrier's DATE even once a payment of it had posted (review of ec7fd198):
+ * the rent's payments post a day or more after its date (Sep 2, Oct 2, Jul 8, Aug 4 on his ledger), and one a day or
+ * two past a date on the 15th or 16th lies nearer the NEXT 1st, so it paid that day early and nothing paid the one the
+ * date opened. On a temp database — a rent at -$2,291.21 typed Nov 16 (or Nov 15, no tie), the utilities on
+ * detection's Sep 1, Jul 1 / Aug 2 / Sep 2 / Oct 2 and Nov 17 at the rate, read through Nov 19 — on Nov 20 November
+ * drew their Nov 1 missed, the arrears owed $182.21 and the runway read "A further $182.21 came due earlier this month
+ * and has not posted." beside a rent paid in full, December drawing their Dec 1 paid early by Nov 17: a month owed for
+ * good. On his ledger copy 2026-10-29 with only his rent retyped Nov 16 and -$2,291.21 on Nov 17 and Dec 17 on Wells
+ * Fargo, read through Dec 26, on Nov 20 the runway read "A further $1,064.86 came due earlier this month: $877.25 has
+ * not posted, and no statement has covered the other $187.61 yet.", November's forecast added "Rent utilities & fees
+ * -$182.21 … came due Nov 1 and has not posted" (spend -$3,937.56), their page showed Nov 1 already due, and November
+ * kept their ✕ on Dec 5 and Dec 27 beside the rent paid Nov 17. Now Nov 17 opens them on Dec 1, which it pays early:
+ * on Nov 20 the runway reads "A further $882.65 …: $695.04 has not posted, …", November's spend -$3,755.35, and nothing
+ * of theirs is drawn or owed in November — 0ac5d059's reading of this shape; paid ON Nov 16, the payment pays their
+ * Nov 1, late, and opens them there; and November missed, Dec 20's two months — the rent's Nov 16 caught up from its
+ * Dec 16 — open them on Dec 1, the day behind their Jan 1 nearest it, so Dec 20 pays their Dec 1 and Jan 1 as it pays
+ * the rent's Nov 16 and Dec 16 (read off its nearest day alone, their Dec 1 — the charge the rent's Nov 16 carries —
+ * would be drawn, owed and listed nowhere). Pinned in nearer-due-day.test.ts ("…paid Nov 17", "…paid ON Nov 16", "…not
+ * yet paid", "…Oct 20's two months before his Nov 16", "…Dec 20's two months") and on the day in
+ * billing-carriers.test.ts.
+ *
+ * ⚠️ …and until a payment of the carrier's opening day posts, the tie's day reads on its own grace: the rent typed
+ * Nov 16, nothing of November posted, on Nov 10 (read through Nov 9) November draws their Nov 1 missed and the runway
+ * reads "A further $182.21 came due earlier this month and has not posted." six days before the rent's Nov 16 comes —
+ * gone once a payment a day past the tie posts (a temp database). The safe side, kept: the tie opens more.
+ *
  * ⚠️ The cost, the safe way: a date he types on the rent past what it carries takes their earlier periods off every
  * surface, paid ones too. On the same copy with only his rent retyped Nov 1 (or Nov 2), September and October no longer
  * draw "Rent utilities & fees paid … with the rent's payment of Sep 2" (and Oct 2) — the rent's own rows still stand
@@ -764,11 +863,30 @@ export function openingOf(s: SeriesOverrides & CarriedBy): ScheduleOpening {
   const own = ownOpening(s);
   const carrier = s.billedWith;
   if (carrier === null) return own;
-  // the carrier's date as the day of its own that falls due with it — that date itself with no schedule of its own
+  // the carrier's opening as the day of its own that falls due with it — that day itself with no schedule of its own
   const withIt =
-    carrier.opensOn === null ? null : (dueDayNearest(effectiveSchedule(s), carrier.opensOn) ?? carrier.opensOn);
+    carrier.opensOn === null
+      ? null
+      : (dayFallingDueWith(effectiveSchedule(s), carrier.opensOn, carrier.opensPaidBy) ?? carrier.opensOn);
   if (carrier.opensOnHisDate) return { opensOn: withIt, opensOnHisDate: true };
   return { opensOn: earlierOf(own.opensOn, withIt), opensOnHisDate: false };
+}
+
+/**
+ * The due day of a series billed inside another that falls due with its carrier's opening day (`openingOf`): the one
+ * the carrier's payment of that day pays (`BillingCarrier.opensPaidBy`) — its due day nearest that payment, as his
+ * decision 76 reads a payment between two, stepped back as many of its own due days as the payment's own day lies past
+ * the opening day (a payment of two that caught it up from the day after: the day behind) — else, nothing paid yet,
+ * its due day nearest the opening day itself, a tie the earlier. Null with no schedule of its own.
+ */
+function dayFallingDueWith(
+  schedule: EffectiveSchedule,
+  carrierOpensOn: string,
+  paidBy: OpeningPayment | null,
+): string | null {
+  if (paidBy === null) return dueDayNearest(schedule, carrierOpensOn);
+  const nearest = dueDayNearest(schedule, paidBy.postedOn);
+  return nearest === null ? null : dueDayStepped(schedule, nearest, -paidBy.dueDaysPast);
 }
 
 /** The earlier of two days, either of them absent. */

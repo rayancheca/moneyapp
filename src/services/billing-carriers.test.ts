@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { OpeningPayment } from "@/lib/billed-with";
 import { openingOf, paymentFor, paysEarly, type DueDays, type Payment } from "./billing-carriers";
 import { dueDaysOf, ownOpening } from "./recurring";
 
@@ -775,16 +776,30 @@ describe("the nearer due day wins (decision 76)", () => {
 });
 
 /*
- * ⚖️ Where what the rent carries OPENS (`openingOf`): on the day of its OWN that falls due with the rent's date — its
- * due day nearest that date, a tie the earlier, the day his decision 76 says a payment on that date pays (default
- * built, not asked, 2026-10-29) — his when the rent's date is his, else the earlier of that day and its own date. 🔴 At
- * 0ac5d059 it opened on the rent's date itself (review of 0ac5d059): the rent typed Nov 2, the utilities on the 1st
- * opened on Nov 2, their Nov 1 — what the rent's Nov 2 carries — before it, drawn, owed and listed nowhere. And
- * reading the LATER of the rent's date and their own passed every test: the rent typed Sep 1 beside their own Nov 1.
+ * ⚖️ Where what the rent carries OPENS (`openingOf`): on the day of its OWN that falls due with the rent's opening
+ * day — the one the rent's payment of that day pays: its due day nearest that payment, as his decision 76 reads a
+ * payment between two due days, stepped back as many of its days as the payment's own day lies past the rent's (a
+ * payment of two that caught that day up from the next) — and while no payment has paid it, its due day nearest the
+ * rent's date, a tie the earlier (default built, not asked, 2026-10-29); his when the rent's date is his, else the
+ * earlier of that day and its own date. 🔴 At 0ac5d059 it opened on the rent's date itself (review of 0ac5d059): the
+ * rent typed Nov 2, the utilities on the 1st opened on Nov 2, their Nov 1 — what the rent's Nov 2 carries — before it,
+ * drawn, owed and listed nowhere. And reading the LATER of the rent's date and their own passed every test: the rent
+ * typed Sep 1 beside their own Nov 1. 🔴 At ec7fd198 the day was read off the rent's date even once a payment of it
+ * had posted (review of ec7fd198): typed Nov 16, paid Nov 17 on time, it opened them on Nov 1, which Nov 17 — nearer
+ * their Dec 1 — never pays.
  */
 describe("openingOf — what the rent carries opens on the day of its own that falls due with the rent's date", () => {
-  /** the utilities, monthly on the 1st from `own` (his when `typed`), billed inside a rent dated `rentOn` */
-  const utilities = (own: string, rentOn: string | null, rentTyped: boolean, typed = false) =>
+  /**
+   * the utilities, monthly on the 1st from `own` (his when `typed`), billed inside a rent dated `rentOn` — its opening
+   * day paid by `paidBy`, or by nothing yet
+   */
+  const utilities = (
+    own: string,
+    rentOn: string | null,
+    rentTyped: boolean,
+    typed = false,
+    paidBy: OpeningPayment | null = null,
+  ) =>
     openingOf({
       cadence: "monthly",
       userCadence: null,
@@ -794,9 +809,11 @@ describe("openingOf — what the rent carries opens on the day of its own that f
       nextExpectedAmountCents: -18221,
       userAmountCents: null,
       anchorDay: 1,
-      billedWith: { opensOn: rentOn, opensOnHisDate: rentTyped },
+      billedWith: { opensOn: rentOn, opensOnHisDate: rentTyped, opensPaidBy: paidBy },
     });
   const opening = (opensOn: string, opensOnHisDate: boolean) => ({ opensOn, opensOnHisDate });
+  /** the payment of the rent's opening day: the day it posted, and its own day that many of the rent's days past it */
+  const paidOn = (postedOn: string, dueDaysPast = 0): OpeningPayment => ({ postedOn, dueDaysPast });
 
   test.each([
     ["2026-11-01", "2026-11-01", "one of their own days, that day"],
@@ -805,8 +822,38 @@ describe("openingOf — what the rent carries opens on the day of its own that f
     ["2026-11-17", "2026-12-01", "16 days after Nov 1, 14 before Dec 1"],
     ["2026-11-30", "2026-12-01", "29 days after Nov 1, a day before Dec 1"],
     ["2026-10-16", "2026-10-01", "15 days after Oct 1, 16 before Nov 1"],
-  ])("the rent typed %s: the utilities on detection's Sep 1 open on %s, his — %s", (rentOn, opensOn) => {
+  ])("the rent typed %s, not yet paid: the utilities on detection's Sep 1 open on %s, his — %s", (rentOn, opensOn) => {
     expect(utilities("2026-09-01", rentOn, true)).toEqual(opening(opensOn, true));
+  });
+
+  test.each([
+    ["2026-11-16", "2026-11-17", "2026-12-01", "a day past the tie: nearer Dec 1, which it pays early"],
+    ["2026-11-15", "2026-11-17", "2026-12-01", "on time for Nov 15, nearer their Dec 1 all the same"],
+    ["2026-11-16", "2026-11-16", "2026-11-01", "ON the tie: Nov 1's, late"],
+    ["2026-11-16", "2026-11-21", "2026-12-01", "late for Nov 16, nearer their Dec 1"],
+    ["2026-11-16", "2026-11-05", "2026-11-01", "early for Nov 16, late for their Nov 1"],
+    ["2026-11-02", "2026-11-05", "2026-11-01", "on time for Nov 2, and for their Nov 1"],
+    ["2026-09-01", "2026-09-02", "2026-09-01", "his ledger's shape: Sep 2 pays both Sep 1s"],
+  ])("the rent typed %s and paid %s: they open on %s, his — %s", (rentOn, postedOn, opensOn) => {
+    expect(utilities("2026-09-01", rentOn, true, false, paidOn(postedOn))).toEqual(opening(opensOn, true));
+  });
+
+  test("…a payment of two that caught the rent's first day up from its next: the day behind the one nearest it", () => {
+    // Dec 20, late for the rent's Dec 16, paid its Nov 16 too: nearest their Jan 1, so their Dec 1 opens them
+    expect(utilities("2026-09-01", "2026-11-16", true, false, paidOn("2026-12-20", 1))).toEqual(
+      opening("2026-12-01", true),
+    );
+    // Dec 10, late for the rent's Dec 2, paid its Nov 2 too: nearest their Dec 1, so their Nov 1
+    expect(utilities("2026-09-01", "2026-11-02", true, false, paidOn("2026-12-10", 1))).toEqual(
+      opening("2026-11-01", true),
+    );
+  });
+
+  test("…and one that paid it as the day before's second charge: the day after the one nearest it", () => {
+    // the rent on detection's Oct 1, Sep 10 late for its Sep 1 and paying Oct 1 early: nearest their Sep 1, so Oct 1
+    expect(utilities("2026-12-01", "2026-10-01", false, false, paidOn("2026-09-10", -1))).toEqual(
+      opening("2026-10-01", false),
+    );
   });
 
   test("…stepped BACK from their own Nov 1, his or detection's: the rent typed Sep 1 opens them on Sep 1", () => {

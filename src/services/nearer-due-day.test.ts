@@ -12,7 +12,7 @@ import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { arrearsSentence } from "@/lib/committed";
 import { arrearsThisMonth } from "./arrears";
-import { billPaymentsBySeries } from "./billing-carriers";
+import { billingCarriers, billPaymentsBySeries } from "./billing-carriers";
 import { budgetTail } from "./budgets";
 import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
@@ -698,14 +698,15 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
   });
 
   /*
-   * ⚖️ …and where it opens is a day of its OWN, the one that falls due with the rent's date: its due day nearest that
-   * date, a tie the earlier, as his decision 76 reads a payment between two due days (`openingOf`, default built, not
-   * asked, 2026-10-29) — so the rent's first month carries its first charge, whichever day of the month each is on.
-   * 🔴 At 0ac5d059 the floor cut by DATE, not by period (review of 0ac5d059): the rent typed Nov 2, the day his posts
-   * (Sep 2, Oct 2), the utilities on detection's Sep 1 — their Nov 1, the charge the rent's Nov 2 carries, lay before
-   * Nov 2 and was drawn, owed and listed nowhere: on Oct 29 Upcoming listed their Dec 1 first beside the rent's Nov 2,
-   * November's forecast left them out and their page and the All tab named Dec 1; on Nov 20 the arrears owed the rent
-   * alone, "A further $2,291.21 came due earlier this month and has not posted." The forbidden direction: an owed
+   * ⚖️ …and where it opens is a day of its OWN, the one that falls due with the rent's date: while no payment of that
+   * date has posted — none has here, November unpaid — its due day nearest the date, a tie the earlier, as his decision
+   * 76 reads a payment between two due days; once one has, the day that payment pays (below; `openingOf`, default
+   * built, not asked, 2026-10-29) — so the rent's first month carries its first charge, whichever day of the month each
+   * is on. 🔴 At 0ac5d059 the floor cut by DATE, not by period (review of 0ac5d059): the rent typed Nov 2, the day his
+   * posts (Sep 2, Oct 2), the utilities on detection's Sep 1 — their Nov 1, the charge the rent's Nov 2 carries, lay
+   * before Nov 2 and was drawn, owed and listed nowhere: on Oct 29 Upcoming listed their Dec 1 first beside the rent's
+   * Nov 2, November's forecast left them out and their page and the All tab named Dec 1; on Nov 20 the arrears owed the
+   * rent alone, "A further $2,291.21 came due earlier this month and has not posted." The forbidden direction: an owed
    * charge hidden. Pinned with the two on different days of the month; every pin before put them on one.
    */
   test("…and the rent typed Nov 2, what it carries on the 1st opens on Nov 1: listed, forecast, then owed", () => {
@@ -773,6 +774,154 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     expect(coming(DEC20, UTIL)[0]).toBe("2027-01-01");
     expect(coming(DEC20, RENT)[0]).toBe("2027-01-02");
     expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
+  });
+
+  /*
+   * ⚖️ …and the day of their own that falls due with the rent's date is the one the rent's PAYMENT of that date pays —
+   * their due day nearest that payment, as his decision 76 reads one between two due days; only while none has posted,
+   * the one nearest the date itself, a tie the earlier (`openingOf`, default built, not asked, 2026-10-29). 🔴 At
+   * ec7fd198 it was read off the date alone (review of ec7fd198): the rent posts a day or more after its date (Sep 2,
+   * Oct 2, Jul 8, Aug 4 on his ledger), and one a day past a date on the 15th or 16th lies nearer the NEXT 1st — the
+   * rent typed Nov 16 (the tie) or Nov 15 (nearer Nov 1), paid Nov 17 on time, opened the utilities on Nov 1, which no
+   * payment of the rent's pays: on Nov 20 November drew their Nov 1 missed, the arrears owed [util, Nov 1, $182.21] and
+   * the runway read "A further $182.21 came due earlier this month and has not posted." beside a rent paid in full,
+   * while December drew their Dec 1 paid early by Nov 17 — a month shown owed for good. 0ac5d059 read this shape so.
+   */
+  test.each([
+    ["2026-11-16", "the tie"],
+    ["2026-11-15", "nearer Nov 1"],
+  ])("…and the rent typed %s (%s), paid Nov 17: what it carries opens on Dec 1, which Nov 17 pays", (rentOn) => {
+    rentWith(
+      { rentOn, typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-17",
+    );
+    checkedThrough(bundle.db, "acct", "2026-11-19");
+    const NOV20 = "2026-11-20";
+    // Nov 17 paid the rent's first day, on time: its own day, that one
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toEqual({ postedOn: "2026-11-17", dueDaysPast: 0 });
+    // November draws nothing of theirs and owes nothing: their Nov 1 lies before the day Nov 17 opens them on
+    expect(marks("2026-11", "2026-11-01", NOV20)).toEqual([]);
+    expect(owed(NOV20)).toEqual([]);
+    expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBeNull();
+    // …and Nov 17 pays their Dec 1 early, as the rent's own first month: Jan 1 next, beside the rent's December day
+    expect(marks("2026-12", "2026-12-01", NOV20)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-11-17", early: true }],
+    ]);
+    expect(coming(NOV20, UTIL)[0]).toBe("2027-01-01");
+    expect(listSeries(bundle.db, NOV20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
+  });
+
+  /*
+   * …and the review's control, the same rows: paid ON Nov 16, the tie's own day — 15 days after their Nov 1, 15
+   * before Dec 1 — the payment pays Nov 1, late, so Nov 1 opens them, and Dec 1 still comes.
+   */
+  test("…and paid ON Nov 16: Nov 16 pays their Nov 1, late — they open there, Dec 1 still to come", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+    );
+    checkedThrough(bundle.db, "acct", "2026-11-19");
+    const NOV20 = "2026-11-20";
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toEqual({ postedOn: "2026-11-16", dueDaysPast: 0 });
+    expect(marks("2026-11", "2026-11-01", NOV20)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-11-16", early: false }],
+    ]);
+    expect(owed(NOV20)).toEqual([]);
+    expect(coming(NOV20, UTIL)[0]).toBe("2026-12-01");
+  });
+
+  /*
+   * ⛔ …and while no payment of the rent's Nov 16 has posted, their day nearest it opens them — the tie, the earlier
+   * (ec7fd198's reading, kept): owed with the rent once read past, the safe side. The payment then says which day was
+   * theirs. ⛔ Money back is no payment of it (`PaymentDays.paid`): +$2,291.21 back on Nov 17, a day past the tie, read
+   * as one would open them on Dec 1 and take their Nov 1 out of what is owed beside the rent's.
+   */
+  test.each([
+    ["nothing posted", null],
+    ["+$2,291.21 back on Nov 17", 229121],
+  ])("…and the rent's Nov 16 not yet paid (%s): the tie opens them on Nov 1, owed with it", (_, backCents) => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    if (backCents !== null) pay("t-rent-back", RENT, "2026-11-17", backCents);
+    checkedThrough(bundle.db, "acct", "2026-11-22");
+    const NOV23 = "2026-11-23";
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toBeNull();
+    expect(unpaid("2026-11", "2026-11-01", NOV23)).toEqual([UTIL]);
+    expect(owed(NOV23)).toEqual([
+      [UTIL, "2026-11-01", 18221],
+      [RENT, "2026-11-16", 229121],
+    ]);
+    expect(arrearsSentence(committedBook(bundle.db, NOV23))).toBe(
+      "A further $2,473.42 came due earlier this month and has not posted.",
+    );
+  });
+
+  /*
+   * ⛔ …and what paid the rent's first day is read by the rent's own test, HIS date included: Oct 20's two months, late
+   * for its Oct 16 — a day before his Nov 16, no charge, nothing a payment of two catches up from (`liesBeforeHisDate`)
+   * — paid no day of his, so his Nov 16 is owed on Nov 23 and nothing is read off Oct 20 for what it carries. Read
+   * without his date, Oct 20 would pay Nov 16 as its second charge, the day after its own Oct 16.
+   */
+  test("…and Oct 20's two months before his Nov 16 paid no day of his: nothing opens them off it", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01" },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-20",
+    );
+    checkedThrough(bundle.db, "acct", "2026-11-22");
+    const NOV23 = "2026-11-23";
+    expect(seriesDetail(bundle.db, RENT, NOV23)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-10-20"]);
+    expect(owed(NOV23)).toContainEqual([RENT, "2026-11-16", 229121]);
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toBeNull();
+  });
+
+  /*
+   * ⚖️ …and a payment of two that caught the rent's first day up from its next pairs their days the same way: Dec 20,
+   * late for the rent's Dec 16 (nearer it), pays its Nov 16 too; nearer their Jan 1, it pays Jan 1 early and the day
+   * behind it, Dec 1 — so Dec 1, the day behind the one nearest it, opens them, and their Nov 1 is no charge (default
+   * built, not asked, 2026-10-29). 🔴 At ec7fd198 Nov 1 opened them, and November drew it missed beside the two months
+   * Dec 20 paid; read off the payment's nearest day alone (Jan 1), their Dec 1 — the charge the rent's Nov 16 carries —
+   * would be drawn, owed and listed nowhere.
+   */
+  test("…and November missed, Dec 20's two months open them on Dec 1: paid with Jan 1, no Nov 1 drawn", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01" },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-12-20",
+    );
+    checkedThrough(bundle.db, "acct", "2026-12-26");
+    const DEC27 = "2026-12-27";
+    expect(seriesDetail(bundle.db, RENT, DEC27)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-12-20"]);
+    // Dec 20 paid the rent's Nov 16 as the day behind its own, Dec 16 — one of the rent's days past it
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toEqual({ postedOn: "2026-12-20", dueDaysPast: 1 });
+    expect(marks("2026-11", "2026-11-01", DEC27)).toEqual([]);
+    expect(marks("2026-12", "2026-12-01", DEC27)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-20", early: false }],
+    ]);
+    expect(marks("2027-01", "2027-01-01", DEC27)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-12-20", early: true }],
+    ]);
+    expect(owed(DEC27)).toEqual([]);
+    expect(coming(DEC27, UTIL)[0]).toBe("2027-02-01");
+    expect(coming(DEC27, RENT)[0]).toBe("2027-01-16");
   });
 
   /*

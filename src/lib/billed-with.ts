@@ -30,6 +30,24 @@ export interface BillingCarrier {
    */
   readonly opensOn: string | null;
   readonly opensOnHisDate: boolean;
+  /**
+   * ⚖️ …and the payment that PAID that day by the carrier's own test (`paymentFor`), or null while none has: which day
+   * of what it carries falls due with it — the one that payment pays (`openingOf`; default built, not asked,
+   * 2026-10-29). ⛔ REQUIRED, `userEndsOn`'s reason: a carrier built without it would open what it carries on its day
+   * nearest the carrier's date, silently — a day a payment posted after that date may never pay.
+   */
+  readonly opensPaidBy: OpeningPayment | null;
+}
+
+/**
+ * The payment that paid where a carrier's schedule opens (`BillingCarrier.opensPaidBy`): the day it posted, and how
+ * many of the carrier's due days its own day — its due day nearest it — lies past that opening day: 0 when it was
+ * that day's own payment, on time, early or late; 1 when, a payment of two nearer the next day, it caught the opening
+ * day up from there; −1 when it paid the opening day as the second charge of the day before.
+ */
+export interface OpeningPayment {
+  readonly postedOn: string;
+  readonly dueDaysPast: number;
 }
 
 /**

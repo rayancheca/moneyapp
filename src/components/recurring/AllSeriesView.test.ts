@@ -396,6 +396,7 @@ describe("AllSeriesView — a series billed inside another's payment says so on 
     lastMatchedOn: "2026-09-02",
     opensOn: "2026-09-01",
     opensOnHisDate: true,
+    opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
   };
   const text = decode(
     renderToStaticMarkup(
