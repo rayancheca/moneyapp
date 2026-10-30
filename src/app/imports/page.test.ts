@@ -63,6 +63,23 @@ describe("/imports — a line a re-read left out, under the read", () => {
 });
 
 /**
+ * ⚖️ default built, not asked (2026-10-30): what an import filed under a series he confirmed — an upload, an un-import's
+ * restore, a gap accepted — is named under the read whose rows they are, in the import report's words. 🔴 Review of
+ * 304c59a4 (2026-10-30): only the two scripts said it. The rule is pinned in services/import/import.test.ts, the words
+ * in services/recurring-import-links.test.ts; this pins that the page asks that rule and writes no words of its own.
+ */
+describe("/imports — what an import filed, under the read", () => {
+  test("read from the ledger by the one rule, for every path that files", () => {
+    expect(page).toMatch(/const filedByRead = importFilingsByRead\(db\);/);
+  });
+
+  test("every filing for the row's file is rendered in the report's words", () => {
+    expect(page).toMatch(/\{filedByRead\.get\(f\.id\)\?\.map\(\(filing\) => \(/);
+    expect(page).toMatch(/className="text-\[11px\] text-ink-muted"\s*>\s*\{importFilingLine\(filing\)\}/);
+  });
+});
+
+/**
  * 🔴 The footer under "What the statements proved" called all five of his balance-less periods "a spending report, an
  * export without a closing figure" (copy of his ledger, 2026-10-12) — two were Robinhood opening statements, statements
  * by the statement schedule's rule (`countsAsStatement`). Which periods the list holds and what the footer says of

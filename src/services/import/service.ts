@@ -1366,8 +1366,10 @@ export interface ImportInput {
 /**
  * An upload as the scripts report it: each file's outcome, and what linking the rows it made active filed under a
  * series he confirmed — one per series (`ImportLinkResult.filed`), printed by trial-import before --confirm and by
- * import-statements after it (`importFilingLine`). The filing is the upload's, not a file's: it runs once, over every
- * row the upload wrote or promoted.
+ * import-statements after it (`importFilingLine`), and carried back by the /imports upload. The filing is the
+ * upload's, not a file's: it runs once, over every row the upload wrote or promoted — and /imports names it under the
+ * read whose rows they are, read back from the ledger (`importFilingsByRead`), as an un-import's restore and a gap
+ * accepted are named. `importStatementFiles` is for a caller with nowhere to show it.
  */
 export interface ImportReport {
   outcomes: FileOutcome[];
@@ -3365,10 +3367,13 @@ function accountsWrittenBy(db: AppDatabase, importFileId: string): string[] {
  * statement still prints goes to that download with the rows it prints, and is
  * not removed (`statement-copies`); a row another imported file prints goes to
  * that file (`printed-lines`).
+ *
+ * Returns what putting rows back filed under a series he confirmed (`fileImportedLinks`) — the un-import's report,
+ * as an upload's is (`ImportReport.filed`). 🔴 Review of 304c59a4 (2026-10-30): it filed them and said nothing.
  */
-export function unimportFile(db: AppDatabase, importFileId: string): void {
+export function unimportFile(db: AppDatabase, importFileId: string): ImportFiling[] {
   const file = db.select().from(importFiles).where(eq(importFiles.id, importFileId)).get();
-  if (!file) return;
+  if (!file) return [];
   // ⛔ a brokerage book's months come off newest first — refused before anything is snapshotted or written
   const later = laterBookStatements(db, importFileId);
   if (later.length > 0) throw new Error(laterStatementsRefusal(later));
@@ -3396,7 +3401,7 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
   // The rows the file parsed leave the database entirely — re-importing
   // re-parses the original, but every correction made to those rows since is
   // gone. A row attached to the file stays, and a re-import files it again.
-  withPreMutationSnapshot(db, "unimport-file", () => {
+  return withPreMutationSnapshot(db, "unimport-file", () => {
     let restored: string[] = [];
     // the brokerage books whose shares the file held
     let heldShares: string[] = [];
@@ -3450,7 +3455,8 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     reconcileAccounts(db, scope);
     // A restored twin, or a row whose gap this removal closed, is back in the
     // ledger — link it the way an import would. Nothing else may be claimed.
-    linkRowsMadeActive(db, [...restored, ...quarantinedBefore]);
+    // What that files under a series he confirmed is the report.
+    const { filed } = linkRowsMadeActive(db, [...restored, ...quarantinedBefore]);
     // …and the series whose rows just went: `last_matched_on` must not keep
     // naming a posting that no longer exists — nor leave out one that is back,
     // because a restored copy that ALREADY carried a link is not absorbed by
@@ -3460,16 +3466,21 @@ export function unimportFile(db: AppDatabase, importFileId: string): void {
     // removing a file can CLOSE another file's gap, and reconcileAccounts then
     // promotes that period's quarantined rows — the same seam as an import
     flagDuplicateCandidates(db, scope);
+    return filed;
   });
 }
 
-/** Accept a gap: the user takes the statement as-is; rows return to analytics. */
-export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
+/**
+ * Accept a gap: the user takes the statement as-is; rows return to analytics. Returns what linking the rows it
+ * promoted filed under a series he confirmed (`fileImportedLinks`) — its report, as an upload's is
+ * (`ImportReport.filed`). 🔴 Review of 304c59a4 (2026-10-30): it filed them and said nothing.
+ */
+export function acceptGap(db: AppDatabase, statementPeriodId: string): ImportFiling[] {
   const period = db.select().from(statementPeriods).where(eq(statementPeriods.id, statementPeriodId)).get();
-  if (!period) return;
+  if (!period) return [];
   // Un-quarantining is a one-way door: the reconciliation verdict that put
   // those rows aside is overwritten, and nothing recomputes it.
-  withPreMutationSnapshot(db, "accept-gap", () => {
+  return withPreMutationSnapshot(db, "accept-gap", () => {
     let promoted: string[] = [];
     db.transaction((tx) => {
       tx.update(statementPeriods)
@@ -3490,7 +3501,7 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
     });
     categorizeAll(db);
     detectTransfers(db);
-    linkRowsMadeActive(db, promoted);
+    const { filed } = linkRowsMadeActive(db, promoted);
     // …and a promoted row that ALREADY carried a link is not claimed by the
     // linking above, which absorbs unlinked rows only: its series counts that
     // charge again and must say so (`settleSeriesStats`)
@@ -3503,5 +3514,6 @@ export function acceptGap(db: AppDatabase, statementPeriodId: string): void {
     // (day, amount) alone and silently destroyed real charges (reverted in
     // 3e5a7fc). Outside the transaction above, because flagging writes.
     flagDuplicateCandidates(db, [period.accountId]);
+    return filed;
   });
 }
