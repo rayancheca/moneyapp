@@ -1,12 +1,16 @@
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 import { noScheduleReason, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 // the server action pulls in next/cache and the database client
 vi.mock("@/app/recurring/actions", () => ({ setSeriesOverridesAction: vi.fn() }));
+// what a Save says — asked of the toast it raises
+vi.mock("@/components/ui/Toast", () => ({ toast: vi.fn() }));
 
 const { CadenceSentence } = await import("./CadenceSentence");
+const { setSeriesOverridesAction } = await import("@/app/recurring/actions");
+const { toast } = await import("@/components/ui/Toast");
 
 const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed", "schedule-ended"];
 const EVERY_STATUS: readonly SeriesStatusForCopy[] = ["detected", "confirmed", "dismissed", "ended"];
@@ -17,32 +21,40 @@ const decode = (s: string): string =>
 type SentenceProps = Parameters<typeof CadenceSentence>[0];
 
 /** Amazon Prime as his ledger stores it on 2026-10-08: last charge Jul 5, stored next 2026-08-05. */
+function propsOf(
+  status: SeriesStatusForCopy,
+  evidence: SeriesEvidence,
+  overrides: Partial<SentenceProps> = {},
+): SentenceProps {
+  return {
+    seriesId: "s1",
+    kind: "subscription",
+    cadence: "monthly",
+    nextExpectedOn: "2026-08-05",
+    amountCents: -499,
+    userCadence: null,
+    userNextExpectedOn: null,
+    userAmountCents: null,
+    detectedCadence: "monthly",
+    accountName: "Chase Sapphire",
+    status,
+    evidence,
+    // Amazon Prime has charged — its last on Jul 5
+    neverPosted: false,
+    oneCharge: null,
+    // billed on its own: its days fall due on themselves
+    dueWith: null,
+    onChanged: () => undefined,
+    ...overrides,
+  };
+}
+
 function render(
   status: SeriesStatusForCopy,
   evidence: SeriesEvidence,
   overrides: Partial<SentenceProps> = {},
 ): { text: string; dialogTriggers: number; menuTriggers: number } {
-  const html = renderToStaticMarkup(
-    createElement(CadenceSentence, {
-      seriesId: "s1",
-      kind: "subscription",
-      cadence: "monthly",
-      nextExpectedOn: "2026-08-05",
-      amountCents: -499,
-      userCadence: null,
-      userNextExpectedOn: null,
-      userAmountCents: null,
-      detectedCadence: "monthly",
-      accountName: "Chase Sapphire",
-      status,
-      evidence,
-      // Amazon Prime has charged — its last on Jul 5
-      neverPosted: false,
-      oneCharge: null,
-      onChanged: () => undefined,
-      ...overrides,
-    }),
-  );
+  const html = renderToStaticMarkup(createElement(CadenceSentence, propsOf(status, evidence, overrides)));
   return {
     text: decode(html.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim(),
     // the date token and the amount token each open a dialog; the cadence token opens a menu
@@ -176,5 +188,112 @@ describe("CadenceSentence — the account clause says which way the money moves 
     expect(render("detected", "active", { ...autopay, amountCents: 99_302, accountName: "Chase Sapphire" }).text).toBe(
       "moves monthly around the 24th, about $993.02 into Chase Sapphire.",
     );
+  });
+});
+
+/**
+ * The sentence's date editor as the sentence hands it over — what it calls its date, and its Save — read off the
+ * element tree: the popover that prints them mounts only while open (`Popover`).
+ */
+type DateEditor = { fieldLabel: string; onSave: (date: string | null) => void };
+function dateEditorOf(overrides: Partial<SentenceProps>): DateEditor {
+  const found: DateEditor[] = [];
+  const walk = (n: ReactNode): void => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (!isValidElement<Partial<DateEditor> & { children?: ReactNode }>(n)) return;
+    if (typeof n.props.fieldLabel === "string") found.push(n.props as DateEditor);
+    walk(n.props.children);
+  };
+  walk(CadenceSentence(propsOf("confirmed", "active", overrides)));
+  expect(found).toHaveLength(1);
+  return found[0]!;
+}
+
+/*
+ * ⚖️ default (B), built, not asked (2026-10-30): a day of what the rent carries FALLS DUE with the rent's day it pairs
+ * with, and its page's list, the All tab and Upcoming name that day — while the sentence's day token and its date
+ * editor are its OWN schedule's, the date a Save writes (on the rent's day, a Save with nothing changed would retype
+ * it onto the rent's). 🔴 Review of a456a6fc, on his ledger copy 2026-10-29b with his rent retyped Nov 16 (Wells Fargo
+ * read through Nov 9), on Nov 10: "Rent utilities & fees" read "charges monthly around the 1st" and its editor "Next
+ * expected date" opened on Nov 1 over "Next expected Nov 16 · Dec 16 · Jan 16" and the All tab's Nov 16 — two next
+ * dates for one charge, and nothing on the page saying which is which. Now the sentence says both, and the editor calls
+ * its date its own (`dueWithPhrase`, `nextDateWords`).
+ */
+describe("CadenceSentence — what the rent carries says the day it falls due beside its own", () => {
+  // his utilities, billed with the rent retyped Nov 16: their own Nov 1 falls due with its Nov 16
+  const utilities = {
+    kind: "bill",
+    nextExpectedOn: "2026-11-01",
+    amountCents: -18_221,
+    userAmountCents: -18_221,
+    accountName: "Wells Fargo",
+    dueWith: { carrierName: "Flamingo South Beach (rent)", on: "2026-11-16", label: "Nov 16" },
+  } as const satisfies Partial<SentenceProps>;
+
+  test("their own 1st, due with the rent on the 16th — the day their list names; the editor's date their own", () => {
+    const { text, dialogTriggers } = render("confirmed", "active", utilities);
+    expect(text).toBe(
+      "charges monthly around the 1st, due with the rent on the 16th, about $182.21 from Wells Fargo.",
+    );
+    // the 1st still opens the editor, and the editor says whose date it is
+    expect(dialogTriggers).toBe(2);
+    expect(dateEditorOf(utilities).fieldLabel).toBe("Its own next date");
+  });
+
+  test("…and on his ledger, the rent and the utilities both on the 1st: no clause, and 'Next expected date'", () => {
+    const his = { ...utilities, dueWith: null };
+    expect(render("confirmed", "active", his).text).toBe(
+      "charges monthly around the 1st, about $182.21 from Wells Fargo.",
+    );
+    expect(dateEditorOf(his).fieldLabel).toBe("Next expected date");
+  });
+
+  test("their own 25th beside the rent's 1st: due with the rent on the 1st — 'Already due' and the list's day", () => {
+    const on25 = {
+      ...utilities,
+      nextExpectedOn: "2026-11-25",
+      dueWith: { ...utilities.dueWith, on: "2026-12-01", label: "Dec 1" },
+    };
+    expect(render("confirmed", "active", on25).text).toBe(
+      "charges monthly around the 25th, due with the rent on the 1st, about $182.21 from Wells Fargo.",
+    );
+  });
+
+  test("weekly, it names the weekday it falls due on; a schedule of one charge, the date", () => {
+    const weekly = {
+      ...utilities,
+      cadence: "weekly",
+      detectedCadence: "weekly",
+      // a Monday, due with the rent's Thursday
+      nextExpectedOn: "2026-11-02",
+      dueWith: { ...utilities.dueWith, on: "2026-11-05", label: "Nov 5" },
+    } as const;
+    expect(render("confirmed", "active", weekly).text).toBe(
+      "charges weekly on Mondays, due with the rent on Thursdays, about $182.21 from Wells Fargo.",
+    );
+    const once = { ...utilities, oneCharge: { day: "2026-11-01", label: "Nov 1" } };
+    expect(render("confirmed", "active", once).text).toBe(
+      "charges once on Nov 1, due with the rent on Nov 16, about $182.21 from Wells Fargo.",
+    );
+    expect(dateEditorOf(once).fieldLabel).toBe("Its own next date");
+  });
+
+  test("over, the clause goes with the day it qualifies", () => {
+    expect(render("ended", "active", utilities).text).toBe(
+      "charged monthly, about $182.21 from Wells Fargo.",
+    );
+    expect(render("ended", "active", { ...utilities, oneCharge: { day: "2026-11-01", label: "Nov 1" } }).text).toBe(
+      "charged once on Nov 1, about $182.21 from Wells Fargo.",
+    );
+  });
+
+  test("…and its Save says the date is its own — 'Next expected' of a series billed on its own", async () => {
+    vi.mocked(setSeriesOverridesAction).mockResolvedValue({ ok: true, data: {} });
+    vi.mocked(toast).mockClear();
+    dateEditorOf(utilities).onSave("2026-11-05");
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Its own next date 2026-11-05" }));
+    vi.mocked(toast).mockClear();
+    dateEditorOf({ ...utilities, dueWith: null }).onSave("2026-11-05");
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Next expected 2026-11-05" }));
   });
 });

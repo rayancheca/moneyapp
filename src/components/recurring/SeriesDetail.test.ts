@@ -7,11 +7,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { recurringSeries, SERIES_STATUSES } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { formatCents } from "@/lib/money";
 import { resolveViewState } from "@/lib/view-state";
+import { checkedThrough } from "@/services/checked-days-fixture";
 import { seedHisCarSeries, type OneChargeLedger } from "@/services/one-charge-fixture";
 import { seedHisRent, type RentLedger } from "@/services/rent-fixture";
 import { seriesDetail } from "@/services/recurring-detail";
@@ -414,6 +416,102 @@ describe("SeriesDetail — the rent's posted avg is per payment, and names what 
     expect(table).not.toContain("-$1,100.00");
     expect(table).not.toContain("-$1,334.80");
     expect(table).toContain("Sep 2, 2026 -$2,291.21 +$182.21");
+  });
+});
+
+/*
+ * ⚖️ default (B), built, not asked (2026-10-30): a day of what the rent carries falls due with the rent's day it pairs
+ * with, and its page's list names it by that day — while its sentence's day and the date its editor opens on stay its
+ * OWN schedule's, what a Save writes. So the sentence says both: "around the 1st, due with the rent on the 16th". 🔴
+ * Review of a456a6fc, on his ledger copy 2026-10-29b: with his rent retyped Nov 16 (Wells Fargo read through Nov 9),
+ * on Nov 10 the utilities' page read "charges monthly around the 1st" over "Next expected Nov 16 · Dec 16 · Jan 16";
+ * with only the utilities retyped Oct 25, on Nov 5 "around the 25th" over "Already due" Nov 1 and "Dec 1 · Jan 1 · Feb
+ * 1" — two next dates for one charge, nothing on the page saying which was which, and no test asking whether its
+ * sentence and its list agree. From his rent and what it carries as stored (`seedHisRent`), through `seriesDetail`.
+ */
+describe("SeriesDetail — what the rent carries: its sentence names the day its list is on", () => {
+  let dir: string;
+  let bundle: DbBundle;
+  let rent: RentLedger;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "moneyapp-series-detail-carried-"));
+    bundle = createDatabase(path.join(dir, "t.db"));
+    seedDatabase(bundle.db);
+    rent = seedHisRent(bundle.db);
+    // …and October's rent, on time for his Oct 1
+    rent.charge("2026-10-02", -229_121, rent.rentId);
+  });
+
+  afterEach(() => {
+    bundle.sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const retype = (seriesId: string, on: string): void => {
+    bundle.db.update(recurringSeries).set({ userNextExpectedOn: on }).where(eq(recurringSeries.id, seriesId)).run();
+  };
+  const readThrough = (to: string): void =>
+    checkedThrough(bundle.db, bundle.db.select().from(accounts).where(eq(accounts.name, "Rent account")).get()!.id, to);
+  const wordsOf = (seriesId: string, today: string): string =>
+    decode(
+      renderToStaticMarkup(
+        createElement(SeriesDetail, {
+          data: seriesDetail(bundle.db, seriesId, today)!,
+          today,
+          viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
+          basePath: `/recurring/${seriesId}`,
+        }),
+      ),
+    )
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ");
+  /** each date its "Next expected" list names falls on the day of the month its sentence says it falls due on */
+  const listAgreesWithSentence = (seriesId: string, today: string): void => {
+    const words = wordsOf(seriesId, today);
+    const dueWith = /, due with the rent on the (\d+)(?:st|nd|rd|th),/.exec(words);
+    const said = dueWith ?? /around the (\d+)(?:st|nd|rd|th)/.exec(words);
+    const list = seriesDetail(bundle.db, seriesId, today)!.nextExpected.map((o) => o.date);
+    expect(list.length).toBeGreaterThan(0);
+    for (const day of list) expect(Number(day.slice(8)), `${day} beside "${said?.[0]}"`).toBe(Number(said?.[1]));
+  };
+
+  test("his ledger, the rent and the utilities both on the 1st: 'around the 1st', and a list on the 1st", () => {
+    const words = wordsOf(rent.utilitiesId, "2026-10-30");
+    expect(words).toContain("charges monthly around the 1st, about $182.21.");
+    expect(words).not.toContain("due with");
+    expect(words).toContain("Next expectedNov 1, 2026-$182.21Dec 1, 2026-$182.21Jan 1, 2027-$182.21");
+    listAgreesWithSentence(rent.utilitiesId, "2026-10-30");
+  });
+
+  test("the rent retyped Nov 16: on Nov 10 'around the 1st, due with the rent on the 16th' over Nov 16", () => {
+    retype(rent.rentId, "2026-11-16");
+    readThrough("2026-11-09");
+    const words = wordsOf(rent.utilitiesId, "2026-11-10");
+    expect(words).toContain("charges monthly around the 1st, due with the rent on the 16th, about $182.21.");
+    expect(words).toContain("Next expectedNov 16, 2026-$182.21Dec 16, 2026-$182.21Jan 16, 2027-$182.21");
+    listAgreesWithSentence(rent.utilitiesId, "2026-11-10");
+    // the rent, billed on its own, says its own day
+    expect(wordsOf(rent.rentId, "2026-11-10")).toContain("charges monthly around the 16th, about $2,109.00.");
+    listAgreesWithSentence(rent.rentId, "2026-11-10");
+  });
+
+  test("the utilities retyped Oct 25: on Nov 5 'around the 25th, due with the rent on the 1st', Nov 1 due", () => {
+    retype(rent.utilitiesId, "2026-10-25");
+    const words = wordsOf(rent.utilitiesId, "2026-11-05");
+    expect(words).toContain("charges monthly around the 25th, due with the rent on the 1st, about $182.21.");
+    expect(words).toContain(
+      "Nov 1, 2026-$182.21Next expectedDec 1, 2026-$182.21Jan 1, 2027-$182.21Feb 1, 2027-$182.21",
+    );
+    listAgreesWithSentence(rent.utilitiesId, "2026-11-05");
+  });
+
+  test("…and ended, nothing is still to fall due: no day it falls due on, said or carried", () => {
+    retype(rent.rentId, "2026-11-16");
+    readThrough("2026-11-09");
+    bundle.db.update(recurringSeries).set({ status: "ended" }).where(eq(recurringSeries.id, rent.utilitiesId)).run();
+    expect(seriesDetail(bundle.db, rent.utilitiesId, "2026-11-10")!.nextFallsDueOn).toBeNull();
+    expect(wordsOf(rent.utilitiesId, "2026-11-10")).not.toContain("due with");
   });
 });
 

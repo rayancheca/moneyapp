@@ -7,7 +7,15 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
-import { CADENCE_LABEL, schedulePhrase, seriesAccountWord, seriesVerb } from "./labels";
+import {
+  CADENCE_LABEL,
+  dueWithPhrase,
+  nextDateWords,
+  schedulePhrase,
+  seriesAccountWord,
+  seriesVerb,
+  type DueWith,
+} from "./labels";
 import { seriesIsProjected, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 interface CadenceSentenceProps {
@@ -37,6 +45,14 @@ interface CadenceSentenceProps {
    * ⚖️ Owner decision 2026-10-08 (§6A 56): the sentence reads "charges once on Nov 11", with no cadence menu.
    */
   oneCharge: { day: string; label: string } | null;
+  /**
+   * ⚖️ Billed inside another, the day its day FALLS DUE on when that is its carrier's later one, and that carrier
+   * (`SeriesDetail.nextFallsDueOn`; default (B), built, not asked, 2026-10-30) — else null. The sentence says it beside
+   * its own day ("around the 1st, due with the rent on the 16th", `dueWithPhrase`), and the date editor, which opens on
+   * and saves its own day, calls it its own (`nextDateWords`). Null on his ledger: the rent and the utilities are both
+   * on the 1st.
+   */
+  dueWith: DueWith | null;
   onChanged: () => void;
 }
 
@@ -66,6 +82,7 @@ export function CadenceSentence(props: CadenceSentenceProps) {
     evidence,
     neverPosted,
     oneCharge,
+    dueWith,
     onChanged,
   } = props;
   /* ⛔ The predicate the "Nothing expected" card asks (`noScheduleReason`), not a second one. 🔴 This read
@@ -87,8 +104,16 @@ export function CadenceSentence(props: CadenceSentenceProps) {
     toast({ title: label });
   }
 
+  /* ⚖️ What the date editor calls its date, and its Save — and, its day falling due on its carrier's later one, that
+     day, said right after the token it qualifies and only beside it, never in a sentence that is over (`dueWith`,
+     default (B), 2026-10-30). 🔴 Review of a456a6fc: the utilities' "around the 1st" and its "Next expected date" Nov 1
+     sat over a list of Nov 16 · Dec 16 · Jan 16, and nothing on the page said which date was which (his ledger copy,
+     his rent retyped Nov 16). */
+  const dateWords = nextDateWords(dueWith);
+  const dueClause = dueWith === null ? null : `, ${dueWithPhrase(dueWith, cadence, oneCharge !== null)}`;
+
   function saveDate(d: string | null): void {
-    void save({ userNextExpectedOn: d }, d === null ? "Next date reset to detected" : `Next expected ${d}`);
+    void save({ userNextExpectedOn: d }, d === null ? "Next date reset to detected" : `${dateWords.saved} ${d}`);
   }
 
   return (
@@ -116,12 +141,16 @@ export function CadenceSentence(props: CadenceSentenceProps) {
           {over ? (
             <span className="font-medium text-ink">{oneCharge.label}</span>
           ) : (
-            <DateToken
-              value={oneCharge.day}
-              label={oneCharge.label}
-              overridden={props.userNextExpectedOn !== null}
-              onSave={saveDate}
-            />
+            <>
+              <DateToken
+                value={oneCharge.day}
+                label={oneCharge.label}
+                fieldLabel={dateWords.field}
+                overridden={props.userNextExpectedOn !== null}
+                onSave={saveDate}
+              />
+              {dueClause}
+            </>
           )}
         </>
       ) : (
@@ -148,9 +177,11 @@ export function CadenceSentence(props: CadenceSentenceProps) {
           <DateToken
             value={nextExpectedOn}
             label={schedulePhrase(cadence, nextExpectedOn).token}
+            fieldLabel={dateWords.field}
             overridden={props.userNextExpectedOn !== null}
             onSave={saveDate}
           />
+          {dueClause}
         </>
       ) : null}
       {amountCents !== null ? (
@@ -258,12 +289,15 @@ function CadenceToken({
 function DateToken({
   value,
   label,
+  fieldLabel,
   overridden,
   onSave,
 }: {
   value: string;
   /** the display token, e.g. "15th" or "Fridays" — computed by the sentence */
   label: string;
+  /** what the editor calls the date it opens on — "Next expected date", or "Its own next date" (`nextDateWords`) */
+  fieldLabel: string;
   overridden: boolean;
   onSave: (date: string | null) => void;
 }) {
@@ -304,12 +338,12 @@ function DateToken({
         offset={6}
         className="w-60 rounded-(--radius-overlay) border border-line bg-surface-overlay p-3 shadow-(--shadow-overlay)"
       >
-        <div role="dialog" aria-label="Edit next expected date">
-        <label htmlFor="rec-next-date" className="block text-xs font-medium text-ink-muted">Next expected date</label>
+        <div role="dialog" aria-label={`Edit ${fieldLabel.toLowerCase()}`}>
+        <label htmlFor="rec-next-date" className="block text-xs font-medium text-ink-muted">{fieldLabel}</label>
         <input
           id="rec-next-date"
           type="date"
-          aria-label="Next expected date"
+          aria-label={fieldLabel}
           aria-invalid={error ? true : undefined}
           value={draft}
           onChange={(e) => {

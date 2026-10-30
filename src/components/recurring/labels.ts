@@ -153,6 +153,45 @@ export function schedulePhrase(cadence: Cadence, nextExpectedOn: string): { conn
 }
 
 /**
+ * ⚖️ default (B), built, not asked (2026-10-30): what a series billed inside another FALLS DUE with — its carrier, and
+ * the day the sentence's own day falls due on when that is the carrier's later one (`SeriesDetail.nextFallsDueOn`),
+ * spelled for a sentence (`formatDayShortIn`, the one-charge day's own spelling).
+ */
+export interface DueWith {
+  readonly carrierName: string;
+  readonly on: string;
+  readonly label: string;
+}
+
+/**
+ * "due with the rent on the 16th" — said in the cadence sentence right after its own day ("around the 1st") when that
+ * day falls due on its carrier's later one (`dueWith`): the day its list, the All tab and Upcoming name it by. Stepped
+ * as the sentence's own token is (`schedulePhrase`): a day of the month, a weekday for a weekly cadence — and of a
+ * schedule of ONE charge its date, as "once on Nov 1" names its own. 🔴 Review of a456a6fc, his ledger copy
+ * 2026-10-29b with his rent retyped Nov 16: on Nov 10 the utilities' page read "charges monthly around the 1st" over
+ * "Next expected Nov 16 · Dec 16 · Jan 16" — two next dates for one charge, nothing saying which was which.
+ */
+export function dueWithPhrase(dueWith: DueWith, cadence: Cadence, once: boolean): string {
+  const day = once
+    ? dueWith.label
+    : isWeekdayCadence(cadence)
+      ? `${weekdayNameOf(dueWith.on)}s`
+      : `the ${ordinalDayOf(dueWith.on)}`;
+  return `due with ${carrierWord(dueWith.carrierName)} on ${day}`;
+}
+
+/**
+ * What the sentence's date editor calls the date it opens on, and what its Save says it saved: "Next expected date" —
+ * or, its day falling due on its carrier's later one (`dueWith`), "Its own next date": ⛔ the date it opens on and
+ * saves is its OWN schedule's (`SeriesDetail.nextExpectedOn`), never the day its list names, so a Save with nothing
+ * changed never retypes it onto the rent's day — and the field says so beside a list that names another.
+ */
+export function nextDateWords(dueWith: DueWith | null): { field: string; saved: string } {
+  if (dueWith === null) return { field: "Next expected date", saved: "Next expected" };
+  return { field: "Its own next date", saved: "Its own next date" };
+}
+
+/**
  * The verb an editable cadence sentence opens with, by series kind — and by
  * whether the series is still running.
  *

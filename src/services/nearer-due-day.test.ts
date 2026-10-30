@@ -655,7 +655,12 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     expect(coming("2026-08-25", UTIL)).toEqual(["2026-10-01"]);
     expect(labelsIn("2026-09", "2026-08-25")).not.toContain("Rent utilities & fees");
     const page = seriesDetail(bundle.db, UTIL, "2026-08-25")!;
-    expect([page.nextExpected[0]!.date, page.nextExpectedOn]).toEqual(["2026-10-01", "2026-10-01"]);
+    // …on one day with the rent's, so the sentence says no other it falls due on (`nextFallsDueOn`)
+    expect([page.nextExpected[0]!.date, page.nextExpectedOn, page.nextFallsDueOn]).toEqual([
+      "2026-10-01",
+      "2026-10-01",
+      null,
+    ]);
     expect(listSeries(bundle.db, "2026-08-25").find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-10-01");
     // …and read past Sep 1, September draws nothing of theirs and owes nothing
     expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([]);
@@ -732,6 +737,9 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
       "2026-11-01",
       ["2026-11-02", "2026-12-02", "2027-01-02"],
     ]);
+    // …and the sentence says the day it falls due beside its own 1st: "due with the rent on the 2nd" (review of
+    // a456a6fc — it said the 1st alone over a list of 2nds)
+    expect(page.nextFallsDueOn).toBe("2026-11-02");
     expect(page.annualizedCents).toBe(12 * 18221);
     expect(listSeries(bundle.db, OCT29).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-11-02");
     // …and on Nov 20, read through Nov 19 with neither posted, both are owed: the calendar, the arrears, the runway
@@ -1089,6 +1097,8 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
       "2027-01-01",
       ["2027-01-16", "2027-02-16", "2027-03-16"],
     ]);
+    // …the sentence saying the day it falls due beside its own Jan 1: "due with the rent on the 16th"
+    expect(page.nextFallsDueOn).toBe("2027-01-16");
     expect(listSeries(bundle.db, DEC20).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-16");
   });
 
@@ -1139,6 +1149,9 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     // ⛔ …and the sentence's editor opens on their OWN Nov 1, still to come: what its Save writes as their date. On
     // the rent's Nov 16 a Save with nothing changed would retype them onto the 16th.
     expect(page.nextExpectedOn).toBe("2026-11-01");
+    // …so the sentence says, beside it, the day it falls due — the day its list and the All tab name. 🔴 Review of
+    // a456a6fc: it read "around the 1st" alone over Nov 16 · Dec 16 · Jan 16 (his ledger copy 2026-10-29b)
+    expect(page.nextFallsDueOn).toBe("2026-11-16");
   });
 
   /*

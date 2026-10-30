@@ -1746,7 +1746,9 @@ export function seriesIsForecast(
  * asked, 2026-10-30) — so its editor saves the day still to come, never one past it. ⛔ Its OWN day, always: what the
  * editor saves is the series' own schedule, so on Nov 10 it opens on their Nov 1 — on the rent's Nov 16 a Save with
  * nothing changed would retype them onto the 16th. A date that says when it is still to come names the day that one
- * falls due on (`fallsDueOn`): Upcoming's, the All tab's Next (`nextStillToCome`), the page's list.
+ * falls due on (`fallsDueOn`): Upcoming's, the All tab's Next (`nextStillToCome`), the page's list — and the page's
+ * sentence says it beside this one, "around the 1st, due with the rent on the 16th" (`SeriesDetail.nextFallsDueOn`).
+ * 🔴 It said this day alone over a list on the rent's (review of a456a6fc).
  */
 export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;

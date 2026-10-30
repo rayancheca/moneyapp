@@ -21,7 +21,7 @@ import { stepFrom, stepPlan } from "@/lib/recurring-step";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from "./arrears";
-import { billingCarriers } from "./billing-carriers";
+import { billingCarriers, fallsDueOn } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { incomeCardSeriesIds } from "./income-card";
 import { asPayRows, paydaySettlement, readsPerPayday, stillToCome, stillToComeReader } from "./payday-settlement";
@@ -147,8 +147,24 @@ export interface SeriesDetail {
    * paid early is still ON the schedule, and the anchor this editor writes floors
    * every projection, settlement's included. What is still to come is
    * `nextExpected`.
+   *
+   * ⚖️ …or, billed inside another on its carrier's step, a day of its own already past whose carrier's day is still to
+   * come (`rollForwardNextExpected`, default (B), 2026-10-30): the utilities' Nov 1 on Nov 10, due with the rent's Nov
+   * 16 — its own day still, so a Save with nothing changed keeps their schedule, and the day it falls due on is said
+   * beside it (`nextFallsDueOn`).
    */
   nextExpectedOn: string | null;
+  /**
+   * ⚖️ default (B), built, not asked (2026-10-30): the day `nextExpectedOn` FALLS DUE on when that is a later day —
+   * billed inside another on its carrier's step, the carrier's day it pairs with (`fallsDueOn`): the day its list
+   * (`nextExpected`), the All tab and Upcoming name it by, which the sentence says beside its own ("around the 1st, due
+   * with the rent on the 16th", `dueWithPhrase`). Null when it falls due on its own day — billed on its own, or on his
+   * ledger, the rent and the utilities both on the 1st — or nothing is projected. 🔴 Review of a456a6fc, his ledger
+   * copy 2026-10-29b, his rent retyped Nov 16 (Wells Fargo read through Nov 9): on Nov 10 the utilities' sentence read
+   * "around the 1st", its editor opening on Nov 1, over "Next expected Nov 16 · Dec 16 · Jan 16" and the All tab's Nov
+   * 16 — and nothing on the page said which date was which.
+   */
+  nextFallsDueOn: string | null;
   /** the un-rolled stored value, so the UI can distinguish shown from saved */
   storedNextExpectedOn: string | null;
   nextExpectedAmountCents: number | null;
@@ -579,6 +595,11 @@ export function seriesDetail(
         ),
       ).slice(0, NEXT_EXPECTED_COUNT)
     : [];
+  // the sentence's day, the date its editor opens on and saves — its OWN schedule's (`nextExpectedOn` below) — and the
+  // day that one falls due on (`fallsDueOn`): billed inside another, its carrier's day it pairs with when later, the
+  // day its list above names it by (default (B), built, not asked, 2026-10-30)
+  const sentenceOn = projects ? rollForwardNextExpected(projectable, today) : eff.nextExpectedOn;
+  const sentenceFallsDueOn = projects && sentenceOn !== null ? fallsDueOn(projectable.pairedWith, sentenceOn) : null;
 
   /*
    * ⛔ The BACKWARD half asks the arrears walk's own rule — a live status, not let go (`overdueForSeries` filters both)
@@ -627,7 +648,8 @@ export function seriesDetail(
     category: namedCategoryId === undefined ? null : categoryRef(namedCategoryId, catById),
     accountName,
     cadence: eff.cadence,
-    // Rolled forward so the sentence never reads a date in the past. Only the
+    // Rolled forward so the sentence never reads a date in the past — billed inside another, past its own day only
+    // while its carrier's is still to come, said beside it (`nextFallsDueOn`). Only the
     // series the forecast still projects roll — see `projects` above.
     // ⛔ The schedule's step, not settlement's (`nextStillToCome`, listSeries'
     // reading): the sentence's editor opens on this date and Save writes it back
@@ -639,7 +661,9 @@ export function seriesDetail(
     // ⚖️ …stepped as its list is (`projectable`): never before the day its schedule opens — billed inside another, the
     // day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29), the day
     // Save then writes as its own
-    nextExpectedOn: projects ? rollForwardNextExpected(projectable, today) : eff.nextExpectedOn,
+    nextExpectedOn: sentenceOn,
+    // ⚖️ …and the day it falls due on, said beside it when that is another — the day its list names (`nextFallsDueOn`)
+    nextFallsDueOn: sentenceFallsDueOn === sentenceOn ? null : sentenceFallsDueOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,
