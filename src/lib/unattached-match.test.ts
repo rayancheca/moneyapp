@@ -5,6 +5,7 @@ import {
   neverClauses,
   neverSplit,
   notCountedWords,
+  silenceMatches,
   unattachedCents,
   unattachedMatches,
   unattachedMatchesAcross,
@@ -201,6 +202,27 @@ describe("what a deposit lacks, said where a surface would have said 'with no de
     expect(notCountedWords([...plain, ...filedNowhere], "the schedule")).toBe(
       "not attached to the schedule or not filed as income",
     );
+  });
+});
+
+/*
+ * ⛔ ONE READING OF THE SILENCE'S ROWS — Earned vs banked's verdict and /spending's note for a stale schedule, in every
+ * window. 🔴 Review of ff0bf19 (MEDIUM): /spending's Q3 explained the schedule-wide silence by its own window's rows —
+ * none — while October, Q4 and YTD on the same page named the four payroll rows of October.
+ */
+describe("silenceMatches — the rows for the paydays after the last day that banked", () => {
+  const matches: UnattachedMatch[] = ["2026-09-17", "2026-09-24", "2026-10-01"].map((d) => ({
+    date: d,
+    row: row(d, d, 114192),
+  }));
+
+  it("takes the paydays after the last deposit's day — never that day's, nor one before it", () => {
+    expect(silenceMatches(matches, "2026-09-24").map((m) => m.date)).toEqual(["2026-10-01"]);
+    expect(silenceMatches(matches, "2026-10-01")).toEqual([]);
+  });
+
+  it("takes every one when nothing ever banked", () => {
+    expect(silenceMatches(matches, null)).toEqual(matches);
   });
 });
 

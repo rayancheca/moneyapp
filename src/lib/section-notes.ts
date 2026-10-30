@@ -5,6 +5,7 @@ import {
   neverClauses,
   neverSplit,
   notCountedWords,
+  silenceMatches,
   unattachedCents,
   unattachedRowsWords,
   type NeverSplit,
@@ -707,25 +708,31 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const ownCents = windowOwnCents(r.bankedCents, across);
       /*
        * ⛔ …and of the window's paydays, those a row matches to the cent unattached (`unattachedPaydays`, the one
-       * rule's): "reached an account attached to it", and the rows named by day and amount — still unbanked, never
-       * "none of it reached an account". 🔴 His ledger copy 2026-10-29 (before his filing): October read "implies
-       * $4,567.68 of earnings over Oct 1 – 22, 2026 and none of it reached an account" beside four +$1,141.92 payroll
-       * rows on Wells Fargo, unattached.
+       * rule's): "reached an account in a deposit attached to it", and the rows named by day and amount — still
+       * unbanked, never "none of it reached an account". 🔴 His ledger copy 2026-10-29 (before his filing): October read
+       * "implies $4,567.68 of earnings over Oct 1 – 22, 2026 and none of it reached an account" beside four +$1,141.92
+       * payroll rows on Wells Fargo, unattached.
        * ⛔ Of the paydays its lead counts, by the shortfall note's one filter (`unattachedAmong`). 🔴 Its own inline copy
        * was held by no test (beside the review of e6ad55a): gone, September read Oct 29 named October's four rows.
        */
       const matched = unattachedAmong(r.unattachedPaydays ?? [], r.firstPeriodOn, r.lastPeriodOn);
-      // ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`)
-      const attached = matched.length === 0 ? "" : ` ${countedDepositWords(matched, "it")}`;
-      const matchedPart =
-        matched.length === 0
-          ? ""
-          : `; ${formatCents(unattachedCents(matched))} is ${MATCHED_TO_THE_CENT_BY} ` +
-            unattachedRowsWords(matched, payday);
-      const reached =
-        ownCents <= 0
-          ? `none of it reached an account${attached}${inside}${matchedPart}`
-          : `only ${formatCents(ownCents)} reached an account${attached}${inside}${matchedPart}`;
+      /*
+       * ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`) — said of the
+       * DEPOSIT, never of the account: "in a deposit attached to it". Set off by commas where the checked day follows,
+       * so "through <day>" stays the claim's. 🔴 Review of ff0bf19 (MEDIUM): the trial import of the Oct 26 statement
+       * into his pre-import copy, read Oct 31, YTD said "only $7,156.60 reached an account attached to it and filed as
+       * income" — the account was the thing attached and filed.
+       */
+      const deposit = (dayFollows: boolean): string => {
+        if (matched.length === 0) return "";
+        const words = `in ${ownCents <= 0 ? "a deposit" : "deposits"} ${countedDepositWords(matched, "it")}`;
+        return dayFollows ? `, ${words},` : ` ${words}`;
+      };
+      const reached = (dayFollows: boolean): string =>
+        `${ownCents <= 0 ? "none of it" : `only ${formatCents(ownCents)}`} reached an account${inside}` +
+        deposit(dayFollows);
+      const rowsPart = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, payday)}`;
+      const matchedPart = matched.length === 0 ? [] : [`${formatCents(unattachedCents(matched))} is ${rowsPart}`];
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
@@ -740,27 +747,33 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       // the one rule's days (`moneyOutOfWindow`) — the reading's `bankedCents` above is that rule's figure
       const out = r.shortfall?.wentBackOut ?? [];
       /*
-       * ⛔ Both after the claim, last, as the card names its money out last — never between "through <day>" and "the
-       * other payday falls after that". 🔴 Review of 337baa7 (MEDIUM): there, on his ledger copy 2026-10-21 with the
-       * Sep 25 return and Wells Fargo read through Oct 16, YTD read "…through Fri, Oct 16, 2026; $1,141.92 went back
-       * out on Fri, Sep 25, 2026; the other payday falls after that, the last day …" — Sep 25 read as the checked day.
+       * ⛔ All of them after the claim, last, as the card names its money out last — never between the claim and
+       * "through <day>", nor between that and "the other payday falls after that". 🔴 Review of 337baa7 (MEDIUM):
+       * there, on his ledger copy 2026-10-21 with the Sep 25 return and Wells Fargo read through Oct 16, YTD read
+       * "…through Fri, Oct 16, 2026; $1,141.92 went back out on Fri, Sep 25, 2026; the other payday falls after that,
+       * the last day …" — Sep 25 read as the checked day. 🔴 Review of ff0bf19 (MEDIUM): the matched rows sat inside
+       * the claim, so the trial import of the Oct 26 statement into his pre-import copy, read Oct 31, said "…rows of
+       * $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are attached to it but not filed as income through Mon, Oct
+       * 26, 2026; the other payday falls after that, …" — the checked day read as the rows'.
        */
-      // …in the shortfall note's order: who paid its paydays from outside, its money that paid another's, money out
+      // …in the shortfall note's order: who paid its paydays from outside, what the rows the one rule matched answer,
+      // its money that paid another's, money out
       const named = [
         ...outside,
+        ...matchedPart,
         ...(another === "" ? [] : [another]),
         ...(out.length === 0 ? [] : [wentBackOutPhrase(out, input.formatDay)]),
       ];
       const after = named.map((words) => `; ${words}`).join("");
       const claim = !measuredRead || (through !== null && unread <= 0)
-        ? ` and ${reached}${after}.`
+        ? ` and ${reached(false)}${after}.`
         : through === null
           ? ` — and the account it lands in has not been checked, so the ledger cannot say whether any of it ` +
             `arrived${after}.`
           : readCovered === 0
             ? `, all of it after ${through}, ${LAST_CHECKED_DAY} — so the ledger has not looked for it${after}.`
             : // "the other payday" of one — 🔴 "the other 1 payday falls after that" (review of 8ef2fc5)
-              ` and ${reached} through ${through}; ` +
+              ` and ${reached(true)} through ${through}; ` +
               `${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ` +
               `${LAST_CHECKED_DAY}${after}.`;
 
@@ -794,6 +807,21 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        */
       const inGrace = r.checkedSilentNotBankedYet ?? [];
       /*
+       * ⛔ The rows the one rule matched to the SILENCE's paydays (`silenceMatches`, Earned vs banked's own reading) are
+       * the first place that money may be while they stay unattached — the sentence they finish is schedule-wide, so
+       * they are never the window's: "the rows named above" only when the claim named exactly them, and by day and
+       * amount otherwise. 🔴 Review of ff0bf19 (MEDIUM): they were the window's, so on his pre-filing and trial copies
+       * read Oct 31, Q3 explained "5 expected paydays have passed since the last deposit on Thu, Sep 24, 2026" as cash,
+       * an ended schedule or an unread account, while October, Q4 and YTD on the same page said "that money sits in the
+       * rows named above".
+       */
+      const silent = silenceMatches(r.unattachedPaydays ?? [], r.lastBankedOn);
+      const namedAbove =
+        silent.length === matched.length && silent.every((s) => matched.some((m) => m.row.id === s.row.id));
+      const sitsIn = namedAbove
+        ? `the rows named above, ${notCountedWords(silent, "the schedule")}`
+        : unattachedRowsWords(silent, payday);
+      /*
        * ⚖️ …and payroll landing in an account the ledger does not read, in the card's caveat's order and words
        * (`ACCOUNT_NOT_READ`) — default built, not asked (2026-10-21): his pay is payroll by ACH since Aug 27 (decision
        * 55). 🔴 Review of 619ceb4 (MEDIUM): on his ledger copy 2026-10-21 with a Salary-filed −$1,141.92 on Fri Sep 25
@@ -801,11 +829,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * or an ended schedule, while the card beside them named payroll landing in an account the ledger does not read.
        */
       const explanations = OR_LIST.format([
-        // ⛔ the rows the claim named are the first place that money may be, while they stay unattached
-        ...(matched.length === 0
-          ? []
-          : [`that money sits in the rows named above, ${notCountedWords(matched, "the schedule")}`]),
-        matched.length === 0 ? "that money was held as cash" : "was held as cash",
+        ...(silent.length === 0 ? [] : [`that money sits in ${sitsIn}`]),
+        silent.length === 0 ? "that money was held as cash" : "was held as cash",
         "spent as cash",
         `paid into ${ACCOUNT_NOT_READ}`,
         "the schedule has ended",

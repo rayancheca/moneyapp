@@ -15,6 +15,7 @@ import {
 } from "./section-notes";
 import { PATH_SEPARATOR } from "./category-path";
 import type { PayShortfall } from "./pay-shortfall";
+import type { UnattachedMatch } from "./unattached-match";
 import { ACCOUNT_NOT_READ } from "./unbanked-income";
 
 const row =(over: Partial<Parameters<typeof budgetSectionNotes>[0]["rows"][number]> = {}) => ({
@@ -1232,6 +1233,86 @@ describe("cashEarningsSectionNotes", () => {
       expect(notes({ silencePaidEarly: [] })[0]!.body).toContain(
         "11 expected paydays have passed since the last deposit on 2026-06-05 — ",
       );
+    });
+  });
+
+  /*
+   * ⛔ THE ROWS THE ONE RULE MATCHED (`unattachedPaydays`) in a stale schedule's note. 🔴 Review of ff0bf19 (MEDIUM),
+   * the trial import of the Oct 26 statement into his pre-import copy, read Oct 31: October read "…and none of it
+   * reached an account attached to it and filed as income; $4,567.68 is matched to the cent by rows of $1,141.92 on
+   * Oct 1, Oct 8, Oct 15, and Oct 22 that are attached to it but not filed as income through Mon, Oct 26, 2026; the
+   * other payday falls after that, …" — the account was what is attached and filed, and the checked day hung off the
+   * rows — and Q3 explained the same schedule-wide silence with no rows at all, beside October's "that money sits in
+   * the rows named above".
+   */
+  describe("a stale schedule's note and the rows the one rule matched", () => {
+    const match = (date: string, notFiledAsIncome = false): UnattachedMatch => ({
+      date,
+      row: {
+        id: `r-${date}`,
+        postedOn: date,
+        amountCents: 104_600,
+        ...(notFiledAsIncome ? { notFiledAsIncome } : {}),
+      },
+    });
+    const JULY = ["2026-07-02", "2026-07-09", "2026-07-16"];
+    const ROWS = "rows of $1,046.00 on Jul 2, Jul 9, and Jul 16";
+    const CHECKED_DAY = "the last day every account that pay lands in has been checked through";
+    const body = (over: Partial<CashEarningsNoteInput["rows"][number]>): string => notes(over)[0]!.body;
+    const lead = (over: Partial<CashEarningsNoteInput["rows"][number]>): string => {
+      const said = body(over);
+      return said.slice(0, said.indexOf(" Across the whole schedule"));
+    };
+
+    test("read in full: the deposit is what is attached to it, never the account", () => {
+      expect(lead({ ...checked, unattachedPaydays: JULY.map((d) => match(d)) })).toBe(
+        "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an " +
+          `account in a deposit attached to it; $3,138.00 is matched to the cent by ${ROWS} that are not attached ` +
+          "to it.",
+      );
+    });
+
+    test("read in part: the checked day stays the claim's, and the rows come after the paydays past it", () => {
+      const inPart = { ...checked, checkedPeriodsCovered: 3, unattachedPaydays: JULY.map((d) => match(d, true)) };
+      expect(lead(inPart)).toBe(
+        "Cash job (weekly pay) implies $5,230.00 of earnings over Jul 2 – 30, 2026 and none of it reached an " +
+          "account, in a deposit attached to it and filed as income, through 2026-08-12; the other 2 paydays fall " +
+          `after that, ${CHECKED_DAY}; $3,138.00 is matched to the cent by ${ROWS} that are attached to it but not ` +
+          "filed as income.",
+      );
+      expect(lead({ ...inPart, bankedCents: 104_600 })).toContain(
+        "and only $1,046.00 reached an account, in deposits attached to it and filed as income, through 2026-08-12; " +
+          `the other 2 paydays fall after that, ${CHECKED_DAY}; $3,138.00 is matched`,
+      );
+    });
+
+    // ⛔ the silence's money is where its rows are, whichever window's claim the sentence follows (`silenceMatches`)
+    test("the silence's rows, named in a window whose claim names none of them", () => {
+      expect(body({ ...checked, unattachedPaydays: [match("2026-08-06"), match("2026-08-13")] })).toContain(
+        "and none of it reached an account. Across the whole schedule, 11 expected paydays have passed since the " +
+          "last deposit on 2026-06-05, and 9 of them fall on days the records cover, through 2026-08-12 — that money " +
+          "sits in rows of $1,046.00 on Aug 6 and Aug 13 that are not attached to it, was held as cash, spent as cash, ",
+      );
+    });
+
+    test("…pointed at when the claim named exactly them", () => {
+      expect(body({ ...checked, unattachedPaydays: JULY.map((d) => match(d)) })).toContain(
+        "— that money sits in the rows named above, not attached to the schedule, was held as cash, spent as cash, ",
+      );
+    });
+
+    test("…and never a row the one rule matched before the last deposit, which is no part of the silence", () => {
+      const said = body({ ...checked, lastBankedOn: "2026-07-09", unattachedPaydays: JULY.map((d) => match(d)) });
+      expect(said).toContain(`$3,138.00 is matched to the cent by ${ROWS} that are not attached to it.`);
+      expect(said).toContain(
+        "— that money sits in a row of $1,046.00 on Jul 16 that is not attached to it, was held as cash, ",
+      );
+      expect(said).not.toContain("rows named above");
+    });
+
+    test("no row in the silence: the list it always was", () => {
+      expect(body({ ...checked, unattachedPaydays: [] })).toBe(body({ ...checked }));
+      expect(body({ ...checked, unattachedPaydays: [] })).toContain("— that money was held as cash, spent as cash, ");
     });
   });
 

@@ -124,6 +124,23 @@ export function unattachedCents(matches: readonly UnattachedMatch[]): number {
   return matches.reduce((sum, m) => sum + Math.abs(m.row.amountCents), 0);
 }
 
+/**
+ * Of the rows the one rule matched over a schedule's life (`CashEarningsReading.unattachedPaydays`), those for the
+ * paydays of its SILENCE — after the last day that banked, every one when nothing ever has — oldest first. ⛔ One
+ * reading for every sentence about the silence, whatever window it is printed in: Earned vs banked's verdict
+ * (`IncomePayLine.silenceUnattached`) and /spending's note for a stale schedule. 🔴 Review of ff0bf19 (MEDIUM): that
+ * note explained the schedule-wide silence by its own window's rows, so on his pre-filing and trial copies read Oct 31
+ * Q3 said "that money was held as cash, …" where October, Q4 and YTD on the same page said "that money sits in the
+ * rows named above" — one silence, the same four payroll rows on Wells Fargo, two answers.
+ */
+export function silenceMatches(
+  matches: readonly UnattachedMatch[],
+  lastBankedOn: string | null,
+): readonly UnattachedMatch[] {
+  if (lastBankedOn === null) return matches;
+  return matches.filter((m) => compareDates(m.date, lastBankedOn) > 0);
+}
+
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
 /** What a row is that the series does not count: never attached, or attached and filed as no income. */

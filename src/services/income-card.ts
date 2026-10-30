@@ -4,6 +4,7 @@ import {
   neverClauses,
   neverSplit,
   notCountedWords,
+  silenceMatches,
   type NeverSplit,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
@@ -697,10 +698,9 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       checkedSilentPeriods: r.checkedPeriodsSinceBanked ?? 0,
       // ⛔ the silence's — /spending's stale note's own reading (`silentPaydaysNotBankedYet`), never a second one
       checkedSilentNotBankedYet: r.checkedSilentNotBankedYet ?? [],
-      // ⛔ …and of its paydays the one rule matched unattached — the silence opens after the last day that banked
-      silenceUnattached: (r.unattachedPaydays ?? []).filter(
-        (m) => r.lastBankedOn === null || compareDates(m.date, r.lastBankedOn) > 0,
-      ),
+      // ⛔ …and of its paydays the one rule matched unattached — the silence opens after the last day that banked — by
+      // the one reading /spending's note for a stale schedule names them by (`silenceMatches`)
+      silenceUnattached: silenceMatches(r.unattachedPaydays ?? [], r.lastBankedOn),
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
       ...gapOf(

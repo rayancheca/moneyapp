@@ -302,7 +302,9 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     expect(line.gapLabel).not.toContain("never reached a bank");
     expect(card.postedNote).toContain("though the rows the lines above name match its paydays to the cent");
     const note = spendingNote();
-    expect(note).toContain(`and none of it reached an account attached to it; $4,567.68 is matched to the cent by ${rows}.`);
+    expect(note).toContain(
+      `and none of it reached an account in a deposit attached to it; $4,567.68 is matched to the cent by ${rows}.`,
+    );
     expect(note).not.toContain("none of it reached an account.");
     const words = passedPaydaysWords(forecastCurrentMonth(bundle.db, TODAY).unbankedIncome, formatDayShort);
     expect(words.notProjected).toBe(`Pay matched to the cent by ${rows} cannot be projected as arriving`);
@@ -479,7 +481,8 @@ describe("an import's link that files nothing: his payroll rows attached and unf
     );
     const note = spendingNote();
     expect(note).toContain(
-      `and none of it reached an account attached to it and filed as income; $4,567.68 is matched to the cent by ${rows}.`,
+      "and none of it reached an account in a deposit attached to it and filed as income; $4,567.68 is matched to the " +
+        `cent by ${rows}.`,
     );
     expect(note).toContain("that money sits in the rows named above, not filed as income, was held as cash");
     expect(note).not.toContain("none of it reached an account.");
@@ -496,6 +499,40 @@ describe("an import's link that files nothing: his payroll rows attached and unf
       expect(unsettledWords(mark)).toBe(
         `matched to the cent by a row of $1,141.92 on ${formatDayShort(day)} that is attached to it but not filed as income`,
       );
+    }
+  });
+
+  /*
+   * ⛔ The deposit is what is attached and filed — never the account — and the checked day stays the claim's, the rows
+   * named after the paydays past it. 🔴 Review of ff0bf19 (MEDIUM): the trial import of the Oct 26 statement into his
+   * pre-import copy, read Oct 31, /spending October and Q4: "…and none of it reached an account attached to it and
+   * filed as income; $4,567.68 is matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are
+   * attached to it but not filed as income through Mon, Oct 26, 2026; the other payday falls after that, …", and YTD
+   * "only $7,156.60 reached an account attached to it and filed as income; …".
+   */
+  test("/spending read Oct 31: the deposit is attached and filed, and the checked day stays the claim's", () => {
+    importLinkedUnfiled();
+    const read = (from: string): string =>
+      cashEarningsSectionNotes({
+        rows: cashEarningsReadings(bundle.db, { from, to: "2026-10-31", today: "2026-10-31", withChecked: true }),
+        formatDay: formatDayLong,
+      })
+        .map((n) => n.body)
+        .join(" ");
+    const after =
+      "through Mon, Oct 26, 2026; the other payday falls after that, the last day every account that pay lands in " +
+      `has been checked through; $4,567.68 is matched to the cent by ${rows}.`;
+    expect(read("2026-10-01")).toContain(
+      "implies $5,709.60 of earnings over Oct 1 – 29, 2026 and none of it reached an account, in a deposit attached " +
+        `to it and filed as income, ${after}`,
+    );
+    expect(read("2026-01-01")).toContain(
+      "implies $10,277.28 of earnings over Sep 3 – Oct 29, 2026 and only $4,567.68 reached an account, in deposits " +
+        `attached to it and filed as income, ${after}`,
+    );
+    for (const from of ["2026-10-01", "2026-01-01"]) {
+      expect(read(from)).not.toContain("reached an account attached");
+      expect(read(from)).not.toContain("income through");
     }
   });
 
@@ -650,6 +687,41 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
     expect(september).toContain("It America LLC (weekly pay) implies $4,567.68 of earnings over Sep 3 – 24, 2026 and only");
     expect(september).not.toContain(MATCHED);
     expect(september).not.toContain("rows named above");
+  });
+
+  /*
+   * ⛔ …while the sentence after the claim is the SCHEDULE's silence, whatever the window, and so are its rows
+   * (`silenceMatches`, Earned vs banked's own). 🔴 Review of ff0bf19 (MEDIUM): his pre-filing copy and the trial copy,
+   * read Oct 31 — Q3 read "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu,
+   * Sep 24, 2026, and 4 of them fall on days the records cover, through Mon, Oct 26, 2026 — that money was held as cash,
+   * …" while October, Q4 and YTD on the same page opened that list with "that money sits in the rows named above".
+   */
+  test("…and every window's silence is the schedule's: Q3 and September name the rows October points at", () => {
+    bundle.db
+      .delete(transactions)
+      .where(and(eq(transactions.postedOn, "2026-09-17"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    importUnattached(PAYDAYS, false);
+    const read = (from: string, to: string): string =>
+      cashEarningsSectionNotes({
+        rows: cashEarningsReadings(bundle.db, { from, to, today: TODAY, withChecked: true }),
+        formatDay: formatDayLong,
+      })
+        .map((n) => n.body)
+        .join(" ");
+    const named = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it";
+    for (const [from, to] of [
+      ["2026-07-01", "2026-09-30"],
+      ["2026-09-01", "2026-09-30"],
+    ] as const) {
+      const note = read(from, to);
+      expect(note).toContain(`since the last deposit on Thu, Sep 24, 2026 — that money sits in ${named}, was held`);
+      expect(note).not.toContain(MATCHED);
+    }
+    expect(read("2026-10-01", "2026-10-31")).toContain(
+      "since the last deposit on Thu, Sep 24, 2026 — that money sits in the rows named above, not attached to the " +
+        "schedule, was held as cash",
+    );
   });
 });
 
