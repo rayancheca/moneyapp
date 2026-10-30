@@ -486,11 +486,12 @@ describe("⚖️ a carrier's payment of two pays two days of what it carries, as
 });
 
 /*
- * ⛔ …and where a carried series' schedule OPENS is its carrier's — the carrier's date, his or detection's
- * (`billDueDaysBySeries`): a day before the rent's date is no charge of the rent's, so no payment of the rent's catches
- * one up for what it carries either, and one payment pays the same days of the rent and of what it carries. ⚖️ default
- * built, not asked (2026-10-29), read off §6A 59's "by the rent's own test". 🔴 At 4d6ec2ac the his-date guard read the
- * carried series' own row (review of 4d6ec2ac): a what-if rent at -$2,291.21 typed Oct 1, the utilities carried on
+ * ⛔ …and where a carried series' schedule OPENS is its carrier's — the carrier's date he typed, or the earlier of
+ * detection's and its own (`openingOf`): a day before the rent's date is no charge of the rent's, so no payment of the
+ * rent's catches one up for what it carries either, none is projected (below), and one payment pays the same days of
+ * the rent and of what it carries. ⚖️ default built, not asked (2026-10-29), read off §6A 59's "by the rent's own
+ * test". 🔴 At 4d6ec2ac the his-date guard read the carried series' own row (review of 4d6ec2ac): a what-if rent at
+ * -$2,291.21 typed Oct 1, the utilities carried on
  * detection's Oct 1 — his ledger's shape, the rent typed Sep 1 and the utilities detected Sep 1 — Jul 1 and Aug 2 paid,
  * then Sep 10 -$4,582.42: October drew the rent's Oct 1 missed beside "Rent utilities & fees paid … with the rent's
  * payment of Sep 10 (early)", the arrears owed the rent $2,291.21 and not the utilities, the runway read "A further
@@ -501,10 +502,13 @@ describe("⚖️ a carrier's payment of two pays two days of what it carries, as
  */
 describe("⛔ …and what a carrier carries opens where the carrier's schedule opens — his date on the rent", () => {
   const TODAY = "2026-10-23";
-  /** a what-if rent at what a month posts, its date `rentOn` (his when `typed`), the utilities carried on `utilOn` */
-  type Dates = { rentOn: string; typed: boolean; utilOn: string; utilTyped?: boolean };
+  /**
+   * a what-if rent at what a month posts, its date `rentOn` (his when `typed`), the utilities carried on `utilOn`; its
+   * last row two months at once, unless `noneOfTwo`
+   */
+  type Dates = { rentOn: string; typed: boolean; utilOn: string; utilTyped?: boolean; noneOfTwo?: boolean };
   const rentWith = (dates: Dates, ...rows: string[]) => {
-    const { rentOn, typed, utilOn, utilTyped = false } = dates;
+    const { rentOn, typed, utilOn, utilTyped = false, noneOfTwo = false } = dates;
     bundle.db
       .insert(recurringSeries)
       .values([
@@ -521,7 +525,8 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
       ])
       .run();
     // Jul 1 and Aug 2 at the rate, then the last row two months at once
-    for (const [i, on] of rows.entries()) pay(`t-rent-${on}`, RENT, on, i === rows.length - 1 ? -458242 : -229121);
+    const twoAt = noneOfTwo ? -1 : rows.length - 1;
+    for (const [i, on] of rows.entries()) pay(`t-rent-${on}`, RENT, on, i === twoAt ? -458242 : -229121);
     checkedThrough(bundle.db, "acct", "2026-10-22");
   };
   const labelsIn = (month: string, today: string) =>
@@ -562,13 +567,102 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
    * the arrears owed the rent alone and the runway read "A further $5,811.19 came due earlier this month and no
    * statement has covered it yet." Now both Oct 1s are drawn "?" there, and it reads "A further $5,993.40 …".
    */
-  test("…and what it carries still on detection's Sep 1 opens at his Oct 1 too: Sep 10 pays their Sep 1 alone", () => {
+  test("…and what it carries still on detection's Sep 1 opens at his Oct 1 too: Sep 10 pays neither Oct 1", () => {
     rentWith({ rentOn: "2026-10-01", typed: true, utilOn: "2026-09-01" }, "2026-07-01", "2026-08-02", "2026-09-10");
-    // their own Sep 1, where their projection starts, is Sep 10's, late — no day of the rent's lies before Oct 1
-    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([
-      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-09-10", early: false }],
-    ]);
+    // no day of the rent's lies before Oct 1, nor of what it carries: their own Sep 1 is drawn nowhere (below)
+    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([]);
     bothOct1sComeThenAreOwed();
+  });
+
+  /*
+   * ⚖️ …and no day of what it carries is PROJECTED before the rent's date either: where a carried series' schedule opens
+   * is where every reader's projection of it starts (`DueDays.opensOn`, `projectOccurrences`) — default built, not
+   * asked (2026-10-29), read off the default above: a day no payment of the rent's can catch up is a day no reader
+   * draws, owes or lists. 🔴 At 68c837ce their own detected Sep 1 still opened their projection (review of 68c837ce):
+   * projected, so graded as a charge, and no charge to the catch-up. A payment of two on time for his Oct 1 — Oct 2
+   * -$4,582.42, which the rent's page names as covering more than one month — paid their Oct 1, and September drew
+   * their Sep 1 "missed", owed $182.21. On his ledger copy 2026-10-29 with this what-if added on Wells Fargo (read
+   * through Oct 26), the runway on Sep 25 read "A further $347.08 came due earlier this month: $182.21 has not posted,
+   * and no statement has covered the other $164.87 yet." Now September draws nothing of theirs, and it reads "A
+   * further $164.87 came due earlier this month and no statement has covered it yet." — his own bills, as with the
+   * rent on detection's Oct 1 (the review's first control, below). The rent's own reading of Oct 2 is unchanged: its
+   * Oct 1, and no day before his date.
+   */
+  test("…and Oct 2's two months, on time for his Oct 1: what it carries draws no Sep 1, missed or owed", () => {
+    rentWith({ rentOn: "2026-10-01", typed: true, utilOn: "2026-09-01" }, "2026-07-01", "2026-08-02", "2026-10-02");
+    expect(seriesDetail(bundle.db, RENT, TODAY)!.paidAhead.map((o) => o.postedOn)).toEqual(["2026-10-02"]);
+    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([]);
+    expect(owed("2026-09-25")).toEqual([]);
+    expect(arrearsSentence(committedBook(bundle.db, "2026-09-25"))).toBeNull();
+    // …and Oct 2 pays both Oct 1s on time: nothing owed on Oct 23, Nov 1 next for both
+    expect(marks("2026-10", "2026-10-01", TODAY)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02", early: false }],
+    ]);
+    expect(owed(TODAY)).toEqual([]);
+    expect(coming(TODAY, RENT)[0]).toBe("2026-11-01");
+    expect(coming(TODAY, UTIL)[0]).toBe("2026-11-01");
+  });
+
+  /*
+   * …and the review's two controls, the same rows. The rent on detection's Oct 1: a day before a date detection gave
+   * is a charge once a payment has posted — Jul 1 here — so their own Sep 1 is one, where their projection starts, and
+   * Oct 2's two months pay it, late, beside their Oct 1 on time.
+   */
+  test("…and the rent on detection's Oct 1: their own Sep 1 is a charge, paid with Oct 1 by Oct 2's two", () => {
+    rentWith({ rentOn: "2026-10-01", typed: false, utilOn: "2026-09-01" }, "2026-07-01", "2026-08-02", "2026-10-02");
+    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02", early: false }],
+    ]);
+    expect(marks("2026-10", "2026-10-01", TODAY)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02", early: false }],
+    ]);
+    expect(owed("2026-09-25")).toEqual([]);
+    expect(owed(TODAY)).toEqual([]);
+  });
+
+  /*
+   * …and their own row read as the rent's (the second control, the carried series read off its own row as at
+   * 4d6ec2ac): the rent typed on their own Sep 1 — his ledger's shape, the rent typed Sep 1 and the utilities detected
+   * Sep 1 — so the two open on one day, and Oct 2's two months pay Sep 1, late, and Oct 1 of both.
+   */
+  test("…and the rent typed on their own Sep 1, his ledger's shape: Oct 2's two months pay Sep 1 of both", () => {
+    rentWith({ rentOn: "2026-09-01", typed: true, utilOn: "2026-09-01" }, "2026-07-01", "2026-08-02", "2026-10-02");
+    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([
+      [UTIL, "paid", { carrier: "the rent", postedOn: "2026-10-02", early: false }],
+      [RENT, "paid", { carrier: null, postedOn: "2026-10-02", early: false }],
+    ]);
+    expect(owed("2026-09-25")).toEqual([]);
+    expect(owed(TODAY)).toEqual([]);
+  });
+
+  /*
+   * …and with no payment of two at all the same: what it carries opens at his Oct 1 on every reader, as the rent does.
+   * 🔴 At 68c837ce their own Sep 1 opened them (review of 68c837ce). On his ledger copy 2026-10-29 with these rows added
+   * on Wells Fargo, on Aug 25 Upcoming listed their Sep 1 without the rent, September's forecast held them at -$182.21
+   * and the rent not at all, and their page and the All tab named Sep 1 next; on Sep 25 September drew it "?" and the
+   * runway read "A further $347.08 came due earlier this month: $182.21 has not posted, and no statement has covered
+   * the other $164.87 yet." Now every one opens at Oct 1 with the rent, and the runway reads "A further $164.87 …".
+   */
+  test("…and with no payment of two, what it carries on detection's Sep 1 opens at his Oct 1 on every reader", () => {
+    rentWith({ rentOn: "2026-10-01", typed: true, utilOn: "2026-09-01", noneOfTwo: true }, "2026-07-01", "2026-08-02");
+    // on Aug 25 the readers that look ahead list Oct 1 first for both — Upcoming, September's forecast, their page's
+    // list and its sentence, and the All tab's Next
+    expect(coming("2026-08-25", RENT)).toEqual(["2026-10-01"]);
+    expect(coming("2026-08-25", UTIL)).toEqual(["2026-10-01"]);
+    expect(labelsIn("2026-09", "2026-08-25")).not.toContain("Rent utilities & fees");
+    const page = seriesDetail(bundle.db, UTIL, "2026-08-25")!;
+    expect([page.nextExpected[0]!.date, page.nextExpectedOn]).toEqual(["2026-10-01", "2026-10-01"]);
+    expect(listSeries(bundle.db, "2026-08-25").find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-10-01");
+    // …and read past Sep 1, September draws nothing of theirs and owes nothing
+    expect(marks("2026-09", "2026-09-01", TODAY)).toEqual([]);
+    expect(owed("2026-09-25")).toEqual([]);
+  });
+
+  test("…and the rent typed further on, Dec 1: their page lists three dates from Dec 1, as the rent's does", () => {
+    rentWith({ rentOn: "2026-12-01", typed: true, utilOn: "2026-09-01", noneOfTwo: true }, "2026-07-01", "2026-08-02");
+    const next = (id: string) => seriesDetail(bundle.db, id, "2026-08-25")!.nextExpected.map((o) => o.date);
+    expect(next(UTIL)).toEqual(["2026-12-01", "2027-01-01", "2027-02-01"]);
+    expect(next(UTIL)).toEqual(next(RENT));
   });
 
   test("…and Oct 10's two months, late for his Oct 1 itself, pay both Nov 1s early as they pay the rent's", () => {

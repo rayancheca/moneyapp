@@ -30,7 +30,7 @@ import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
-import { billingCarriers, withBillingCarriers, type DueDays } from "./billing-carriers";
+import { billingCarriers, openingOf, withBillingCarriers, type DueDays } from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
@@ -1256,6 +1256,14 @@ interface ProjectableSeries {
    * anchor on or before today holds nothing back: every date the walk back adds lies before it. Absent, nothing is.
    */
   walkBackBefore?: string | null;
+  /**
+   * ⚖️ …and where it opens when that is AFTER its anchor: the day its schedule opens as every grader of a bill reads it
+   * (`openingOf`, `DueDays.opensOn`) — billed inside another, its carrier's date he typed. The walk draws no date
+   * before it, here or in the next date it names (`rollForwardNextExpected`), so no reader projects a day no charge of
+   * it can lie on (default built, not asked, 2026-10-29). On or before the anchor, or absent, the anchor opens the walk
+   * (or `firstOn` walks it back). `toProjectable` always sets it.
+   */
+  opensOn?: string | null;
 }
 
 /** The user-override columns that shadow detection's values (§4.4). */
@@ -1326,6 +1334,12 @@ export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
 /** WHEN a series falls — `EffectiveSeries` less its money: what `rollForwardNextExpected` steps. */
 export type EffectiveSchedule = Pick<EffectiveSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn">;
 
+/** …and where it opens (`ProjectableSeries.opensOn`): a schedule as a projection steps it (`toProjectable`). */
+type SteppedSchedule = Pick<
+  ProjectableSeries,
+  "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn" | "opensOn"
+>;
+
 /**
  * The effective schedule (user override first), for a reader that asks only when — a date reader holds no stored rate
  * history, which `effectiveSeries` reads strictly (`ProjectionOverrides`). `effectiveSeries` is this plus the money.
@@ -1341,7 +1355,7 @@ export function effectiveSchedule(s: SeriesOverrides): EffectiveSchedule {
     // his Sep 8 held, and the walk stepped 27 days — Oct 5, Nov 1, Nov 28 —
     // putting 13 charges ($650) in the committed year instead of 12 ($600).
     intervalDaysAvg: s.userCadence || s.userNextExpectedOn ? null : s.intervalDaysAvg,
-    nextExpectedOn: s.userNextExpectedOn ?? s.nextExpectedOn,
+    nextExpectedOn: effectiveNextExpectedOn(s),
     // A user-set date IS the day-of-month, so the detected anchor must yield to
     // it — otherwise picking the 15th on a month-end series would be silently
     // re-dayed to the 31st and the override would look ignored. Same shape as
@@ -1351,17 +1365,39 @@ export function effectiveSchedule(s: SeriesOverrides): EffectiveSchedule {
   };
 }
 
+/** A series' next date as every reader steps it: the date HE typed, else detection's (`effectiveSchedule`). */
+function effectiveNextExpectedOn(s: Pick<SeriesOverrides, "nextExpectedOn" | "userNextExpectedOn">): string | null {
+  return s.userNextExpectedOn ?? s.nextExpectedOn;
+}
+
 /**
  * Maps a series row (with overrides) to the effective projection input.
  * `staleness` is opt-in: a caller that means to disclose the age of the
  * evidence passes it, and it rides along onto every projected occurrence.
+ *
+ * ⛔ The row's carrier is REQUIRED, `userEndsOn`'s reason: billed inside another, a series opens where its carrier's
+ * date opens it (`opensOn`, `openingOf`), and a row that reached a projection without it would draw its own days
+ * before that date — silently, for whoever forgot. `null` says "billed on its own".
  */
 export function toProjectable(
-  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind },
+  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind } & CarriedBy,
   staleness?: SeriesStaleness,
 ): ProjectableSeries {
   const eff = effectiveSeries(s);
-  return { id: s.id, name: s.name, kind: s.kind, ...eff, userEndsOn: s.userEndsOn ?? null, staleness };
+  return {
+    id: s.id,
+    name: s.name,
+    kind: s.kind,
+    ...eff,
+    userEndsOn: s.userEndsOn ?? null,
+    staleness,
+    opensOn: openingOf(s).opensOn,
+  };
+}
+
+/** What a projection reads of the carrier a series is billed with (`openingOf`) — `null` for one billed on its own. */
+export interface CarriedBy {
+  readonly billedWith: Pick<BillingCarrier, "opensOn" | "opensOnHisDate"> | null;
 }
 
 const INACTIVE_MISS_LIMIT = 1.5;
@@ -1656,11 +1692,16 @@ export function seriesIsForecast(
  * still on the schedule. `subscriptions-card` may: it reads bills and subscriptions
  * only, prints no date, and asks only whether the schedule is over, and settlement
  * never speaks about money out.
+ *
+ * ⚖️ …and never a date before the day its schedule opens (`ProjectableSeries.opensOn`), as the walk draws none: a
+ * schedule built for a projection (`toProjectable`) carries it — billed inside another, its carrier's date he typed —
+ * so the sentence and the All tab's Next name the day Upcoming lists first (default built, not asked, 2026-10-29).
  */
-export function rollForwardNextExpected(eff: EffectiveSchedule, today: string = todayIso()): string | null {
+export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
-  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
-  const next = stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, today));
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay ?? null);
+  const from = notBeforeItOpens(eff.nextExpectedOn, eff.opensOn, today);
+  const next = stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, from));
   // inclusive: a series ends ON its end date, so that day's charge still happens
   if (eff.userEndsOn && compareDates(next, eff.userEndsOn) > 0) return null;
   return next;
@@ -1827,11 +1868,13 @@ export function projectOccurrences(
   /*
    * ⚖️ Opened on the series' first payday when it has one (`firstOn`): the anchor's own rhythm, stepped BACK by index
    * from the anchor — never re-anchored on that earlier date, whose day a short month may have clamped. Otherwise the
-   * walk is floored at the anchor (`stepsToReach`).
+   * walk is floored at the anchor (`stepsToReach`) — ⚖️ or at the day its schedule opens, when that lies after it
+   * (`opensOn`): stepped FORWARD by index on the anchor's own rhythm, never re-anchored either.
    */
+  const start = notBeforeItOpens(anchor, series.opensOn, from);
   const firstStep = series.firstOn
-    ? Math.max(signedStepsToReach(anchor, plan, from), signedStepsToReach(anchor, plan, series.firstOn))
-    : stepsToReach(anchor, plan, from);
+    ? Math.max(signedStepsToReach(anchor, plan, start), signedStepsToReach(anchor, plan, series.firstOn))
+    : stepsToReach(anchor, plan, start);
 
   const occurrences: SeriesOccurrence[] = [];
   for (let i = firstStep; ; i++) {
@@ -1854,6 +1897,16 @@ export function projectOccurrences(
     });
   }
   return occurrences;
+}
+
+/**
+ * The day a walk from `anchor` reaches for when asked from `day`: `day`, or the day its schedule opens when that lies
+ * after both (`ProjectableSeries.opensOn`). One reading for the list a walk draws (`projectOccurrences`) and the one
+ * next date it names (`rollForwardNextExpected`).
+ */
+function notBeforeItOpens(anchor: string, opensOn: string | null | undefined, day: string): string {
+  if (!opensOn || compareDates(opensOn, anchor) <= 0 || compareDates(opensOn, day) <= 0) return day;
+  return opensOn;
 }
 
 /** What a series' due days are stepped from: its effective schedule's step and anchor (`toProjectable`). */
@@ -1890,16 +1943,28 @@ export function dueDayBefore(series: DueDaySchedule, day: string): string | null
 
 /**
  * A series' due days either side of one, as every grader of a bill's day steps them (`paymentFor`) — and the day its
- * schedule opens, its anchor, where a bill's projection starts, and whether that is his date (`DueDays.opensOn`).
- * `overrides` is the series' own row: the schedule (`effectiveSchedule`) holds his date without saying it is his.
+ * schedule opens, and whether that is his date (`opening`: `DueDays.opensOn`, `openingOf`).
  */
-export function dueDaysOf(series: DueDaySchedule, overrides: Pick<SeriesOverrides, "userNextExpectedOn">): DueDays {
+export function dueDaysOf(series: DueDaySchedule, opening: ScheduleOpening): DueDays {
   return {
     after: (day) => nextDueDayAfter(series, day),
     before: (day) => dueDayBefore(series, day),
-    opensOn: series.nextExpectedOn,
-    opensOnHisDate: overrides.userNextExpectedOn !== null && series.nextExpectedOn !== null,
+    opensOn: opening.opensOn,
+    opensOnHisDate: opening.opensOnHisDate,
   };
+}
+
+/** Where a bill's schedule opens, and whether that day is his (`DueDays.opensOn`, `DueDays.opensOnHisDate`). */
+export type ScheduleOpening = Pick<DueDays, "opensOn" | "opensOnHisDate">;
+
+/**
+ * Where a series' OWN schedule opens: its next date as every reader steps it (`effectiveSchedule`), his when he typed
+ * it — the row holds his date beside detection's; the schedule holds it without saying it is his. Billed inside
+ * another, where the series opens is `openingOf`'s; its carrier's own is this (`billingCarriers`).
+ */
+export function ownOpening(s: Pick<SeriesOverrides, "nextExpectedOn" | "userNextExpectedOn">): ScheduleOpening {
+  const opensOn = effectiveNextExpectedOn(s);
+  return { opensOn, opensOnHisDate: s.userNextExpectedOn !== null && opensOn !== null };
 }
 
 /**

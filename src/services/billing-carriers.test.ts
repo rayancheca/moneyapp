@@ -1,18 +1,18 @@
 import { describe, expect, test } from "vitest";
 import { paymentFor, paysEarly, type DueDays, type Payment } from "./billing-carriers";
-import { dueDaysOf } from "./recurring";
+import { dueDaysOf, ownOpening } from "./recurring";
 
 /** A monthly bill's due days on `anchorDay`, stepped as the projection steps them (`dueDaysOf`) — detection's day. */
 const monthlyOn = (anchor: string): DueDays =>
   dueDaysOf(
     { cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: anchor, anchorDay: Number(anchor.slice(8)) },
-    { userNextExpectedOn: null },
+    ownOpening({ nextExpectedOn: anchor, userNextExpectedOn: null }),
   );
 /** …on a date HE set (`userNextExpectedOn`), stepped as `effectiveSchedule` steps one: no detected interval or day */
 const hisDate = (date: string): DueDays =>
   dueDaysOf(
     { cadence: "monthly", intervalDaysAvg: null, nextExpectedOn: date, anchorDay: null },
-    { userNextExpectedOn: date },
+    ownOpening({ nextExpectedOn: date, userNextExpectedOn: date }),
   );
 /** On time only: no day after it is asked for a late payment, and none before it for an early one. */
 const ON_TIME_ONLY: DueDays = { after: () => null, before: () => null, opensOn: null, opensOnHisDate: false };

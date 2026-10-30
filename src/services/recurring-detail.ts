@@ -556,15 +556,20 @@ export function seriesDetail(
   // the Nov 11 balance moved to Nov 11, 2027 (a copy of his ledger, 2026-10-13) listed nothing next, and its End dialog
   // read "Upcoming charges off the calendar: none scheduled" under "Leaving the forecast: ~$72.74, its one charge" — as
   // one on Mar 11, 2027, inside the year, did too. A longer window only adds days after the ones it held, so a series
-  // whose next day is near keeps every day it listed.
-  const windowFrom =
-    eff.nextExpectedOn !== null && compareDates(eff.nextExpectedOn, today) > 0 ? eff.nextExpectedOn : today;
+  // whose next day is near keeps every day it listed. ⚖️ …its own next day, or where its schedule opens when that is
+  // later (`opensOn`: billed inside another, its carrier's date he typed — default built, not asked, 2026-10-29)
+  const projectable = toProjectable(s);
+  const ownNext =
+    projectable.opensOn && eff.nextExpectedOn !== null && compareDates(projectable.opensOn, eff.nextExpectedOn) > 0
+      ? projectable.opensOn
+      : eff.nextExpectedOn;
+  const windowFrom = ownNext !== null && compareDates(ownNext, today) > 0 ? ownNext : today;
   const nextExpected = projects
     ? stillToCome(
         stillToComeReader(db, [s], today),
         s,
         projectOccurrences(
-          toProjectable(s),
+          projectable,
           today,
           addDays(
             stepFrom(windowFrom, stepPlan(eff.cadence, eff.intervalDaysAvg), NEXT_EXPECTED_COUNT + 1),
@@ -630,7 +635,9 @@ export function seriesDetail(
     // opened on Oct 1, past the Sep 24 payday the Sep 23 lump of $4,567.68 paid,
     // and Save with nothing changed took Sep 24 out of the projection settlement
     // walks. The token read "Thursdays" either way.
-    nextExpectedOn: projects ? rollForwardNextExpected(eff, today) : eff.nextExpectedOn,
+    // ⚖️ …stepped as its list is (`projectable`): never before the day its schedule opens — billed inside another, its
+    // carrier's date he typed (default built, not asked, 2026-10-29), the day Save then writes as its own
+    nextExpectedOn: projects ? rollForwardNextExpected(projectable, today) : eff.nextExpectedOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,

@@ -2,12 +2,14 @@ import { and, eq, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays } from "@/lib/dates";
+import { withBillingCarriers } from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
   recomputeSeriesStats,
   toProjectable,
   type AbsorptionResult,
+  type CarriedBy,
   type RecomputeCtx,
   type Tx,
 } from "./recurring";
@@ -85,7 +87,8 @@ import {
  * only the new one is in scope.
  */
 
-type SeriesRow = typeof recurringSeries.$inferSelect;
+/** A live series row, with the carrier it is billed with — where its projection opens (`toProjectable`). */
+type SeriesRow = typeof recurringSeries.$inferSelect & CarriedBy;
 
 interface CandidateRow {
   id: string;
@@ -125,11 +128,11 @@ export function planFirstPostings(
   today: string,
   candidateIds?: ReadonlySet<string>,
 ): FirstPostingLink[] {
-  const live = tx
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  // each with its carrier: billed inside another, a series expects no charge before its carrier's date opens it
+  const live = withBillingCarriers(
+    tx,
+    tx.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const posting = new Set(
     tx
       .selectDistinct({ id: transactions.recurringSeriesId })

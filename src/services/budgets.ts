@@ -17,7 +17,7 @@ import {
   type PeriodBounds,
 } from "@/lib/dates";
 import { outsidePortfolioCashAccountIds } from "./accounts";
-import { withBillingCarriers } from "./billing-carriers";
+import { asMoneyIn, withBillingCarriers } from "./billing-carriers";
 import {
   activeTxnsInRange,
   categorySpending,
@@ -1172,7 +1172,7 @@ export function incomeExpectation(
   const postedCents = incomeTotalCents(db, agentsCash, start, postedThrough);
 
   // ⚖️ his live income series, never the agent's — every leg below walks this one list (`hisLiveIncomeSeries`)
-  const live = hisLiveIncomeSeries(db, agentsCash);
+  const live = hisLiveIncomeSeries(db, agentsCash).map(asMoneyIn);
 
   /*
    * ⛔ THE FORWARD LEG OPENS ON `today`, and today's occurrence leaves it only

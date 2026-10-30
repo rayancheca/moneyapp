@@ -23,6 +23,12 @@ export interface BillingCarrier {
   readonly name: string;
   /** the CARRIER's own newest matched charge — the evidence the series billed inside it borrows */
   readonly lastMatchedOn: string | null;
+  /**
+   * …and where the CARRIER's own schedule opens, and whether that day is his (`ownOpening`): what opens the series
+   * billed inside it too, for every grader and every projection of it (`openingOf`, `DueDays.opensOn`)
+   */
+  readonly opensOn: string | null;
+  readonly opensOnHisDate: boolean;
 }
 
 /**

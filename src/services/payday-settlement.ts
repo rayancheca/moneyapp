@@ -18,7 +18,7 @@ import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { billDueDaysBySeries, billPaymentsBySeries, paymentFor } from "./billing-carriers";
+import { asMoneyIn, billDueDaysBySeries, billPaymentsBySeries, paymentFor } from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
@@ -120,7 +120,7 @@ export function paydaySettlement(
    */
   const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, rows, today);
   const walkBackBefore = walkBackBound(rows, s.toleranceDays, today);
-  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn, walkBackBefore }, today);
+  const projectable = paydayProjectable(asMoneyIn(s), { firstPaydayOn: firstOn, walkBackBefore }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
@@ -292,13 +292,16 @@ export function stillToCome<T extends { date: string }>(
  * Null when the schedule has no next date, or none not already paid: a series whose
  * last occurrence was paid early expects nothing more, which is what its own page's
  * list says.
+ *
+ * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
+ * its carrier's date he typed (default built, not asked, 2026-10-29).
  */
 export function nextStillToCome(
   toCome: StillToCome,
-  series: ProjectionOverrides & { id: string },
+  series: Parameters<typeof toProjectable>[0],
   today: string,
 ): string | null {
-  const eff = effectiveSeries(series);
+  const eff = toProjectable(series);
   let next = rollForwardNextExpected(eff, today);
   while (next !== null && !toCome(series.id, next)) next = rollForwardNextExpected(eff, addDays(next, 1));
   return next;
@@ -361,7 +364,7 @@ export function stillToComeReader(
   // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, and the day
   // its schedule opens and whether it is his (its own row, or its carrier's for one billed inside another) — with
   // nothing late asked (above)
-  const graded = billDueDaysBySeries(db, bills);
+  const graded = billDueDaysBySeries(bills);
   const dueDays = new Map(bills.map((s) => [s.id, { ...graded.get(s.id)!, after: () => null }] as const));
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);

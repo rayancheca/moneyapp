@@ -11,7 +11,13 @@ import {
   type DueDayReading,
 } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
-import { billDueDaysBySeries, billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
+import {
+  asMoneyIn,
+  billDueDaysBySeries,
+  billPaymentsBySeries,
+  paymentFor,
+  withBillingCarriers,
+} from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
@@ -160,7 +166,7 @@ export function overdueForSeries(
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
   // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
-  const dueDaysBySeries = billDueDaysBySeries(db, live);
+  const dueDaysBySeries = billDueDaysBySeries(live);
 
   const series: BudgetTailSeries[] = [];
   let totalCents = 0;
@@ -427,7 +433,9 @@ export function unbankedIncomeForSeries(
      * for three cycles is the very case this figure exists to report — dropping
      * it here would delete the sentence exactly when it matters most.
      */
-    .filter((r) => r.kind === "income");
+    .filter((r) => r.kind === "income")
+    // money in: billed on its own (`asMoneyIn`)
+    .map(asMoneyIn);
   if (live.length === 0) return { totalCents: 0, series: [] };
 
   /*

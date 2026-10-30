@@ -14,7 +14,13 @@ import {
  * Sep 2 $2,291.21 = rent $2,109.00 + $182.21. Its evidence is the rent's postings, and it reads "billed with the
  * rent, last seen Sep 2" wherever it read "never billed".
  */
-const RENT: BillingCarrier = { id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" };
+const RENT: BillingCarrier = {
+  id: "rent",
+  name: "Flamingo South Beach (rent)",
+  lastMatchedOn: "2026-09-02",
+  opensOn: "2026-09-01",
+  opensOnHisDate: true,
+};
 const TODAY = "2026-10-08";
 
 describe("lastSeenOn — the ONE reading of when a series was last seen", () => {

@@ -426,7 +426,7 @@ describe("user overrides shadow detection (§4.4)", () => {
     const eff = effectiveSeries({ ...pay, userAmountHistory: history });
     expect(eff.amountHistory).toEqual(history);
     expect(eff.nextExpectedAmountCents).toBe(114_192);
-    expect(toProjectable({ ...pay, userAmountHistory: history }).amountHistory).toEqual(history);
+    expect(toProjectable({ ...pay, userAmountHistory: history, billedWith: null }).amountHistory).toEqual(history);
     expect(effectiveSeries({ ...pay, userAmountHistory: null }).amountHistory).toBeNull();
     // ⛔ never read as "no history": a history the reader cannot read refuses the series, out loud
     expect(() => effectiveSeries({ ...pay, userAmountHistory: [] })).toThrow(AmountHistoryError);
@@ -447,7 +447,7 @@ describe("user overrides shadow detection (§4.4)", () => {
       amountHistory: null,
     });
     // projection honors the override end-to-end
-    const occ = projectOccurrences(toProjectable(overridden), "2026-07-08", "2026-07-31");
+    const occ = projectOccurrences(toProjectable({ ...overridden, billedWith: null }), "2026-07-08", "2026-07-31");
     expect(occ.map((o) => o.date)).toEqual(["2026-07-20", "2026-07-27"]);
     expect(occ.every((o) => o.amountCents === -2000)).toBe(true);
   });
@@ -458,7 +458,7 @@ describe("user overrides shadow detection (§4.4)", () => {
    * 31st, and the override would look like it had been ignored.
    */
   test("a user's own date beats the detected anchor day", () => {
-    const monthEnd = { ...base, anchorDay: 31, nextExpectedOn: "2027-02-28" };
+    const monthEnd = { ...base, anchorDay: 31, nextExpectedOn: "2027-02-28", billedWith: null };
     expect(effectiveSeries(monthEnd).anchorDay).toBe(31);
     expect(projectOccurrences(toProjectable(monthEnd), "2027-03-01", "2027-03-31").map((o) => o.date))
       .toEqual(["2027-03-31"]);
@@ -478,7 +478,9 @@ describe("user overrides shadow detection (§4.4)", () => {
   test("a user's own date beats the detected interval too — the walk stays on that day", () => {
     const drifted = { ...base, intervalDaysAvg: 27.33, nextExpectedOn: "2026-10-11", userNextExpectedOn: "2026-09-08" };
     expect(effectiveSeries(drifted).intervalDaysAvg).toBeNull();
-    const dates = projectOccurrences(toProjectable(drifted), "2026-09-01", "2027-08-31").map((o) => o.date);
+    const dates = projectOccurrences(toProjectable({ ...drifted, billedWith: null }), "2026-09-01", "2027-08-31").map(
+      (o) => o.date,
+    );
     expect(dates).toHaveLength(12);
     expect(dates.every((d) => d.endsWith("-08"))).toBe(true);
   });
@@ -684,7 +686,7 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     expect(series.anchorDay).toBe(31);
 
     const walk = projectOccurrences(
-      toProjectable({ ...series, userEndsOn: null }),
+      toProjectable({ ...series, userEndsOn: null, billedWith: null }),
       "2026-02-01",
       "2026-05-31",
     ).map((o) => o.date);

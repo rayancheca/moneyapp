@@ -875,7 +875,7 @@ export function recurringCalendar(
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
   // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
-  const dueDaysBySeries = billDueDaysBySeries(db, forecastRows);
+  const dueDaysBySeries = billDueDaysBySeries(forecastRows);
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
