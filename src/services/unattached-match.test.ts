@@ -175,6 +175,8 @@ function importUnattached(paydays: readonly string[] = PAYDAYS, lease = true): v
 }
 
 const payDays = (days: readonly string[] = PAYDAYS) => days.map((date) => ({ date, amountCents: 114_192 }));
+/** the lead of every sentence that names a matched row (`MATCHED_TO_THE_CENT_BY`) */
+const MATCHED = "matched to the cent";
 
 describe("the predicate (`unattachedMatchesBySeries`): active, unattached, on the series' account, to the cent", () => {
   test("his four payroll rows match his four paydays, and the lease's row its Oct 15 though the lease names no account", () => {
@@ -496,6 +498,41 @@ describe("an import's link that files nothing: his payroll rows attached and unf
       );
     }
   });
+
+  /*
+   * 🔴 Review of e6ad55a (HIGH): the calendar's step 1 drew every row linked to a pay series and settled it whole,
+   * whether or not its settlement reads it. The trial import of the Oct 26 statement into his pre-import copy, read Oct
+   * 29: Oct 1, 8, 15 and 22 each drew the row "paid — toward no payday" beside the "?" naming that row, and October's
+   * Settled +$2,412.47 held $4,767.68 of rows no other surface counts (the four, and the off-cycle $200.00 of Oct 15)
+   * while Not yet known $5,796.45 held the same paydays' $4,567.68 — one week's money in both footer figures.
+   */
+  test("the calendar draws none of them as pay and settles none of them — one mark a payday, naming its row", () => {
+    importLinkedUnfiled();
+    // his off-cycle +$200.00 of Oct 15, linked by the import as well and filed nowhere: it matches no payday
+    const offCycle = row("2026-10-15", 20_000, { seriesId: PAY });
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    const pay = (day: string) => (october.entriesByDay[day] ?? []).filter((e) => e.seriesId === PAY);
+    for (const day of PAYDAYS) {
+      expect(pay(day).map((e) => [e.state, e.unsettledReason, e.transactionId, e.settledCents])).toEqual([
+        ["unsettled", "matched_unattached", null, null],
+      ]);
+    }
+    expect(Object.values(october.entriesByDay).flat().some((e) => e.transactionId === offCycle)).toBe(false);
+    // none of their money is Settled: the paydays stay in Not yet known, once, as on every other surface
+    expect(october.postedNetCents).toBe(0);
+    expect([october.unsettledCount, october.unsettledGrossCents]).toEqual([4, 4 * 114_192]);
+
+    // ⛔ …and filed as his pay, a row is his pay's again: Oct 1's drawn paid by its own row, and Settled
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: categoryId("Salary", "Income") })
+      .where(and(eq(transactions.postedOn, "2026-10-01"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    const filed = recurringCalendar(bundle.db, "2026-10", TODAY);
+    const oct1 = filed.entriesByDay["2026-10-01"]!.filter((e) => e.seriesId === PAY);
+    expect(oct1.map((e) => [e.state, e.transactionId !== null, e.settledCents])).toEqual([["paid", true, 114_192]]);
+    expect(filed.postedNetCents).toBe(114_192);
+  });
 });
 
 /*
@@ -560,6 +597,59 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
         "to the cent",
     );
     expect(note).not.toContain("never reached a bank");
+  });
+
+  /*
+   * ⛔ A window's note names only the rows of ITS OWN read paydays (`unattachedAmong`): the reading carries the rows the
+   * one rule matched over the schedule's life. 🔴 Review of e6ad55a (MEDIUM): nothing held it — with the filter gone,
+   * his pre-filing copy's Q3 read on Oct 13, "…of which $5,709.60 was banked inside the window and $8,376.00 never
+   * reached a bank.", read "…$6,092.16 never reached a bank, and $2,283.84 is matched to the cent by rows of $1,141.92 on
+   * Oct 1 and Oct 8 that are not attached to it" of paydays running Jul 2 – Sep 24.
+   */
+  test("a window before the rows' paydays never names them: Q3, read Oct 13, keeps its 'never reached a bank'", () => {
+    const today = "2026-10-13";
+    // Sep 17's pay never banked: Q3 is short a week, a live schedule's shortfall note
+    bundle.db
+      .delete(transactions)
+      .where(and(eq(transactions.postedOn, "2026-09-17"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    importUnattached(PAYDAYS.slice(0, 2), false);
+    const q3 = cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from: "2026-07-01", to: "2026-09-30", today, withChecked: true }),
+      formatDay: formatDayLong,
+    })
+      .map((n) => n.body)
+      .join(" ");
+    expect(q3).toContain(
+      "It America LLC (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
+        "inside the window and $1,141.92 never reached a bank.",
+    );
+    expect(q3).not.toContain(MATCHED);
+    // …while October's own note names them
+    expect(notes(today).join(" ")).toContain(`${MATCHED} by rows of $1,141.92 on Oct 1 and Oct 8 that are not attached`);
+  });
+
+  /*
+   * ⛔ …and the note for a STALE schedule by the same rule, over the paydays its lead counts (`unattachedAmong` over
+   * `firstPeriodOn` – `lastPeriodOn`). 🔴 Its filter was its own and held by nothing either (found beside the review of
+   * e6ad55a): gone, September read Oct 29 said "only $3,425.76 reached an account attached to it; $4,567.68 is matched to
+   * the cent by rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22" of a span that ends Sep 24.
+   */
+  test("…and a stale schedule's note the same: September, read Oct 29, names none of October's rows", () => {
+    bundle.db
+      .delete(transactions)
+      .where(and(eq(transactions.postedOn, "2026-09-17"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    importUnattached(PAYDAYS, false);
+    const september = cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from: "2026-09-01", to: "2026-09-30", today: TODAY, withChecked: true }),
+      formatDay: formatDayLong,
+    })
+      .map((n) => n.body)
+      .join(" ");
+    expect(september).toContain("It America LLC (weekly pay) implies $4,567.68 of earnings over Sep 3 – 24, 2026 and only");
+    expect(september).not.toContain(MATCHED);
+    expect(september).not.toContain("rows named above");
   });
 });
 
@@ -667,6 +757,70 @@ describe("two bills of one amount due one day, one row: it answers one of them, 
         .sort(),
     ).toEqual([x, y].sort());
     for (const id of [A, B]) expect(pageOf(id)).toBe(`Already due, and ${ROW_OF_OCT_10}`);
+  });
+});
+
+/*
+ * ⛔ The calendar asks the one rule of exactly the days every other surface asks it of (`asksForUnattachedMatch`): a due
+ * day read with its grace, a payday checked through its days to land — so a row is never spent on a day no other
+ * surface would match it to. 🔴 Review of e6ad55a (MEDIUM): nothing held it. Two −$15.99 subscriptions on one card read
+ * through Oct 12, A due Oct 8 (read with its 3 days), B due Oct 11 (not read), and one −$15.99 row of Oct 10 unattached:
+ * with the filter gone, B's unread day took the nearer row and A's Oct 8 drew a red ✕ "missed", while the runway named
+ * the row under A.
+ */
+describe("the calendar asks the one rule of the runway's days: an unread due day never takes a read day's row", () => {
+  const CARD2 = "acct-card2";
+  const A = "series-sub-a";
+  const B = "series-sub-b";
+  beforeEach(() => {
+    addAccount(CARD2);
+    // read through Oct 12: A's Oct 8 is read with its 3 days (through Oct 11), B's Oct 11 is not (through Oct 14)
+    checkedThrough(bundle.db, CARD2, "2026-10-12", "2026-08-01");
+    bundle.db
+      .insert(recurringSeries)
+      .values(
+        ([
+          [A, 8],
+          [B, 11],
+        ] as const).map(([id, day]) => ({
+          id,
+          name: id === A ? "Subscription A" : "Subscription B",
+          kind: "subscription" as const,
+          cadence: "monthly" as const,
+          intervalDaysAvg: 30,
+          accountId: CARD2,
+          amountCentsAvg: -1_599,
+          toleranceDays: 3,
+          nextExpectedOn: `2026-10-${String(day).padStart(2, "0")}`,
+          nextExpectedAmountCents: -1_599,
+          userAmountCents: -1_599,
+          anchorDay: day,
+          lastMatchedOn: `2026-09-${String(day).padStart(2, "0")}`,
+          status: "confirmed" as const,
+          createdAt: now(),
+          updatedAt: now(),
+        })),
+      )
+      .run();
+    // three charges each: a schedule the calendar grades (`scheduleIsProven`)
+    for (const [id, day] of [
+      [A, "08"],
+      [B, "11"],
+    ] as const) {
+      for (const month of ["07", "08", "09"]) row(`2026-${month}-${day}`, -1_599, { accountId: CARD2, seriesId: id });
+    }
+    row("2026-10-12", -450, { accountId: CARD2 }); // the card's rows reach its checked day
+  });
+
+  test("the row is A's on the runway and on the calendar; B's Oct 11 waits for a statement, its own words", () => {
+    const only = row("2026-10-10", -1_599, { accountId: CARD2 });
+    expect(committedBook(bundle.db, TODAY).overdueUnattached.map((m) => m.row.id)).toEqual([only]);
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    const markOn = (day: string, seriesId: string) =>
+      october.entriesByDay[day]!.find((e) => e.seriesId === seriesId && e.transactionId === null)!;
+    expect(markOn("2026-10-08", A)).toMatchObject({ state: "unsettled", unsettledReason: "matched_unattached" });
+    expect(markOn("2026-10-08", A).unattached?.row.id).toBe(only);
+    expect(markOn("2026-10-11", B)).toMatchObject({ state: "unsettled", unsettledReason: "not_imported", unattached: null });
   });
 });
 

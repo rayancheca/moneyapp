@@ -711,14 +711,10 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * "none of it reached an account". 🔴 His ledger copy 2026-10-29 (before his filing): October read "implies
        * $4,567.68 of earnings over Oct 1 – 22, 2026 and none of it reached an account" beside four +$1,141.92 payroll
        * rows on Wells Fargo, unattached.
+       * ⛔ Of the paydays its lead counts, by the shortfall note's one filter (`unattachedAmong`). 🔴 Its own inline copy
+       * was held by no test (beside the review of e6ad55a): gone, September read Oct 29 named October's four rows.
        */
-      const matched = (r.unattachedPaydays ?? []).filter(
-        (m) =>
-          r.firstPeriodOn !== null &&
-          r.lastPeriodOn !== null &&
-          compareDates(m.date, r.firstPeriodOn) >= 0 &&
-          compareDates(m.date, r.lastPeriodOn) <= 0,
-      );
+      const matched = unattachedAmong(r.unattachedPaydays ?? [], r.firstPeriodOn, r.lastPeriodOn);
       // ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`)
       const attached = matched.length === 0 ? "" : ` ${countedDepositWords(matched, "it")}`;
       const matchedPart =
@@ -1010,7 +1006,10 @@ function noneBankedSplit(never: NeverSplit, rest: readonly string[], payday: (is
   return `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 }
 
-/** Of the rows the one rule matched over a schedule's life, those for paydays inside `[from, to]` — a window's read ones. */
+/**
+ * Of the rows the one rule matched over a schedule's life, those for paydays inside `[from, to]` — a window's read ones
+ * (the shortfall note), or the ones its lead counts (the note for a stale schedule). Neither names another window's row.
+ */
 function unattachedAmong(
   matches: readonly UnattachedMatch[],
   from: string | null,

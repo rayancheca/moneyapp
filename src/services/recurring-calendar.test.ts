@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
 import { dailyBalances } from "@/db/schema/balances";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { merchants } from "@/db/schema/merchants";
 import { recurringSeries } from "@/db/schema/recurring";
@@ -85,6 +86,29 @@ function buildMonthlyNetflix(juneAmountCents = -1549): void {
 
 function netflix() {
   return bundle.db.select().from(recurringSeries).where(eq(recurringSeries.merchantId, netflixId)).get()!;
+}
+
+/**
+ * The cash job's rows filed as his pay, Income › Salary — as every row linked to his pay is. ⛔ A credit linked to a
+ * pay series and filed nowhere is no pay of it (`PaydayReading.notFiledAsIncome`): the calendar draws none of it, and
+ * the payday it matches to the cent names it (review of e6ad55a).
+ */
+function fileCashJobAsSalary(): void {
+  const income = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Income"), isNull(categories.parentId)))
+    .get()!;
+  const salary = bundle.db
+    .select()
+    .from(categories)
+    .where(and(eq(categories.name, "Salary"), eq(categories.parentId, income.id)))
+    .get()!;
+  bundle.db
+    .update(transactions)
+    .set({ categoryId: salary.id })
+    .where(eq(transactions.rawDescription, "CASH JOB WEEKLY PAY"))
+    .run();
 }
 
 beforeEach(() => {
@@ -635,6 +659,7 @@ describe("recurringCalendar", () => {
       .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
       .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
       .run();
+    fileCashJobAsSalary();
     cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const future = recurringCalendar(bundle.db, "2026-07", TODAY);
@@ -693,6 +718,7 @@ describe("recurringCalendar", () => {
         status: "confirmed",
       })
       .run();
+    fileCashJobAsSalary();
     cardCheckedThrough("2026-01-01", "2026-07-07");
 
     const july = recurringCalendar(bundle.db, "2026-07", TODAY);

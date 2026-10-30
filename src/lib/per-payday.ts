@@ -112,6 +112,14 @@ export interface PaydayReading {
    * stand graded against a week it never paid.
    */
   towardNoPayday: boolean;
+  /**
+   * ⛔ Money IN linked to the pay that its settlement never read (`ReadableRow.offPayDay`): no deposit of his pay on any
+   * surface — not his Income (`hisIncomeRows`), not banked on Earned vs banked, not in /budgets' "in so far" — and to
+   * the one rule a row it may only NAME, "attached to it but not filed as income" (`UnattachedRow.notFiledAsIncome`),
+   * never one that paid. So the calendar draws it as no pay of the series (`recurringCalendar`). Absent on every other
+   * row — its money paid a payday, went toward none on a pay day settlement read, or went back out.
+   */
+  notFiledAsIncome?: true;
 }
 
 /**
@@ -133,8 +141,9 @@ export interface ReadableRow {
    * Linked to the pay but no row of its pay days (`payDayRows`, services/analytics; flagged by `asPayRows`): his
    * SPENDING — an unfiled debit, or a row filed under a spending category (orchestrator's default 2026-10-14, his call
    * open) — or money on a day no row of it is filed as his pay, a credit left unfiled or filed as a transfer. ⚖️
-   * Settlement never reads it, so no reading nets it into its day's money or takes it for a deposit: it is drawn as
-   * the money it is, held to no week, and a credit of it paid no payday. Absent, the row is its pay day's.
+   * Settlement never reads it, so no reading nets it into its day's money or takes it for a deposit: it is held to no
+   * week, a debit of it is the money out it is, and a credit of it paid no payday and is no pay of the series at all
+   * (`PaydayReading.notFiledAsIncome`). Absent, the row is its pay day's.
    */
   offPayDay?: boolean;
 }
@@ -237,7 +246,7 @@ function firstPaydayByDeposit(portions: readonly SettlementPortion[]): ReadonlyM
  * deposits' figure, and is itself still drawn as the money out it is — held to no week (`expectedCents`). ⛔ Only its
  * pay days' rows (`onPayDay`): a row linked to the pay off them — his spending, or money on a day no row of it is filed
  * as his pay — is in no day's money, as settlement never read it: a debit of it is drawn as money out, a credit as
- * money toward no payday, each held to no week.
+ * money toward no payday that is no pay of it (`notFiledAsIncome`), each held to no week.
  */
 export function paydayReadings(
   rows: readonly ReadableRow[],
@@ -267,6 +276,8 @@ export function paydayReadings(
           ratePeriod: ratePeriodOf(schedule, r.postedOn),
           // money in off its pay days paid no payday — settlement never read it
           towardNoPayday: r.amountCents > 0,
+          // …and is no pay of the series at all: the one rule's to name (`notFiledAsIncome`)
+          ...(r.amountCents > 0 && !onPayDay(r) ? { notFiledAsIncome: true as const } : {}),
         },
       ]),
   );
