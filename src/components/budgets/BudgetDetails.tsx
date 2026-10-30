@@ -11,7 +11,12 @@ import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
 import { formatCents, parseAmountToCents } from "@/lib/money";
-import { ROLLOVER_BANKS, rolloverHeldBackSentence, rolloverWaitsSentence } from "@/lib/rollover-held-back";
+import {
+  ROLLOVER_BANKS,
+  rolloverBillMayLapseSentence,
+  rolloverHeldBackSentence,
+  rolloverWaitsSentence,
+} from "@/lib/rollover-held-back";
 import type { BudgetPaceStatus } from "@/services/budgets";
 import { PERIOD_WORD } from "./BudgetAmountEditor";
 
@@ -49,6 +54,8 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
   const [period, setPeriod] = useState<BudgetPeriodKind>(budget.period);
   // named in the budget's own period, the one its carry walked — not a period picked here and not yet saved
   const heldBack = rolloverHeldBackSentence(status.rolloverHeldBack, budget.period, status.bounds.start);
+  // ⚖️ …and the periods read whole whose bill may still lapse, in the row's line's words (2026-10-30)
+  const billMayLapse = rolloverBillMayLapseSentence(status.rolloverBillMayLapse, budget.period, status.bounds.start);
   // whose day the carry waited on, as it asked it; null only while a toggle just switched on waits for its reload
   const waits = status.rolloverReadOn && rolloverWaitsSentence(status.rolloverReadOn, status.bounds.start);
 
@@ -151,12 +158,14 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
               }}
             />
           </div>
-          {/* ⚖️ decision 67: what the carry is waiting on is named beside the figure it explains, and
-              the rule that holds it back — said of whose day it asked — is the one that makes the last
-              sentence true */}
+          {/* ⚖️ decision 67: what the carry is waiting on is named beside the figure it explains — a
+              period held back, and ⚖️ one read whole whose bill may have stopped (2026-10-30; 🔴 only the
+              row's line named that one, review of 753bad2d L62) — and the rule that holds it back, said of
+              whose day it asked, is the one that makes the last sentence true */}
           <p className="text-ink-faint">
             Banked <Money cents={status.rolloverCents} /> from closed periods.
-            {heldBack && ` ${heldBack}`} {ROLLOVER_BANKS}
+            {heldBack && ` ${heldBack}`}
+            {billMayLapse && ` ${billMayLapse}`} {ROLLOVER_BANKS}
             {waits && ` ${waits}`}
           </p>
         </div>

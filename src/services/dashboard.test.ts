@@ -362,8 +362,9 @@ describe("dashboardData: spending pace", () => {
   /*
    * 🔴 THE TILE ASSERTED "$0.00 spent" OVER DAYS NOTHING HAD BEEN IMPORTED FOR.
    *
-   * /budgets already refuses to grade those days — "Their spend and percentages
-   * are lower bounds, not measurements, so no verdict is shown for them" — and
+   * /budgets already refuses to grade those days — "…show no verdict because they
+   * are grading days the ledger has not reached … Their spend and percentages
+   * are lower bounds, not measurements" — and
    * the income card says the same thing in words: "An empty month is what an
    * unimported month looks like as well as what an unpaid one looks like." The
    * dashboard's spending tile was the surface that did not ask.

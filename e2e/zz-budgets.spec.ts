@@ -329,7 +329,10 @@ test("the page states what it noticed across rows, measured and without a verdic
   // the cross-row facts no single row can state: the fixture has one overdue
   // bill (Meal Kit, $125.00) and every budget grading an under-covered window
   await expect(notes.getByText(/One bill totalling \$125\.00/)).toBeVisible();
-  await expect(notes.getByText(/budgets are grading days the ledger has not reached/)).toBeVisible();
+  // ⚖️ counted by what they lack, and why (2026-10-30) — Housing, over its plan, grades such days too
+  await expect(
+    notes.getByText(/budgets show no verdict because they are grading days the ledger has not reached/),
+  ).toBeVisible();
   // the widest gap is counted from each category's accounts: 4 days, where Food
   // and Subscriptions are both imported through Jul 4 — not Utilities' 8, which
   // its newest row (Jun 12) used to report. ⚠️ The NAME is not asserted: Food and

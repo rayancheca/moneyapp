@@ -13,7 +13,13 @@ import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { arrearsAlarms, arrearsTail, HAS_NOT_POSTED, NOT_POSTED } from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
-import { budgetCoverageLine, budgetVerdict, type BudgetVerdict } from "@/lib/budget-verdict";
+import {
+  budgetCoverageLine,
+  budgetVerdict,
+  floorFigure,
+  percentOfBudget,
+  type BudgetVerdict,
+} from "@/lib/budget-verdict";
 import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { BudgetGuide } from "@/services/budget-guide";
@@ -43,9 +49,9 @@ function printedProjectionCents(status: BudgetPaceStatus, verdict: BudgetVerdict
   return verdict.showsProjection && saysMore ? status.projectedCents : null;
 }
 
-/** ⚖️ "at least $343.82" where the figure is a floor (`BudgetVerdict.floors`) — the dashboard tile's mark for one */
+/** ⚖️ "at least $343.82" where the figure is a floor (`BudgetVerdict.floors`) — the dialog's mark (`floorFigure`) */
 function spokenFigure(cents: number, floors: boolean): string {
-  return `${floors ? "at least " : ""}${formatCents(cents)}`;
+  return floorFigure(formatCents(cents), floors);
 }
 
 function paceSentence(status: BudgetPaceStatus, projectedCents: number | null, verdict: BudgetVerdict): string {
@@ -95,7 +101,8 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
   // prop until router.refresh() landed and show the wrong half of its copy.
   const [rolloverEnabled, setRolloverEnabled] = useState(budget.rolloverEnabled);
   const tone = PACE_TONE[status.pace];
-  const pctDisplay = Math.round(status.pct * 100);
+  // ⛔ the headline's rounding (`percentOfBudget`): "Over budget by 8%" beside "(108% of budget)", never 7%
+  const pctDisplay = percentOfBudget(status.pct);
 
   // The headline, what it means, and whether the bar is still to scale — all
   // from one branch, so the words and the definition beside them cannot drift.
@@ -423,6 +430,8 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
                   budgetPhrase: `${formatCents(budget.amountCents)} / ${PERIOD_WORD[budget.period]}`,
                   // ⚖️ §6A 64: the row's dash, not a "$0.00" the row refuses to print
                   spentCents: unread ? null : status.spentCents,
+                  // ⚖️ …and a floor said as one, as the bar speaks it (2026-10-30, `floorFigure`)
+                  spentIsAFloor: verdict.floors,
                   overdueCents: status.overdueCents,
                   overdueUnreadCents: status.overdueUnreadCents,
                   overdueInGraceCents: status.overdueInGraceCents,

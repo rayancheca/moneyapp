@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   lineMayRise,
   lineRiseCause,
+  rolloverBillMayLapseSentence,
   rolloverHeldBackSentence,
   rolloverMayRiseClause,
   rolloverToggleTitle,
@@ -99,7 +100,7 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
   const SEPTEMBER = { start: "2026-09-01", end: "2026-09-30" };
   const row = (over: Partial<RolloverRiseInput> = {}): RolloverRiseInput => ({
     rolloverMayAddCents: 1_500,
-    rolloverHeldBack: [SEPTEMBER],
+    rolloverHeldBackUnderPlan: [SEPTEMBER],
     rolloverBillMayLapse: [],
     budget: { period: "monthly" },
     bounds: { start: "2026-10-01" },
@@ -110,9 +111,9 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
     expect(lineMayRise(row({ rolloverMayAddCents: 0 }))).toBe(false);
     expect(rolloverMayRiseClause(row({ rolloverMayAddCents: 0 }))).toBeNull();
     // ⛔ held back and already past its plan is a period that adds nothing: Entertainment's September, $475.03 of $15.00
-    expect(rolloverMayRiseClause(row({ rolloverMayAddCents: 0, rolloverHeldBack: [SEPTEMBER] }))).toBeNull();
+    expect(rolloverMayRiseClause(row({ rolloverMayAddCents: 0, rolloverHeldBackUnderPlan: [SEPTEMBER] }))).toBeNull();
     // …and a figure with no period named to wait on has nothing to name (the carry never hands one in)
-    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [] }))).toBeNull();
+    expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: [] }))).toBeNull();
   });
 
   test("his Fees' September, by its name", () => {
@@ -122,14 +123,17 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
 
   test("two named both, more counted between the first and the last, a week by its first day", () => {
     const august = { start: "2026-08-01", end: "2026-08-31" };
-    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [august, SEPTEMBER] }))).toBe(
+    expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: [august, SEPTEMBER] }))).toBe(
       "more can still roll over from August 2026 and September 2026 once they are fully imported",
     );
     const held = ["07", "08", "09"].map((m) => ({ start: `2026-${m}-01`, end: `2026-${m}-28` }));
-    expect(rolloverMayRiseClause(row({ rolloverHeldBack: held }))).toBe(
+    expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: held }))).toBe(
       "more can still roll over from 3 months, July 2026 to September 2026, once they are fully imported",
     );
-    const week = { rolloverHeldBack: [{ start: "2026-09-28", end: "2026-10-04" }], bounds: { start: "2026-10-05" } };
+    const week = {
+      rolloverHeldBackUnderPlan: [{ start: "2026-09-28", end: "2026-10-04" }],
+      bounds: { start: "2026-10-05" },
+    };
     expect(rolloverMayRiseClause(row({ ...week, budget: { period: "weekly" } }))).toBe(
       "more can still roll over from the week of Sep 28 once it is fully imported",
     );
@@ -143,16 +147,17 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
    */
   test("a period read whole whose bill may have stopped, by its name — alone, two, and beside one held back", () => {
     const august = { start: "2026-08-01", end: "2026-08-31" };
-    const bill = row({ rolloverHeldBack: [], rolloverBillMayLapse: [SEPTEMBER] });
+    const bill = row({ rolloverHeldBackUnderPlan: [], rolloverBillMayLapse: [SEPTEMBER] });
     expect([lineMayRise(bill), lineRiseCause(bill)]).toEqual([true, "bill"]);
     expect(rolloverMayRiseClause(bill)).toBe(
       "more can still roll over from September 2026 once its statements land, if a bill subtracted from it has stopped",
     );
-    expect(rolloverMayRiseClause(row({ rolloverHeldBack: [], rolloverBillMayLapse: [august, SEPTEMBER] }))).toBe(
+    const two = row({ rolloverHeldBackUnderPlan: [], rolloverBillMayLapse: [august, SEPTEMBER] });
+    expect(rolloverMayRiseClause(two)).toBe(
       "more can still roll over from August 2026 and September 2026 once their statements land, if a bill " +
         "subtracted from them has stopped",
     );
-    const both = row({ rolloverHeldBack: [august], rolloverBillMayLapse: [SEPTEMBER] });
+    const both = row({ rolloverHeldBackUnderPlan: [august], rolloverBillMayLapse: [SEPTEMBER] });
     expect(lineRiseCause(both)).toBe("both");
     expect(rolloverMayRiseClause(both)).toBe(
       "more can still roll over from August 2026 once it is fully imported, and from September 2026 once its " +
@@ -162,6 +167,23 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
     const still = row({ rolloverMayAddCents: 0, rolloverBillMayLapse: [SEPTEMBER] });
     expect([lineRiseCause(still), rolloverMayRiseClause(still)]).toEqual([null, null]);
     expect(lineRiseCause(row())).toBe("held-back");
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-10-30): the panel names this wait too, beside what it banked — in the clause's
+   * words, by one phrasing. 🔴 Only the row's line named it (review of 753bad2d, L62).
+   */
+  test("the panel says the same wait in the same words — none, one, and several", () => {
+    expect(rolloverBillMayLapseSentence([], "monthly", REF)).toBeNull();
+    expect(rolloverBillMayLapseSentence([SEPTEMBER], "monthly", REF)).toBe(
+      "More can still roll over from September 2026 once its statements land, if a bill subtracted from it has " +
+        "stopped.",
+    );
+    const august = { start: "2026-08-01", end: "2026-08-31" };
+    for (const bill of [[SEPTEMBER], [august, SEPTEMBER]]) {
+      const clause = rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: [], rolloverBillMayLapse: bill }))!;
+      expect(rolloverBillMayLapseSentence(bill, "monthly", REF)).toBe(`M${clause.slice(1)}.`);
+    }
   });
 });
 

@@ -14,6 +14,7 @@ describe("budgetDeactivateLines", () => {
   const HOUSING = {
     budgetPhrase: "$2,291.21 / month",
     spentCents: 0,
+    spentIsAFloor: false,
     overdueCents: 229_121,
     // his ledger 2026-10-08: rent and its utilities, both Oct 1, on days no checked statement has reached
     overdueUnreadCents: 229_121,
@@ -41,6 +42,26 @@ describe("budgetDeactivateLines", () => {
     expect(budgetDeactivateLines(HOUSING, formatCents)[1]).toEqual({ label: "Spent so far this period", value: "$0.00" });
   });
 
+  /*
+   * ⚖️ default built, not asked (2026-10-30): a spend that is a floor reads as one — "at least $343.82", as the bar
+   * behind the dialog speaks it (`floorFigure`). 🔴 It printed the bare figure: on his ledger copy 2026-10-30 Shopping's
+   * read "Spent so far this period $343.82" over an October read through Aug 12, beside a bar speaking "at least
+   * $343.82" and a line saying 30 days of the period are unaccounted (review of ca938320, L21).
+   */
+  test("a spend that is a floor is printed as one, as the bar speaks it", () => {
+    const shopping = { ...HOUSING, budgetPhrase: "$280.00 / month", spentCents: 34_382, overdueCents: 0 };
+    const lines = budgetDeactivateLines({ ...shopping, spentIsAFloor: true }, formatCents);
+    expect(lines[1]).toEqual({ label: "Spent so far this period", value: "at least $343.82" });
+    expect(blastRadiusSentence({ headline: "Shopping stops being budgeted.", lines })).toContain(
+      "Spent so far this period: at least $343.82.",
+    );
+    // a measured spend keeps its bare figure, and a dash stays a dash
+    const measured = budgetDeactivateLines({ ...shopping, spentIsAFloor: false }, formatCents);
+    expect(measured[1]).toEqual({ label: "Spent so far this period", value: "$343.82" });
+    const dash = budgetDeactivateLines({ ...shopping, spentCents: null, spentIsAFloor: true }, formatCents);
+    expect(dash[1]).toEqual({ label: "Spent so far this period", value: "—" });
+  });
+
   test("names the arrears the row behind it reports", () => {
     const lines = budgetDeactivateLines(HOUSING, formatCents);
     expect(lines.map((l) => l.label)).toEqual([
@@ -64,6 +85,7 @@ describe("budgetDeactivateLines", () => {
       {
         budgetPhrase: "$1,056.53 / month",
         spentCents: 0,
+        spentIsAFloor: false,
         overdueCents: 36_149 + 69_504,
         overdueUnreadCents: 36_149 + 69_504,
         overdueInGraceCents: 0,
@@ -83,6 +105,7 @@ describe("budgetDeactivateLines", () => {
       {
         budgetPhrase: "$15.00 / month",
         spentCents: 0,
+        spentIsAFloor: false,
         overdueCents: 499,
         overdueUnreadCents: 499,
         overdueInGraceCents: 0,
@@ -103,6 +126,7 @@ describe("budgetDeactivateLines", () => {
       {
         budgetPhrase: "$130.00 / month",
         spentCents: 4_200,
+        spentIsAFloor: false,
         overdueCents: 0,
         overdueUnreadCents: 0,
         overdueInGraceCents: 0,

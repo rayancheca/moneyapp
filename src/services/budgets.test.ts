@@ -13,7 +13,7 @@ import { budgetCoverageSentence } from "@/lib/budget-coverage";
 import { budgetCoverageLine, budgetVerdict } from "@/lib/budget-verdict";
 import { BUDGET_JARGON } from "@/lib/jargon";
 import { budgetSectionNotes } from "@/lib/section-notes";
-import { rolloverWaitsSentence } from "@/lib/rollover-held-back";
+import { rolloverMayRiseClause, rolloverWaitsSentence } from "@/lib/rollover-held-back";
 import type { PeriodBounds } from "@/lib/dates";
 import { dedupeHash } from "@/lib/hash";
 import { levelledMonthlyCents } from "@/lib/income-basis";
@@ -2803,6 +2803,7 @@ describe("rollover", () => {
     expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
       cents: 160_00,
       heldBack: [],
+      heldBackUnderPlan: [],
       billMayLapse: [],
       mayAddCents: 0,
       readOn: { whose: "category", ancestor: null },
@@ -3072,8 +3073,9 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
     expect(carryInto(bundle.db, budget, "2026-06-15", "2026-06-15")).toEqual({
       cents: 460_00,
       heldBack: [{ start: "2026-06-08", end: "2026-06-14" }],
-      billMayLapse: [],
       // …and the week of Jun 8, $0.00 of its $500.00 found so far, can still bank all of it once it is read
+      heldBackUnderPlan: [{ start: "2026-06-08", end: "2026-06-14" }],
+      billMayLapse: [],
       mayAddCents: 500_00,
       readOn: { whose: "category", ancestor: null },
     });
@@ -3093,6 +3095,13 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
       const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
       if (!s) throw new Error(`no ${categoryPath} budget status`);
       return s.rolloverMayAddCents;
+    }
+
+    /** what the row's line says more can still roll over from (`rolloverMayRiseClause`) — null where it cannot rise */
+    function riseClause(categoryPath: string, refDate: string): string | null {
+      const s = budgetStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
+      if (!s) throw new Error(`no ${categoryPath} budget status`);
+      return rolloverMayRiseClause(s);
     }
 
     /** the row /budgets prints: its verdict, and whether it says its line can still rise (`lineMayRise`) */
@@ -3210,12 +3219,36 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
       // July, read alone, banks its $500.00 — and August passes it on until its own statement lands
       expect(mayAdd("Food", SEP_11)).toBe(500_00);
       expect(verdictOf("Food", SEP_11)).toMatchObject({ headline: "Over budget by 20%", lineMayRise: true });
+      /*
+       * ⛔ …and the row names July alone as what more can roll over from: August, past its plan on what is found,
+       * adds nothing whatever its statement shows. 🔴 It named every period held back — "…from July 2026 and August
+       * 2026 once they are fully imported" (review of ca938320, L24); on his ledger copy at 2026-11-10 Food's read
+       * "…from September 2026 and October 2026" over a September already $915.91 past its $560.00.
+       */
+      expect(riseClause("Food", SEP_11)).toBe("more can still roll over from July 2026 once it is fully imported");
 
       spend("2026-07-31", -1, "Shopping"); // July's statement lands, no Food in it: the line rises to $1,000.00
       expect(carried("Food", SEP_11)).toEqual({ cents: 500_00, availableCents: 1_000_00, heldBack: [AUGUST] });
       expect(mayAdd("Food", SEP_11)).toBe(0); // …and August, past its plan, can only take it back
       spend("2026-08-31", -1, "Shopping");
       expect(carried("Food", SEP_11)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [] });
+    });
+
+    // ⛔ …and a period held back at its plan exactly leaves nothing to roll over either — the edge of "under its plan"
+    test("a period held back that has spent its plan exactly is not named as one more can roll over from", () => {
+      const fresh = card("Fresh");
+      const SEP_11 = "2026-09-11";
+      ledgerOpensJan2();
+      rollingBudget("Food", "2026-07-01");
+      spend("2026-06-15", -10_00, "Food"); // Food is spent from the card…
+      spend("2026-06-30", -1, "Shopping"); // …which is read through Jun 30: July and August held back
+      spend("2026-07-05", -500_00, "Food", fresh); // July: its $500.00 plan, to the cent
+      spend("2026-09-02", -600_00, "Food", fresh); // August: nothing found; September $600.00 of a $500.00 line
+      spend(SEP_11, -1, "Shopping", fresh);
+
+      expect(carried("Food", SEP_11).heldBack).toEqual([JULY, AUGUST]);
+      expect(mayAdd("Food", SEP_11)).toBe(500_00);
+      expect(riseClause("Food", SEP_11)).toBe("more can still roll over from August 2026 once it is fully imported");
     });
 
     /*
@@ -3745,10 +3778,11 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
           headline: "Over budget by 10%",
           explanation: BUDGET_JARGON.paceOverHeldBackAndBill,
         });
+        // ⛔ …October alone of the two held back: September, $100.00 past its plan, adds nothing (ca938320, L24)
         expect(lineOf("Food", NOV_15)).toBe(
           "spending imported through Sep 20 · 15 days of this period unaccounted · more can still roll over from " +
-            "September 2026 and October 2026 once they are fully imported, and from August 2026 once its statements " +
-            "land, if a bill subtracted from it has stopped",
+            "October 2026 once it is fully imported, and from August 2026 once its statements land, if a bill " +
+            "subtracted from it has stopped",
         );
 
         checkedThrough(bundle.db, cardId, "2026-08-31", "2026-08-01"); // August's statement: no kit, no row added
@@ -3768,6 +3802,34 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
        * over "…more can still roll over from September 2026 once it is fully imported" — and August's statement alone
        * lifted the line $350.00.
        */
+      /*
+       * ⛔ …and beside it a period held back that is past its plan adds nothing, so the bill is all that can lift the
+       * line: its definition and its line say the bill alone. 🔴 Both named the September too — "a closed period is not
+       * fully imported yet, and a bill subtracted from another may have stopped" and "…more can still roll over from
+       * September 2026 once it is fully imported, and from August 2026 …" over a September $100.00 past its plan
+       * (review of ca938320, L24).
+       */
+      test("…and beside a period held back past its plan, the bill alone is what can lift the line", () => {
+        kitOnACardCheckedShort({
+          paid: ["2026-04-25", "2026-05-25"],
+          next: "2026-06-25",
+          checkedOn: "2026-07-31",
+          septemberCents: 600_00,
+        });
+        rollingBudget("Food", "2026-08-01"); // August: $0.00 found and the kit owed, $50.00 banked
+
+        expect(carried("Food", OCT_15)).toEqual({ cents: 50_00, availableCents: 550_00, heldBack: [SEPTEMBER] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([450_00, [AUGUST]]);
+        expect(verdictOf("Food", OCT_15)).toMatchObject({
+          headline: "Over budget by 27%",
+          explanation: BUDGET_JARGON.paceOverBillMayStop,
+        });
+        expect(lineOf("Food", OCT_15)).toBe(
+          "spending imported through Sep 20 · 15 days of this period unaccounted · more can still roll over from " +
+            "August 2026 once its statements land, if a bill subtracted from it has stopped",
+        );
+      });
+
       test("…and under a cap, where a period held back can reach the cap whatever the bill does", () => {
         kitOnACardCheckedShort({
           paid: ["2026-04-25", "2026-05-25"],

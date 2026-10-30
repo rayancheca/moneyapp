@@ -79,10 +79,12 @@ export interface BudgetVerdict {
   floors: boolean;
   /**
    * The line the row is graded against can still RISE (`lib/rollover-held-back::lineMayRise`): a closed period it rolls
-   * over from is held back and can still bank. A fact about the carry, not a reading. ⚖️ Where it is true (default
-   * built, not asked, 2026-10-29) nothing past the line is a floor and no definition says a later import cannot undo a
-   * reading: an over row's is `paceOverLineMayRise`, a withheld row read in part's `paceWithheldLineMayRise`, and the
-   * row's line says what can still roll over (`budgetCoverageLine`).
+   * over from can still bank more — one held back and still under its plan, or one read whole that subtracted a bill
+   * that may have stopped, or both (`lineRiseCause`). A fact about the carry, not a reading. ⚖️ Where it is true
+   * (default built, not asked, 2026-10-29) nothing past the line is a floor and no definition says a later import
+   * cannot undo a reading: an over row's says what can still lift it (`OVER_LINE_MAY_RISE`, by its cause), a withheld
+   * row read in part's too (`WITHHELD_LINE_MAY_RISE`), and the row's line says what can still roll over
+   * (`budgetCoverageLine`). 🔴 This named one cause, held back, and one definition of each (review of 753bad2d, L63).
    */
   lineMayRise: boolean;
 }
@@ -112,7 +114,7 @@ const WITHHELD_LINE_MAY_RISE: Record<LineRiseCause, string> = {
 
 export interface BudgetVerdictInput
   extends Pick<BudgetCoverageInput, "spentFromAccounts" | "spentFromWallets">,
-    Pick<RolloverRiseInput, "rolloverMayAddCents" | "rolloverHeldBack" | "rolloverBillMayLapse"> {
+    Pick<RolloverRiseInput, "rolloverMayAddCents" | "rolloverHeldBackUnderPlan" | "rolloverBillMayLapse"> {
   pace: BudgetPaceKind;
   /** spent ÷ available, UNCLAMPED — 1.08 is eight percent past the line */
   pct: number;
@@ -122,6 +124,32 @@ export interface BudgetVerdictInput
   noDayRead: boolean;
   /** the rows found in this window (`BudgetStatus.txnCount`) */
   txnCount: number;
+}
+
+/**
+ * "at least $343.82" where a row's figure is a floor (`BudgetVerdict.floors`) — the dashboard tile's mark for one.
+ *
+ * ⛔ One mark for every reader of a row's figure printed apart from the line that says which days it stands on: the
+ * bar's spoken sentence (`BudgetRow`) and ⚖️ the Deactivate confirmation (`budgetDeactivateLines`; default built, not
+ * asked, 2026-10-30). 🔴 The confirmation printed the bare figure — Shopping's "Spent so far this period $343.82" over
+ * an October read through Aug 12 on his ledger copy 2026-10-30, beside a bar speaking "at least $343.82" (review of
+ * ca938320, L21).
+ */
+export function floorFigure(figure: string, floors: boolean): string {
+  return floors ? `at least ${figure}` : figure;
+}
+
+/**
+ * "108" — spent ÷ available as a whole percent of the line, rounded once: the bar's spoken "(108% of budget)"
+ * (`BudgetRow`), a graded headline's "39% used", and the over headline's "by 8%", which is this less the line.
+ *
+ * 🔴 The over headline rounded (pct − 1) × 100 and the bar pct × 100 — two floats, rounded apart: on the e2e fixture
+ * Housing's $2,150.00 of $2,000.00 read "Over budget by 7%" (7.4999…) beside a spoken "(108% of budget)" (review of
+ * ca938320, L23), wherever spent ÷ available lands on a half percent. None of his 6 over rows did on his ledger copy
+ * 2026-10-30 (155, 178, 3, 23, 1284 and 106 beside 255, 278, 103, 123, 1384 and 206).
+ */
+export function percentOfBudget(pct: number): number {
+  return Math.round(pct * 100);
 }
 
 export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
@@ -134,10 +162,10 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
     // The headline % must say WHAT it measures: 108% of a budget is "over BY
     // 8%", never "over budget · 108%", which reads as 108% over. Under one
     // percent is "<1" rather than a rounded "0", which would claim the line was
-    // met exactly.
-    const overPct = (pct - 1) * 100;
+    // met exactly. ⛔ The bar's percentage less the line (`percentOfBudget`).
+    const overPct = percentOfBudget(pct) - 100;
     return {
-      headline: `Over budget by ${overPct < 1 ? "<1" : Math.round(overPct)}%`,
+      headline: `Over budget by ${overPct < 1 ? "<1" : overPct}%`,
       /*
        * ⚖️ default built, not asked (2026-10-29): the verdict stands whatever the line can still do — his rule, an over
        * verdict is never withheld — but where the line can still rise "no later import can undo that" is false, and the
@@ -236,7 +264,7 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
   }
 
   return {
-    headline: `${LABEL[pace]} · ${Math.round(pct * 100)}% used`,
+    headline: `${LABEL[pace]} · ${percentOfBudget(pct)}% used`,
     explanation: pace === "at-risk" ? BUDGET_JARGON.paceAtRisk : BUDGET_JARGON.paceUnder,
     barIsFull: false,
     withheld: false,

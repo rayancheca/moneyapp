@@ -238,6 +238,8 @@ export interface BudgetStatus {
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
   rolloverHeldBack: readonly PeriodBounds[];
+  /** …and of them, those still under their plan on what is found (`RolloverCarry.heldBackUnderPlan`); empty when off */
+  rolloverHeldBackUnderPlan: readonly PeriodBounds[];
   /**
    * The closed periods read whole that subtracted a bill their statements may still let go, where banking it back
    * changes what can still roll over (`RolloverCarry`'s `billMayLapse`), oldest first; empty when off.
@@ -287,6 +289,19 @@ export interface RolloverCarry {
   cents: number;
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
   heldBack: readonly PeriodBounds[];
+  /**
+   * Of `heldBack`, those still under their plan on what is found in them — what more can still roll over FROM, as the
+   * row's line names it (`lib/rollover-held-back::rolloverMayRiseClause`) — oldest first. One already past its plan
+   * adds nothing whatever its statements show: a statement still to come can only add to what it holds. 🔴 Review of
+   * ca938320 (L24): every period held back was named, so on his ledger copy at 2026-11-10, nothing more imported,
+   * Food's and Transport's lines would read "…more can still roll over from September 2026 and October 2026 once they
+   * are fully imported" over Septembers $915.91 and $5.46 past their plans ($1,475.91 of $560.00, $233.41 of $227.95)
+   * — October alone now. ⚠️ Under its plan, one can still add nothing past where the carry stands — at a cap the carry
+   * reaches first, or where an older one past its plan takes back more than it banks and a later one lifts the line
+   * alone — and is named all the same; latent: no budget of his sets a cap, and his rolling budgets carry from Sep 1,
+   * 2026 (his ledger copy 2026-10-30).
+   */
+  heldBackUnderPlan: readonly PeriodBounds[];
   /**
    * The closed periods READ WHOLE that subtracted a bill their statements may still let go (`OverdueSeries`'s
    * `mayStillLapse`), where banking it back changes what can still roll over (`billsThatCanLift`) in some way the
@@ -499,7 +514,9 @@ export function carryInto(
   const mayAddCents = mayStillBank(steps, balance, budget.rolloverCapCents);
   // ⛔ …and of the periods read whole whose bill may still lapse, only those it can lift (review of 73d2cbc4)
   const billMayLapse = billsThatCanLift(steps, balance, budget.rolloverCapCents);
-  return { cents: balance, heldBack, billMayLapse, mayAddCents, readOn };
+  // ⛔ …and of the periods held back, only those still under their plan on what is found (review of ca938320, L24)
+  const heldBackUnderPlan = steps.filter((s) => s.heldIn !== null && s.term > 0).map((s) => s.period);
+  return { cents: balance, heldBack, heldBackUnderPlan, billMayLapse, mayAddCents, readOn };
 }
 
 /** A balance after a period's term: never below zero, never past the cap (`carryInto`'s first rule, and its cap). */
@@ -716,7 +733,7 @@ function billsThatCanLift(steps: readonly CarryStep[], balance: number, capCents
  * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
  */
 function nothingCarried(): RolloverCarry {
-  return { cents: 0, heldBack: [], billMayLapse: [], mayAddCents: 0, readOn: null };
+  return { cents: 0, heldBack: [], heldBackUnderPlan: [], billMayLapse: [], mayAddCents: 0, readOn: null };
 }
 
 /**
@@ -798,6 +815,7 @@ export function budgetStatuses(
         txnCount,
         rolloverCents,
         rolloverHeldBack: carry.heldBack,
+        rolloverHeldBackUnderPlan: carry.heldBackUnderPlan,
         rolloverBillMayLapse: carry.billMayLapse,
         rolloverMayAddCents: carry.mayAddCents,
         rolloverReadOn: carry.readOn,

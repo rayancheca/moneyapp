@@ -134,6 +134,49 @@ export interface BudgetNoteInput {
   }[];
 }
 
+type BudgetNoteRow = BudgetNoteInput["rows"][number];
+
+/**
+ * What a /budgets row's status carries for its note (`services/budgets::BudgetPaceStatus`), restated structurally so
+ * `lib` keeps not importing from `services`: the note's fields, and the bills behind `overdueCents` in place of their
+ * count.
+ */
+export interface BudgetNoteStatus extends Omit<BudgetNoteRow, "overdueBills"> {
+  /** each series still due — `overdueBills` counts their occurrences */
+  overdue: readonly { occurrenceCount: number }[];
+}
+
+/**
+ * One row of the /budgets note, from the row's own status — every field the note reads, built once.
+ *
+ * 🔴 The page built it inline, field by field, and no test read that build: `rolloverMayAddCents` set to 0 there left
+ * every unit and e2e test green (review of ca938320, L25), while "though more can still roll over" reads it. ⛔ The
+ * page's one build (`app/budgets/page.test.ts` gates it).
+ */
+export function budgetNoteRow(s: BudgetNoteStatus): BudgetNoteRow {
+  return {
+    categoryPath: s.categoryPath,
+    overdueCents: s.overdueCents,
+    // occurrences, not series — the same rows `overdueCents` was summed from, so the count and the money it describes
+    // cannot drift apart
+    overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
+    // …and how far the ledger has read it, so the note says "not posted" only where the row does
+    overdueUnreadCents: s.overdueUnreadCents,
+    overdueInGraceCents: s.overdueInGraceCents,
+    overdueUnattached: s.overdueUnattached,
+    uncoveredDays: s.uncoveredDays,
+    pace: s.pace,
+    // so a row spent only from cash wallets is left out on the row's own rule
+    spentFromAccounts: s.spentFromAccounts,
+    spentFromWallets: s.spentFromWallets,
+    // ⚖️ §6A 64: …and a row that prints "—" for its spend is not called a lower bound
+    noDayRead: s.noDayRead,
+    txnCount: s.txnCount,
+    // ⚖️ …nor a row whose line can still rise called over by at least what it shows (2026-10-29, `lineMayRise`)
+    rolloverMayAddCents: s.rolloverMayAddCents,
+  };
+}
+
 /**
  * What the /budgets page knows but no single row can say. Both notes are
  * cross-row summaries: each row already discloses its own overdue bill and its
@@ -261,17 +304,26 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
       : "spend and percentages are lower bounds, not measurements";
     const shown =
       unread === 0
-        ? `Their ${pcts}, so no verdict is shown for them.`
+        ? `Their ${pcts}.`
         : unread === uncovered.length
-          ? "Not one elapsed day of their periods has been imported, so neither their spend nor a verdict is shown."
-          : `No verdict is shown for any of them: ${unread} ${unread === 1 ? "has" : "have"} not had one elapsed ` +
-            `day imported, so no spend is shown there either, and the others' ${pcts}.`;
+          ? "Not one elapsed day of their periods has been imported, so no spend is shown for them either."
+          : `Of them, ${unread} ${unread === 1 ? "has" : "have"} not had one elapsed day imported, so no spend is ` +
+            `shown there either, and the others' ${pcts}.`;
     const overInPart = input.rows.filter((r) => r.pace === "over" && spendIsAFloor(r));
     notes.push({
       id: "budgets-coverage",
+      /*
+       * ⚖️ default built, not asked (2026-10-30): the count is of the rows that show no verdict, said by what they lack
+       * and why — never by the days they grade, which every over row read in part grades too. 🔴 "7 of 12 budgets are
+       * grading days the ledger has not reached" then "The 5 over their plans are grading such days too": 12 of 12,
+       * the count corrected two sentences on (review of ca938320, L19). Measured on his ledger copy 2026-10-30: "6 of
+       * 12 …" beside "The 6 over their plans …", every October read in part. ⚠️ A row spent only from cash wallets
+       * shows no verdict either ("Cash only"), for another reason, and is not counted (⚖️ 2026-09-15): "because" says
+       * so.
+       */
       body:
-        `${uncovered.length} of ${input.rows.length} budgets are grading days the ledger has not ` +
-        `reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}` +
+        `${uncovered.length} of ${input.rows.length} budgets show no verdict because they are grading days the ` +
+        `ledger has not reached — ${tied ? `${days} each` : `up to ${days} on ${worst.categoryPath}`}. ${shown}` +
         overReadInPart(overInPart.length, overInPart.filter((r) => lineMayRise(r)).length),
     });
   }
@@ -297,17 +349,31 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
  * Fees, $15.00 rolling with September held back at $0.00, and a $20.00 Oct 10 row — "The 6 over their plans are
  * grading such days too, so each is over by at least what it shows." — read $20.00 of $30.00 once Fees' accounts
  * were read through Sep 30, no spending added.
+ *
+ * ⚖️ default built, not asked (2026-10-30): …where only some of them can, each half is said of its own rows — the rest,
+ * their lines standing still, are over by at least what they show. 🔴 One rising row took that from all `n`: "…so each
+ * has spent at least what it shows, though more can still roll over into 1 of them." (review of ca938320, L24).
  */
 function overReadInPart(n: number, rises: number): string {
   if (n === 0) return "";
   const subject = n === 1 ? "The one over its plan is" : `The ${n} over their plans are`;
   const each = n === 1 ? "it" : "each";
   if (rises === 0) return ` ${subject} grading such days too, so ${each} is over by at least what it shows.`;
-  const into = n === 1 ? "it" : rises === n ? "each of them" : `${rises} of them`;
-  return (
-    ` ${subject} grading such days too, so ${each} has spent at least what it shows, ` +
-    `though more can still roll over into ${into}.`
-  );
+  if (rises === n) {
+    const into = n === 1 ? "it" : "each of them";
+    return (
+      ` ${subject} grading such days too, so ${each} has spent at least what it shows, ` +
+      `though more can still roll over into ${into}.`
+    );
+  }
+  const steady = n - rises;
+  const over =
+    steady === 1 ? "one is over by at least what it shows" : `${steady} are over by at least what they show`;
+  const spent =
+    rises === 1
+      ? "the other has spent at least what it shows, though more can still roll over into it"
+      : `the other ${rises} have spent at least what they show, though more can still roll over into them`;
+  return ` ${subject} grading such days too, so ${over}, and ${spent}.`;
 }
 
 export interface HoldingPriceNoteInput {

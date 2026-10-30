@@ -207,8 +207,9 @@ export function spendUnread(
  *
  * ⚖️ default built, not asked (2026-10-29): whatever the row's verdict — an OVER row included. Past the line on partial
  * data is a fact more data cannot undo, and the verdict stands (`budgetVerdict`); how far past it is a floor like any
- * other — while the line stays where it is. ⚠️ On a rolling budget whose closed period held back can still bank, the
- * line itself can rise (`lib/rollover-held-back::lineMayRise`), and only the spend is a floor: 🔴 review of 48475ec4,
+ * other — while the line stays where it is. ⚠️ On a rolling budget whose closed period can still bank more — held back
+ * under its plan, or read whole with a bill that may have stopped (`lib/rollover-held-back::lineRiseCause`) — the line
+ * itself can rise (`lineMayRise`), and only the spend is a floor: 🔴 review of 48475ec4,
  * Food $30.00 rolling from Jul 1 spoke "over budget by at least $10.00" in August, and read $40.00 of $60.00 on the
  * load after July's statement, no Food added.
  *
