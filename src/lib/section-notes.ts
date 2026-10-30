@@ -1,7 +1,7 @@
 import { arrearsTail, NOT_POSTED } from "./arrears-reading";
 import {
   countedDepositWords,
-  MATCHED_TO_THE_CENT_BY,
+  matchedRowsWords,
   namedTogether,
   neverClauses,
   neverSplit,
@@ -780,7 +780,21 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * ⛔ Of the paydays its lead counts, by the shortfall note's one filter (`unattachedAmong`). 🔴 Its own inline copy
        * was held by no test (beside the review of e6ad55a): gone, September read Oct 29 named October's four rows.
        */
-      const matched = unattachedAmong(r.unattachedPaydays ?? [], r.firstPeriodOn, r.lastPeriodOn);
+      /*
+       * ⛔ …and their money only as far as no deposit made up the paydays they answer — the card's and the shortfall
+       * note's split (`neverSplit`), in their words (`matchedRowsWords`): a payday a smaller deposit paid is asked at
+       * its full amount (`paydaysNoDepositPaidInFull`), so its row holds more than is left of it. 🔴 Review of cfb03c41
+       * (LOW): with Oct 15 paid $200.00 by an attached deposit and every payroll row unattached, read Nov 16, October
+       * read "…only $200.00 reached …; $5,709.60 is matched to the cent by rows of $1,141.92 on Oct 1, … and Oct 29" —
+       * $5,909.60 of parts for $5,709.60 of paydays — and the year "$7,993.44 is matched" beside the card's $7,793.44.
+       */
+      const ofItsPaydays = unattachedAmong(r.unattachedPaydays ?? [], r.firstPeriodOn, r.lastPeriodOn);
+      const madeUpByNone =
+        r.shortfall === undefined
+          ? unattachedCents(ofItsPaydays)
+          : r.shortfall.neverBankedCents + r.shortfall.notBankedYetCents;
+      const rowsSplit = neverSplit(madeUpByNone, ofItsPaydays);
+      const matched = rowsSplit.matched;
       /*
        * ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`) — said of the
        * DEPOSIT, never of the account: "in a deposit attached to it". Set off by commas where the checked day follows,
@@ -789,9 +803,12 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
        * income" — the account was the thing attached and filed.
        * ⛔ …and by a comma before it always, now that `ACCOUNT_READ` ends on a verb: "an account the ledger reads in a
        * deposit attached to it" reads the deposit as where the ledger reads (the merge of batch 8b, 2026-10-30).
+       * ⛔ …and one deposit is "a deposit" (`PayShortfall.ownDepositDays`) — as is none: no deposit attached to it
+       * brought any of it. 🔴 Review of 8aa00da4 (LOW): "in deposits attached to it" of the one Oct 1 deposit.
        */
-      const deposit =
-        matched.length === 0 ? "" : `, in ${ownCents <= 0 ? "a deposit" : "deposits"} ${countedDepositWords(matched, "it")}`;
+      const oneDeposit = ownCents <= 0 || r.shortfall?.ownDepositDays === 1;
+      const counted = `${oneDeposit ? "a deposit" : "deposits"} ${countedDepositWords(matched, "it")}`;
+      const deposit = matched.length === 0 ? "" : `, in ${counted}`;
       /*
        * ⛔ …and so is the checked day, deposit or none: "through <day>" is the claim's, never how far the ledger reads.
        * 🔴 Review of ed1138d (LOW): "only $29,431.90 reached an account the ledger reads through Tue, Jun 30, 2026" said
@@ -801,8 +818,8 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const reached = (dayFollows: boolean): string =>
         `${ownCents <= 0 ? "none of it" : `only ${formatCents(ownCents)}`} reached ${ACCOUNT_READ}${inside}${deposit}` +
         (dayFollows ? "," : "");
-      const rowsPart = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, payday)}`;
-      const matchedPart = matched.length === 0 ? [] : [`${formatCents(unattachedCents(matched))} is ${rowsPart}`];
+      const rowsPart = `${formatCents(rowsSplit.matchedCents)} is ${matchedRowsWords(rowsSplit, payday)}`;
+      const matchedPart = matched.length === 0 ? [] : [rowsPart];
       const covered = r.periodsCovered ?? 0;
       const readCovered = r.checkedPeriodsCovered ?? 0;
       const unread = covered - readCovered;
@@ -891,8 +908,9 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
       const notYetUnanswered = inGrace.filter((d) => !silent.some((m) => m.date === d));
       const namedAbove =
         silent.length === matched.length && silent.every((s) => matched.some((m) => m.row.id === s.row.id));
+      // …"the row named above" of one (review of 8aa00da4, LOW: "the rows named above" of Oct 8's one row)
       const sitsIn = namedAbove
-        ? `the rows named above, ${notCountedWords(silent, "the schedule")}`
+        ? `${silent.length === 1 ? "the row" : "the rows"} named above, ${notCountedWords(silent, "the schedule")}`
         : unattachedRowsWords(silent, payday);
       /*
        * ⚖️ …and payroll landing in an account the ledger does not read, in the card's caveat's order and words

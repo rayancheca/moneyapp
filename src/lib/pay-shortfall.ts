@@ -231,6 +231,12 @@ export interface PayShortfall {
    * row inside the window, net.
    */
   bankedCents: number;
+  /**
+   * How many deposit days hold the window's OWN money (`windowOwnCents`): its days that banked, less any whose money
+   * all paid another window's read payday (`paidAcross`) — "a deposit" or "deposits" of the money /spending's note for
+   * a stale schedule says reached an account. 🔴 Review of 8aa00da4 (LOW): it said "in deposits attached to it" of one.
+   */
+  ownDepositDays: number;
 }
 
 // the words /spending's notes need of a window's money live apart from the settlement (`lib/pay-window-money`)
@@ -422,6 +428,11 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const noPaydayInsideCents = Math.min(centsOf(noPayday), Math.max(0, bankedInsideCents - paidReadCents));
   const beyondCents = Math.max(0, ownCents - bankedInsideCents);
   const noPaydayBeyondCents = Math.min(beyondCents, centsOf(noPayday) - noPaydayInsideCents);
+  // the deposit days `ownCents` is made of: every one inside the window but a day whose money all paid another's
+  const acrossCents = (day: string): number => centsOf(paidAcross.filter((p) => p.depositOn === day));
+  const ownDepositDays = s.deposits.filter(
+    (d) => d.amountCents > 0 && inWindow(d.postedOn) && d.amountCents > acrossCents(d.postedOn),
+  ).length;
 
   return {
     readPaydays: e.read.paydays,
@@ -447,6 +458,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     paidUncounted,
     wentBackOut: back.wentBackOut,
     bankedCents: back.bankedCents,
+    ownDepositDays,
   };
 }
 

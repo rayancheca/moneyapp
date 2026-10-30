@@ -809,6 +809,65 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
   });
 });
 
+/*
+ * ⛔ A stale schedule's note says its rows' money as the card's difference holds it — what no deposit made up of the
+ * paydays they answer (`neverSplit`) — and counts what it names: one deposit "a deposit", one row "the row named above".
+ */
+describe("a stale schedule's note: the rows' money as the card's difference holds it, and its nouns counted", () => {
+  const read = (from: string, to: string, today: string): string =>
+    cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from, to, today, withChecked: true }),
+      formatDay: formatDayLong,
+    })
+      .map((n) => n.body)
+      .join(" ");
+
+  /*
+   * 🔴 Review of cfb03c41 (LOW): the stale note summed its rows whole while the card and the shortfall note capped them
+   * "for what is left of a payday" — October read "…only $200.00 reached …, in deposits attached to it; $5,709.60 is
+   * matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, Oct 15, Oct 22, and Oct 29" ($5,909.60 of parts for
+   * $5,709.60 of paydays), and the year "$4,767.68 reached … $7,993.44 is matched" beside the card's $7,793.44.
+   */
+  test("Oct 15 paid $200.00 by an attached deposit, every payroll row unattached, read Nov 16: the parts add up", () => {
+    const salary = categoryId("Salary", "Income");
+    row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
+    for (const day of [...PAYDAYS, "2026-10-29", "2026-11-05", "2026-11-12"]) row(day, 114_192, { categoryId: salary });
+    checkedThrough(bundle.db, WF, "2026-11-16", "2026-10-27");
+    const today = "2026-11-16";
+    const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, Oct 22, and Oct 29 that are not attached to it";
+    expect(read("2026-10-01", "2026-10-31", today)).toContain(
+      "implies $5,709.60 of earnings over Oct 1 – 29, 2026 and only $200.00 reached an account the ledger reads, in " +
+        "a deposit attached to it; $5,509.60 is for the paydays of Oct 1, Oct 8, Oct 15, Oct 22, and Oct 29, which " +
+        `${rows} match to the cent.`,
+    );
+    // the year's rows, by the figure the card's difference holds them by
+    expect(read("2026-01-01", "2026-12-31", today)).toContain(
+      "and only $4,767.68 reached an account the ledger reads, in deposits attached to it; $7,793.44 is for the " +
+        "paydays of Oct 1, Oct 8, Oct 15, Oct 22, Oct 29, Nov 5, and Nov 12, which",
+    );
+    const card = incomeCard(bundle.db, today)!.pay[0]!;
+    expect([card.gapCents, card.unattachedCents]).toEqual([779_344, 779_344]);
+    expect(card.gapLabel).toContain("all of it is for the paydays of Oct 1, Oct 8, Oct 15, Oct 22, Oct 29, Nov 5, and");
+  });
+
+  /*
+   * 🔴 Review of 8aa00da4 (LOW): one deposit and one row read "…in deposits attached to it; $1,141.92 is matched to the
+   * cent by a row of $1,141.92 on Oct 8 … — that money sits in the rows named above, …".
+   */
+  test("Oct 1 attached, Oct 8's row filed Salary and unattached, read Oct 27: one deposit, and one row", () => {
+    const salary = categoryId("Salary", "Income");
+    row("2026-10-01", 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-10-08", 114_192, { categoryId: salary });
+    const october = read("2026-10-01", "2026-10-31", "2026-10-27");
+    expect(october).toContain(
+      "and only $1,141.92 reached an account the ledger reads, in a deposit attached to it; $1,141.92 is matched to " +
+        "the cent by a row of $1,141.92 on Oct 8 that is not attached to it.",
+    );
+    expect(october).toContain("— that money sits in the row named above, not attached to the schedule, was held as cash");
+    expect(october).not.toContain("rows named above");
+  });
+});
+
 /** A rendered sentence as a reader reads it: its words, the markup gone. */
 const textOf = (element: ReactElement): string =>
   renderToStaticMarkup(element)

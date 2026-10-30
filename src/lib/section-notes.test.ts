@@ -1237,6 +1237,7 @@ describe("cashEarningsSectionNotes", () => {
       paidUncounted: [],
       wentBackOut: [{ postedOn: "2026-07-03", cents: 114_192 }],
       bankedCents: 0,
+      ownDepositDays: 0,
     };
     const BACK = "$1,141.92 went back out on 2026-07-03";
     const lead = (over: Partial<CashEarningsNoteInput["rows"][number]>): string => {
@@ -1507,6 +1508,86 @@ describe("cashEarningsSectionNotes", () => {
       expect(body({ ...checked, unattachedPaydays: [] })).toBe(body({ ...checked }));
       expect(body({ ...checked, unattachedPaydays: [] })).toContain("— that money was held as cash, spent as cash, ");
     });
+
+    /** July read in full against the settlement: five paydays of $1,046.00, none banked, one deposit day of its own */
+    const JULY_SHORTFALL: PayShortfall = {
+      readPaydays: 5,
+      firstReadOn: "2026-07-02",
+      lastReadOn: "2026-07-30",
+      readCents: 523_000,
+      bankedInsideCents: 0,
+      noPaydayInsideCents: 0,
+      shortCents: 523_000,
+      paidOutside: [],
+      neverBankedCents: 523_000,
+      notBankedYetCents: 0,
+      notBankedYetPaydays: [],
+      paidAcross: [],
+      noPaydayBeyondCents: 0,
+      otherBeyondCents: 0,
+      unlookedPaydays: 0,
+      towardNoPayday: [],
+      paidAhead: [],
+      paidUnread: [],
+      paidUncounted: [],
+      wentBackOut: [],
+      bankedCents: 0,
+      ownDepositDays: 1,
+    };
+
+    /*
+     * ⛔ …and the rows' money only as far as no deposit made up the paydays they answer — the card's and the shortfall
+     * note's split (`neverSplit`): "for the paydays of …" when the rows hold more. 🔴 Review of cfb03c41 (LOW): with Oct
+     * 15 paid $200.00 by an attached deposit and its +$1,141.92 row unattached beside four more, read Nov 16, October
+     * read "…only $200.00 reached …; $5,709.60 is matched to the cent by rows of $1,141.92 on Oct 1, …" — $5,909.60 of
+     * parts for $5,709.60 of paydays, beside the card's "$941.92 is for the payday of Oct 15".
+     */
+    test("a payday paid short: the rows' money is what no deposit made up, as the card and shortfall note say", () => {
+      const paidShort = {
+        ...checked,
+        impliedCents: 313_800,
+        bankedCents: 20_000,
+        unbankedCents: 293_800,
+        lastPeriodOn: "2026-07-16",
+        periodsCovered: 3,
+        checkedPeriodsCovered: 3,
+        unattachedPaydays: JULY.map((d) => match(d)),
+      };
+      const shortfall = (neverBankedCents: number): PayShortfall => ({
+        ...JULY_SHORTFALL,
+        readPaydays: 3,
+        lastReadOn: "2026-07-16",
+        readCents: 313_800,
+        bankedInsideCents: 20_000,
+        shortCents: 293_800,
+        neverBankedCents,
+        bankedCents: 20_000,
+      });
+      expect(lead({ ...paidShort, shortfall: shortfall(293_800) })).toBe(
+        "Cash job (weekly pay) implies $3,138.00 of earnings over Jul 2 – 16, 2026 and only $200.00 reached " +
+          `${ACCOUNT_READ}, in a deposit attached to it; $2,938.00 is for the paydays of Jul 2, Jul 9, and Jul 16, ` +
+          `which ${ROWS} that are not attached to it match to the cent.`,
+      );
+      // the rows holding no more than what no deposit made up: matched to the cent, as it always was
+      expect(lead({ ...checked, unattachedPaydays: JULY.map((d) => match(d)), shortfall: JULY_SHORTFALL })).toContain(
+        `; $3,138.00 is matched to the cent by ${ROWS} that are not attached to it.`,
+      );
+    });
+
+    /*
+     * ⛔ One deposit is "a deposit" (`PayShortfall.ownDepositDays`), one row "the row named above". 🔴 Review of 8aa00da4
+     * (LOW): with Oct 1 attached and Oct 8's +$1,141.92 filed Salary and unattached, read Oct 24, October read "…only
+     * $1,141.92 reached an account the ledger reads, in deposits attached to it; $1,141.92 is matched to the cent by a
+     * row of $1,141.92 on Oct 8 … — that money sits in the rows named above, …" of one deposit and one row.
+     */
+    test("one deposit is 'a deposit', and one row 'the row named above'", () => {
+      const one = { ...checked, bankedCents: 104_600, unattachedPaydays: [match("2026-07-09")] };
+      const said = (ownDepositDays: number): string => body({ ...one, shortfall: { ...JULY_SHORTFALL, ownDepositDays } });
+      expect(said(1)).toContain(`only $1,046.00 reached ${ACCOUNT_READ}, in a deposit attached to it; $1,046.00 is `);
+      expect(said(1)).toContain("— that money sits in the row named above, not attached to the schedule, was held as ");
+      expect(said(2)).toContain(`only $1,046.00 reached ${ACCOUNT_READ}, in deposits attached to it; $1,046.00 is `);
+      expect(said(1)).not.toContain("rows named above");
+    });
   });
 
   /*
@@ -1547,6 +1628,7 @@ describe("cashEarningsSectionNotes", () => {
       paidUncounted: [],
       wentBackOut: [],
       bankedCents: 0,
+      ownDepositDays: 0,
     };
     const august = (over: Partial<PayShortfall> = {}) =>
       notes({
@@ -2058,6 +2140,7 @@ describe("cashEarningsSectionNotes", () => {
       paidUncounted: [],
       wentBackOut: [],
       bankedCents: 456_768,
+      ownDepositDays: 1,
     };
     const surplus = (surplusCents: number, over: Partial<PayShortfall> = {}, row: object = {}) =>
       notes({
