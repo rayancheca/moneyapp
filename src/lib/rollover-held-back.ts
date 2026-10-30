@@ -261,7 +261,10 @@ export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">)
  * What can still lift a line that can still rise (`lineMayRise`): a closed period held back ("held-back"), a bill a
  * period read whole subtracted that may have stopped ("bill"), or both — null where the line cannot rise. What the
  * row's definition says it stands on (`budgetVerdict`). ⚠️ Every period of either kind counts, as the clause names
- * them (`rolloverMayRiseClause`); one the carry hands in with neither named reads as held back, the words it had.
+ * them (`rolloverMayRiseClause`); one the carry hands in with neither named reads as held back, the words it had. A
+ * period read whole is handed in only where its bill, let go, can change what can still roll over
+ * (`services/budgets::billsThatCanLift`) — 🔴 review of 73d2cbc4: an August $100.00 past its plan with its bill gone,
+ * which can bank nothing back, made the definition say "…a bill subtracted from another may have stopped".
  */
 export type LineRiseCause = "held-back" | "bill" | "both";
 
@@ -278,7 +281,11 @@ export function lineRiseCause(
  * (`lineMayRise`) says beside the readings that lean on the line standing still (`budgetCoverageLine`); null where it
  * cannot, or no period is named to wait on. In the toggle's words — what is left unspent carries over once a period is
  * fully imported (`rolloverToggleTitle`) — and the panel's naming of what it holds (`rolloverHeldBackSentence`).
- * ⚠️ It names every period held back, as the panel does, though one already past its plan adds nothing.
+ * ⚠️ It names every period held back, as the panel does, though one already past its plan adds nothing. ⛔ Not so a
+ * period read whole: the panel names none, so there is no naming to keep in step with, and the carry hands in only
+ * those whose bill, let go, can change what can still roll over (`services/budgets::RolloverCarry.billMayLapse`). 🔴
+ * Review of 73d2cbc4: "…and from August 2026 once its statements land, if a bill subtracted from it has stopped" of
+ * an August $100.00 past its plan with its bill gone — checked through Aug 31, nothing rolled over from it.
  *
  * ⚖️ default built, not asked (2026-10-29): …and a period read whole whose bill may still lapse
  * (`rolloverBillMayLapse`) by what it waits for — its statements, its import being whole — and why: "…, and from

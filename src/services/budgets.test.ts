@@ -10,7 +10,8 @@ import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { transactions } from "@/db/schema/transactions";
 import { budgetCoverageSentence } from "@/lib/budget-coverage";
-import { budgetVerdict } from "@/lib/budget-verdict";
+import { budgetCoverageLine, budgetVerdict } from "@/lib/budget-verdict";
+import { BUDGET_JARGON } from "@/lib/jargon";
 import { budgetSectionNotes } from "@/lib/section-notes";
 import { rolloverWaitsSentence } from "@/lib/rollover-held-back";
 import type { PeriodBounds } from "@/lib/dates";
@@ -3403,6 +3404,226 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
         expect(september().map((s) => [s.name, s.mayStillLapse])).toEqual([["Gym", false], ["Locker", false]]);
         expect(carried("Food", OCT_15)).toEqual({ cents: 10_00, availableCents: 510_00, heldBack: [] });
         expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([0, []]);
+      });
+
+      /** the line /budgets prints under the row (`budgetCoverageLine`) */
+      function lineOf(categoryPath: string, refDate: string): string | null {
+        const s = budgetPaceStatuses(bundle.db, refDate).find((r) => r.categoryPath === categoryPath);
+        if (!s) throw new Error(`no ${categoryPath} budget status`);
+        return budgetCoverageLine(s);
+      }
+
+      /**
+       * A $450.00 Meal Kit on the main card, monthly on the 25th, its last two paid on `paid` and the next due on
+       * `next` — the card's rows reaching Sep 30, its balances checked only through `checkedOn`; September held back
+       * with `septemberCents` of Food found on a card read through Sep 20; October's $700.00 on a third, read through
+       * Oct 15.
+       */
+      function kitOnACardCheckedShort(opts: {
+        paid: readonly [string, string];
+        next: string;
+        checkedOn: string;
+        septemberCents: number;
+      }): void {
+        const half = card("Half");
+        const fresh = card("Fresh");
+        ledgerOpensJan2();
+        const kit = createSeries({
+          name: "Meal Kit",
+          nextExpectedOn: opts.next,
+          nextExpectedAmountCents: -450_00,
+          lastMatchedOn: opts.paid[1],
+        });
+        bindSeries(kit, "Food");
+        for (const day of opts.paid) spendLinked(day, -450_00, "Food", kit);
+        spend("2026-09-30", -1, "Shopping"); // the main card's rows reach Sep 30…
+        checkedThrough(bundle.db, cardId, opts.checkedOn); // …its balances only `checkedOn`
+        spend("2026-09-05", -opts.septemberCents, "Food", half); // September, held back: its card read through Sep 20
+        spend("2026-09-20", -1, "Shopping", half);
+        checkedThrough(bundle.db, half, "2026-09-20");
+        spend("2026-10-02", -700_00, "Food", fresh); // October: $700.00 of a $500.00 plan
+        spend(OCT_15, -1, "Shopping", fresh);
+        checkedThrough(bundle.db, fresh, OCT_15);
+      }
+
+      /*
+       * 🔴 Review of 73d2cbc4: a period read whole was named whenever it subtracted a bill its statements may still let
+       * go — never asked whether banking that bill back could change what rolls over. Food $500.00 rolling from Aug 1:
+       * August $600.00 found and the Meal Kit owed, last paid May 25 on the main card; September held back at $100.00
+       * found. August is $100.00 past its plan with the kit gone, so it can bank nothing — yet the row read "Over
+       * budget by 40%" over "…a bill subtracted from another may have stopped" and "…more can still roll over from
+       * September 2026 once it is fully imported, and from August 2026 once its statements land, if a bill subtracted
+       * from it has stopped". August's statement, checked through Aug 31 with no row added: the kit lapsed, the carry
+       * stayed $0.00, and all $400.00 still to come was September's.
+       */
+      test("a period whose bill, let go, would still bank nothing is not named — September alone is", () => {
+        kitOnACardCheckedShort({
+          paid: ["2026-04-25", "2026-05-25"],
+          next: "2026-06-25",
+          checkedOn: "2026-07-31",
+          septemberCents: 100_00,
+        });
+        rollingBudget("Food", "2026-08-01");
+        spend("2026-08-10", -600_00, "Food"); // August: $100.00 past its plan before any bill
+
+        const owed = budgetOverdue(bundle.db, catId("Food"), AUGUST.start, AUGUST.end).series;
+        expect(owed.map((s) => [s.name, s.amountCents, s.mayStillLapse])).toEqual([["Meal Kit", 450_00, true]]);
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [SEPTEMBER] });
+        // September can still bank its $400.00 — and August nothing, its kit gone or not
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([400_00, []]);
+        expect(verdictOf("Food", OCT_15)).toMatchObject({
+          headline: "Over budget by 40%",
+          explanation: BUDGET_JARGON.paceOverLineMayRise,
+          lineMayRise: true,
+        });
+        expect(lineOf("Food", OCT_15)).toBe(
+          "spending imported through Sep 20 · 15 days of this period unaccounted · more can still roll over from " +
+            "September 2026 once it is fully imported",
+        );
+
+        checkedThrough(bundle.db, cardId, "2026-08-31", "2026-08-01"); // August's statement: no kit, no row added
+        expect(budgetOverdue(bundle.db, catId("Food"), AUGUST.start, AUGUST.end).totalCents).toBe(0);
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [SEPTEMBER] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([400_00, []]);
+      });
+
+      /*
+       * ⛔ …yet one past its plan with the bill gone can still lift the line, taking back less of what an earlier
+       * period carried in — so "its term with the bill gone is above zero" is not the test (the review's warning).
+       * July banks $50.00 (its kit owed, and too recent to lapse); August, $520.00 found, is $20.00 past its plan once
+       * the kit is let go: it takes back $20.00 of July's $50.00 rather than all of it.
+       */
+      test("…one past its plan even with the bill gone is named where it takes back less of an earlier carry", () => {
+        kitOnACardCheckedShort({
+          paid: ["2026-04-25", "2026-05-25"],
+          next: "2026-06-25",
+          checkedOn: "2026-07-31",
+          septemberCents: 100_00,
+        });
+        rollingBudget("Food", "2026-07-01");
+        spend("2026-08-10", -520_00, "Food");
+
+        const owed = (p: PeriodBounds) =>
+          budgetOverdue(bundle.db, catId("Food"), p.start, p.end).series.map((s) => [s.amountCents, s.mayStillLapse]);
+        expect([owed(JULY), owed(AUGUST)]).toEqual([[[450_00, false]], [[450_00, true]]]);
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [SEPTEMBER] });
+        // $30.00 more from August, if its kit stopped — and September's $400.00 on top of it
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([430_00, [AUGUST]]);
+        expect(verdictOf("Food", OCT_15).explanation).toBe(BUDGET_JARGON.paceOverHeldBackAndBill);
+        expect(lineOf("Food", OCT_15)).toBe(
+          "spending imported through Sep 20 · 15 days of this period unaccounted · more can still roll over from " +
+            "September 2026 once it is fully imported, and from August 2026 once its statements land, if a bill " +
+            "subtracted from it has stopped",
+        );
+
+        checkedThrough(bundle.db, cardId, "2026-08-31", "2026-08-01"); // August's statement: no kit, no row added
+        expect(carried("Food", OCT_15)).toEqual({ cents: 30_00, availableCents: 530_00, heldBack: [SEPTEMBER] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([400_00, []]);
+      });
+
+      /*
+       * ⛔ …and asked with the OTHER bills let go too, not only owed: two can lift the line together where neither can
+       * alone. July, $400.00 found, banks $100.00 once its kit is let go — which August, $500.00 found, takes back
+       * unless its kit is let go as well.
+       */
+      test("…two whose bills lift the line only together are both named", () => {
+        kitOnACardCheckedShort({
+          paid: ["2026-03-25", "2026-04-25"],
+          next: "2026-05-25",
+          checkedOn: "2026-05-31",
+          septemberCents: 500_00, // held back, and at its plan already: it adds nothing
+        });
+        rollingBudget("Food", "2026-07-01");
+        spend("2026-07-10", -400_00, "Food");
+        spend("2026-08-10", -500_00, "Food");
+
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [SEPTEMBER] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([100_00, [JULY, AUGUST]]);
+      });
+
+      /*
+       * ⛔ …and with them OWED too, not only let go: under a cap, each can lift the line alone where neither adds a
+       * cent once the other is let go. 🔴 Asked only with every other let go, neither was named over a line that could
+       * still rise $150.00 — all of it theirs, and the row would have put it on September, held back at its plan.
+       * $200.00 cap: July, $300.00 found, banks $200.00 once its kit is let go; August, $0.00 found, banks $50.00 owing
+       * its kit and $500.00 without it.
+       */
+      test("…two that each lift the line to its cap alone are both named", () => {
+        kitOnACardCheckedShort({
+          paid: ["2026-03-25", "2026-04-25"],
+          next: "2026-05-25",
+          checkedOn: "2026-05-31",
+          septemberCents: 500_00,
+        });
+        const id = rollingBudget("Food", "2026-07-01");
+        setBudgetRollover(bundle.db, id, { enabled: true, capCents: 200_00 });
+        spend("2026-07-10", -300_00, "Food");
+
+        expect(carried("Food", OCT_15)).toEqual({ cents: 50_00, availableCents: 550_00, heldBack: [SEPTEMBER] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([150_00, [JULY, AUGUST]]);
+      });
+
+      /*
+       * ⛔ …and every way the others can land, not three of them: under a $300.00 cap, July lifts the line only with
+       * August's kit let go and September's owed. $400.00 kit; July $100.00 found, August $500.00, September $200.00 —
+       * every one of them read whole. Asked with every other let go, only September was named; with every other let go,
+       * none, or those before it, July was still left out.
+       */
+      test("…every way the other bills can land is asked: three months, each named", () => {
+        const fresh = card("Fresh");
+        ledgerOpensJan2();
+        const kit = createSeries({
+          name: "Meal Kit",
+          nextExpectedOn: "2026-05-25",
+          nextExpectedAmountCents: -400_00,
+          lastMatchedOn: "2026-04-25",
+        });
+        bindSeries(kit, "Food");
+        for (const day of ["2026-03-25", "2026-04-25"]) spendLinked(day, -400_00, "Food", kit);
+        spend("2026-09-30", -1, "Shopping"); // the card's rows reach Sep 30: July to September read whole…
+        checkedThrough(bundle.db, cardId, "2026-05-31"); // …and its balances checked only through May 31
+        spend("2026-10-02", -700_00, "Food", fresh);
+        spend(OCT_15, -1, "Shopping", fresh);
+        checkedThrough(bundle.db, fresh, OCT_15);
+        const id = rollingBudget("Food", "2026-07-01");
+        setBudgetRollover(bundle.db, id, { enabled: true, capCents: 300_00 });
+        spend("2026-07-10", -100_00, "Food");
+        spend("2026-08-10", -500_00, "Food");
+        spend("2026-09-10", -200_00, "Food");
+
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([300_00, [JULY, AUGUST, SEPTEMBER]]);
+        expect(verdictOf("Food", OCT_15).explanation).toBe(BUDGET_JARGON.paceOverBillMayStop);
+      });
+
+      /*
+       * ⚠️ Past eight such periods (2⁸ walks), each is asked with every other let go alone — exact wherever no cap is
+       * reached. Nine months read whole, January to September, each owing the kit last paid Oct 25, 2025, on a card
+       * checked through Nov 30, 2025: seven at their plan first (nothing to lift, whatever is let go), then August and
+       * September, which lift the line only together.
+       */
+      test("…past eight of them, each is asked with every other let go", () => {
+        const fresh = card("Fresh");
+        const kit = createSeries({
+          name: "Meal Kit",
+          nextExpectedOn: "2025-11-25",
+          nextExpectedAmountCents: -450_00,
+          lastMatchedOn: "2025-10-25",
+        });
+        bindSeries(kit, "Food");
+        for (const day of ["2025-09-25", "2025-10-25"]) spendLinked(day, -450_00, "Food", kit); // the ledger opens
+        spend("2026-09-30", -1, "Shopping");
+        checkedThrough(bundle.db, cardId, "2025-11-30", "2025-09-01");
+        spend("2026-10-02", -700_00, "Food", fresh);
+        spend(OCT_15, -1, "Shopping", fresh);
+        checkedThrough(bundle.db, fresh, OCT_15);
+        rollingBudget("Food", "2026-01-01");
+        for (const month of ["01", "02", "03", "04", "05", "06", "07"]) spend(`2026-${month}-10`, -500_00, "Food");
+        spend("2026-08-10", -400_00, "Food");
+        spend("2026-09-10", -500_00, "Food");
+
+        expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [] });
+        expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([100_00, [AUGUST, SEPTEMBER]]);
       });
     });
   });
