@@ -8,6 +8,13 @@ import { toast } from "@/components/ui/Toast";
 export const ACTION_FAILED = "Couldn’t do that — try again";
 
 /**
+ * What a failed undo says when nothing readable came back: the patch is still here, the change still stands. ONE
+ * sentence for every Undo card (`offerUndoToast`, a category's Move, an inline edit) — 🔴 the review of 43a66c99
+ * (2026-10-30) found three: this, "Couldn’t move it back — try again", and the inline edit's save sentence.
+ */
+export const UNDO_FAILED = "Couldn’t undo that — the change is still in place";
+
+/**
  * Await a server action and normalize BOTH failure shapes into one
  * {@link ActionResult}: a reported `{ ok: false }` keeps the server's own
  * message, and a THROWN call becomes a failure instead of an unhandled

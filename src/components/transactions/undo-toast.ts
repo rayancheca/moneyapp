@@ -1,10 +1,10 @@
 import { toast } from "@/components/ui/Toast";
 import { undoAction } from "@/app/transactions/actions";
 import type { ActionResult, UndoPatch } from "@/app/transactions/action-types";
-import { settleAction } from "@/hooks/useAction";
+import { settleAction, UNDO_FAILED } from "@/hooks/useAction";
 
-/** What a failed undo says: the patch is still here, the change still stands. */
-export const UNDO_FAILED = "Couldn’t undo that — the change is still in place";
+/** What a failed undo says: the patch is still here, the change still stands — every Undo card's (`UNDO_FAILED`). */
+export { UNDO_FAILED };
 
 /**
  * The one "Undo" toast for every value-returning transaction mutation

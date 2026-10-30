@@ -8,11 +8,21 @@ import {
   keyToIntent,
   type CommitOutcome,
 } from "@/lib/inline-edit";
+import type { ActionResult } from "@/app/transactions/action-types";
 import { toast, type ToastActionResult } from "@/components/ui/Toast";
+import { settleAction, UNDO_FAILED } from "@/hooks/useAction";
 
 export interface InlineSaveResult {
   ok: boolean;
   error?: string;
+}
+
+/** What a save of an inline field says when nothing readable came back. */
+const SAVE_FAILED = "Couldn’t save that — try again";
+
+/** A save's answer in the shape every settled action has, a missing message blank — `settleAction` says it then. */
+function inlineSaveSettled(result: InlineSaveResult): ActionResult<null> {
+  return result.ok ? { ok: true, data: null } : { ok: false, error: result.error ?? "" };
 }
 
 interface UseInlineEditParams<T> {
@@ -55,26 +65,22 @@ export async function persistInlineEdit<T>(
   const seq = (io.seq.current += 1);
   io.setDisplay(next); // optimistic
   io.setPending(true);
-  let ok = false;
-  let errorMessage: string | undefined;
-  try {
-    const result = await io.onSave(next);
-    ok = result.ok;
-    errorMessage = result.error;
-  } catch {
-    // a thrown/rejected save (transport failure) is a failure, not a success
-    ok = false;
-  }
+  // a thrown/rejected save (transport failure) is a failure, not a success — settled by every action's one rule
+  // (`settleAction`): it says what it threw, and with nothing readable a save says it couldn't save, and an Undo (the
+  // save the other way, made with `undoable` false) what every Undo card says
+  const saved = await settleAction(
+    async () => inlineSaveSettled(await io.onSave(next)),
+    undoable ? SAVE_FAILED : UNDO_FAILED,
+  );
   // superseded by a newer save — let that one own display/pending/toast; an Undo it overtook closes its card, the
   // field being the newer save's now
   if (seq !== io.seq.current) return;
   io.setPending(false);
-  if (!ok) {
+  if (!saved.ok) {
     io.setDisplay(previous); // rollback
-    const error = errorMessage ?? "Couldn’t save that — try again";
     // an Undo's failure is said on its own card, which stays; a save has no card to say it on
-    if (undoable) toast({ title: error, tone: "negative" });
-    return { ok: false, error };
+    if (undoable) toast({ title: saved.error, tone: "negative" });
+    return { ok: false, error: saved.error };
   }
   if (undoable) {
     toast({
