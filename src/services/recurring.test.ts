@@ -668,6 +668,7 @@ describe("seriesStaleness", () => {
         opensOn: "2026-09-01",
         opensOnHisDate: true,
         opensPaidBy: null,
+        schedule: { cadence: "monthly" as const, intervalDaysAvg: null, nextExpectedOn: "2026-09-01", anchorDay: null },
       })),
     ];
     // ⛔ …and with a schedule its end has closed: Aug 1 is the next day, and nothing is left inside a Jul 1 end. 🔴 The

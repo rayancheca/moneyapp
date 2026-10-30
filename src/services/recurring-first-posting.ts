@@ -5,7 +5,7 @@ import { addDays } from "@/lib/dates";
 import { withBillingCarriers } from "./billing-carriers";
 import {
   effectiveSeries,
-  projectOccurrences,
+  projectOwnDays,
   recomputeSeriesStats,
   toProjectable,
   type AbsorptionResult,
@@ -48,7 +48,8 @@ import {
  *    posted on or before today;
  *  - the amount equals the effective amount EXACTLY, sign included;
  *  - the row posted within the series' own `toleranceDays` of one of the
- *    occurrences `projectOccurrences` walks. That walk only steps FORWARD from
+ *    occurrences its walk draws on its own days (`projectOwnDays`, the
+ *    calendar's). That walk only steps FORWARD from
  *    the schedule's next date (`stepsToReach` never goes below step 0), so a
  *    commitment registered as starting on the 15th cannot claim a charge a
  *    month earlier — the same arbiter arrears and the calendar use;
@@ -112,9 +113,10 @@ function expectsCharge(s: SeriesRow, row: CandidateRow): boolean {
   if (eff.nextExpectedAmountCents === null || eff.nextExpectedOn === null) return false;
   if (row.amountCents !== eff.nextExpectedAmountCents) return false;
   if (s.accountId !== null && s.accountId !== row.accountId) return false;
-  // the window IS the tolerance, so any occurrence inside it is close enough
+  // the window IS the tolerance, so any occurrence inside it is close enough — on the series' OWN days, a row of its
+  // own (`projectOwnDays`): never the day one of what the rent carries falls due with the rent's (`fallsDueOn`)
   return (
-    projectOccurrences(toProjectable(s), addDays(row.postedOn, -s.toleranceDays), addDays(row.postedOn, s.toleranceDays))
+    projectOwnDays(toProjectable(s), addDays(row.postedOn, -s.toleranceDays), addDays(row.postedOn, s.toleranceDays))
       .length > 0
   );
 }

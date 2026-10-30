@@ -165,7 +165,9 @@ export function overdueForSeries(
    * 76), as far back as that day — FPL's Jul 28 pays its Aug 8, the Car lease's Sep 2 its Sep 15.
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
-  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
+  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens, each day
+  // paired with the carrier's own day of that period (`pairingOf`) — and each owed only once it falls due
+  // (`projectOccurrences` holds it by `fallsDueOn`): never before the carrier's day it pairs with
   const dueDaysBySeries = billDueDaysBySeries(live);
 
   const series: BudgetTailSeries[] = [];

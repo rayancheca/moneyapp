@@ -397,6 +397,7 @@ describe("AllSeriesView — a series billed inside another's payment says so on 
     opensOn: "2026-09-01",
     opensOnHisDate: true,
     opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
+    schedule: { cadence: "monthly" as const, intervalDaysAvg: null, nextExpectedOn: "2026-09-01", anchorDay: null },
   };
   const text = decode(
     renderToStaticMarkup(

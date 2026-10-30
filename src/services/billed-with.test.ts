@@ -59,6 +59,8 @@ const RENT_CARRIER = {
   opensOn: "2026-09-01",
   opensOnHisDate: false,
   opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
+  // …and its own schedule, as its due days step — what pairs each day of what it carries with its own (`pairingOf`)
+  schedule: { cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-09-01", anchorDay: 1 },
 };
 
 const now = () => new Date().toISOString();
@@ -453,6 +455,8 @@ describe("a merge of the carrier — the link follows the rent to the series it 
       opensOn: "2027-01-02",
       opensOnHisDate: false,
       opensPaidBy: null,
+      // …and its own schedule as the merge recomputed it, off the rent's rows and its own, Aug 3 → Dec 2
+      schedule: { cadence: "monthly", intervalDaysAvg: 30.25, nextExpectedOn: "2027-01-02", anchorDay: null },
     });
     const line = subscriptionsCard(bundle.db, TODAY_DEC)!.live.find((l) => l.seriesId === UTIL)!;
     expect(line.billedWithLabel).toBe("billed with Flamingo South Beach, last seen Dec 2");

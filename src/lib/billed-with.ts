@@ -1,3 +1,4 @@
+import type { Cadence } from "@/db/schema/recurring";
 import { compareDates } from "./dates";
 import { formatDayShortIn } from "./format-date";
 
@@ -37,13 +38,36 @@ export interface BillingCarrier {
    * nearest the carrier's date, silently — a day a payment posted after that date may never pay.
    */
   readonly opensPaidBy: OpeningPayment | null;
+  /**
+   * ⚖️ …and the carrier's own schedule, as its due days are stepped (`effectiveSchedule`): what PAIRS each day of what
+   * it carries with the carrier's own day of that period (`pairingOf`; default (B), built, not asked, 2026-10-30) — the
+   * day of theirs that falls due with the carrier's opening day pairs with that day, and each later day of theirs with
+   * the carrier's day the same number of steps on, so each payment of the carrier's pays exactly the one of theirs its
+   * own day carries. Checked against a calendar: the rent typed Nov 16, the utilities on the 1st — their Nov 1 is the
+   * rent's Nov 16, their Dec 1 the rent's Dec 16, their Jan 1 the rent's Jan 16: whatever pays the rent's Dec 16 pays
+   * their Dec 1, and nothing else does; and their Dec 1 is owed, or drawn missed, only once the rent's Dec 16 is. ⛔
+   * REQUIRED, `userEndsOn`'s reason: a carrier built without it would leave every day of what it carries to the
+   * payment nearest it, silently.
+   */
+  readonly schedule: CarrierSchedule;
+}
+
+/** When a carrier falls due — its effective schedule's step and anchor (`effectiveSchedule`), as its due days step. */
+export interface CarrierSchedule {
+  readonly cadence: Cadence;
+  readonly intervalDaysAvg: number | null;
+  readonly nextExpectedOn: string | null;
+  readonly anchorDay: number | null;
 }
 
 /**
  * The payment that paid where a carrier's schedule opens (`BillingCarrier.opensPaidBy`): the day it posted, and how
- * many of the carrier's due days its own day — its due day nearest it — lies past that opening day: 0 when it was
- * that day's own payment, on time, early or late; 1 when, a payment of two nearer the next day, it caught the opening
- * day up from there; −1 when it paid the opening day as the second charge of the day before.
+ * many of the carrier's due days its own day lies past that opening day — read off the branch of `paymentFor` that
+ * found it: 0 when it was that day's own payment, on time, early or late (default (c)'s late one too); 1 when, a
+ * payment of two, it caught the opening day up from the day after; −1 when it paid the opening day as the second
+ * charge of the day before. 🔴 Read off the payment's NEAREST due day (review of 46f19f15), a payment of one month
+ * late for the opening day by default (c) — nearer the next day, which another payment paid on time — read 1: the
+ * rent typed Nov 25, Dec 12 and Dec 25, it opened what the rent carries a day of theirs before the one Dec 12 pays.
  */
 export interface OpeningPayment {
   readonly postedOn: string;

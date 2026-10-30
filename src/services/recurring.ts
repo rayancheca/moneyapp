@@ -23,6 +23,7 @@ import {
   stepSpanDays,
   stepsToReach,
   walkDayOfMonth,
+  type StepPlan,
 } from "@/lib/recurring-step";
 import { roundToCents } from "@/lib/money";
 import { isOneCharge } from "@/lib/one-charge";
@@ -30,7 +31,15 @@ import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
-import { billingCarriers, openingOf, withBillingCarriers, type DueDays } from "./billing-carriers";
+import {
+  billingCarriers,
+  fallsDueOn,
+  openingOf,
+  pairingOf,
+  withBillingCarriers,
+  type CarrierPairing,
+  type DueDays,
+} from "./billing-carriers";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 /*
  * ⚠️ A cycle, on purpose: settlement walks the occurrences `projectOccurrences`
@@ -1265,6 +1274,14 @@ interface ProjectableSeries {
    * `toProjectable` always sets it.
    */
   opensOn?: string | null;
+  /**
+   * ⚖️ …and, billed inside another on its carrier's step, the carrier's day each of its days pairs with (`pairingOf`;
+   * default (B), built, not asked, 2026-10-30): a day of it FALLS DUE on the later of its own day and that one
+   * (`fallsDueOn`), and every window a reader holds a day in holds it by that day (`projectOccurrences`, the next date
+   * `rollForwardNextExpected` names) — so what the rent carries is still to come with the rent's day, never owed
+   * before it. Null billed on its own. `toProjectable` always sets it.
+   */
+  pairedWith?: CarrierPairing | null;
 }
 
 /** The user-override columns that shadow detection's values (§4.4). */
@@ -1335,10 +1352,13 @@ export function effectiveSeries(s: ProjectionOverrides): EffectiveSeries {
 /** WHEN a series falls — `EffectiveSeries` less its money: what `rollForwardNextExpected` steps. */
 export type EffectiveSchedule = Pick<EffectiveSeries, "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn">;
 
-/** …and where it opens (`ProjectableSeries.opensOn`): a schedule as a projection steps it (`toProjectable`). */
+/**
+ * …and where it opens (`ProjectableSeries.opensOn`) and what its days pair with (`ProjectableSeries.pairedWith`): a
+ * schedule as a projection steps it (`toProjectable`).
+ */
 type SteppedSchedule = Pick<
   ProjectableSeries,
-  "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn" | "opensOn"
+  "cadence" | "intervalDaysAvg" | "nextExpectedOn" | "anchorDay" | "userEndsOn" | "opensOn" | "pairedWith"
 >;
 
 /**
@@ -1378,7 +1398,8 @@ function effectiveNextExpectedOn(s: Pick<SeriesOverrides, "nextExpectedOn" | "us
  *
  * ⛔ The row's carrier is REQUIRED, `userEndsOn`'s reason: billed inside another, a series opens where its carrier's
  * date opens it (`opensOn`, `openingOf`), and a row that reached a projection without it would draw its own days
- * before that date — silently, for whoever forgot. `null` says "billed on its own".
+ * before that date — silently, for whoever forgot. `null` says "billed on its own". ⚖️ …and its days fall due with
+ * the carrier's days they pair with (`pairedWith`, `pairingOf`; default (B), built, not asked, 2026-10-30).
  */
 export function toProjectable(
   s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind } & CarriedBy,
@@ -1393,12 +1414,16 @@ export function toProjectable(
     userEndsOn: s.userEndsOn ?? null,
     staleness,
     opensOn: openingOf(s).opensOn,
+    pairedWith: pairingOf(s),
   };
 }
 
-/** What a projection reads of the carrier a series is billed with (`openingOf`) — `null` for one billed on its own. */
+/**
+ * What a projection reads of the carrier a series is billed with — where it opens (`openingOf`) and what its days pair
+ * with (`pairingOf`) — `null` for one billed on its own.
+ */
 export interface CarriedBy {
-  readonly billedWith: Pick<BillingCarrier, "opensOn" | "opensOnHisDate" | "opensPaidBy"> | null;
+  readonly billedWith: Pick<BillingCarrier, "opensOn" | "opensOnHisDate" | "opensPaidBy" | "schedule"> | null;
 }
 
 const INACTIVE_MISS_LIMIT = 1.5;
@@ -1697,16 +1722,32 @@ export function seriesIsForecast(
  * ⚖️ …and never a date before the day its schedule opens (`ProjectableSeries.opensOn`), as the walk draws none: a
  * schedule built for a projection (`toProjectable`) carries it — billed inside another, the day of its own that falls
  * due with its carrier's date he typed — so the sentence and the All tab's Next name the day Upcoming lists first
- * (default built, not asked, 2026-10-29).
+ * (default built, not asked, 2026-10-29). ⚖️ …and the first day that FALLS DUE from today on (`firstStepFallingDue`):
+ * billed inside another on its carrier's step, a day of its own still to come with the carrier's day it pairs with,
+ * though its own day has passed — the utilities' Nov 1 on Nov 10, beside the rent's Nov 16 (default (B), built, not
+ * asked, 2026-10-30) — so its editor saves the day still to come, never one past it.
  */
 export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
   const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay ?? null);
-  const from = notBeforeItOpens(eff.nextExpectedOn, eff.opensOn, today);
-  const next = stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, from));
-  // inclusive: a series ends ON its end date, so that day's charge still happens
-  if (eff.userEndsOn && compareDates(next, eff.userEndsOn) > 0) return null;
-  return next;
+  const step = firstStepFallingDue(eff.nextExpectedOn, plan, eff.opensOn, eff.pairedWith, today);
+  return withinItsEnd(eff, stepFrom(eff.nextExpectedOn, plan, step));
+}
+
+/**
+ * The day a walk steps to after `day`, one of its own days on or past where its schedule opens — the next date
+ * `nextStillToCome` steps to, past a day a payment has paid — within its end, else null.
+ */
+export function walkDayAfter(eff: SteppedSchedule, day: string): string | null {
+  if (!eff.nextExpectedOn) return null;
+  const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay ?? null);
+  const from = notBeforeItOpens(eff.nextExpectedOn, eff.opensOn, addDays(day, 1));
+  return withinItsEnd(eff, stepFrom(eff.nextExpectedOn, plan, stepsToReach(eff.nextExpectedOn, plan, from)));
+}
+
+/** `day`, a date of its walk, unless it lies past the series' end — inclusive: a series ends ON its end date. */
+function withinItsEnd(eff: Pick<SteppedSchedule, "userEndsOn">, day: string): string | null {
+  return eff.userEndsOn && compareDates(day, eff.userEndsOn) > 0 ? null : day;
 }
 
 /**
@@ -1840,11 +1881,35 @@ export function oneChargeDays(
  * result: month-end clamping is lossy, so an iterative walk would drag a
  * 31st-of-the-month series down to the 28th the first time it crossed February
  * and leave it there (see dates.ts::addCalendarMonths).
+ *
+ * ⚖️ …held by the day each FALLS DUE on (`fallsDueOn`): billed inside another on its carrier's step, the later of its
+ * own day and the carrier's day it pairs with (default (B), built, not asked, 2026-10-30) — so a day of what the rent
+ * carries before `from` whose rent day is from `from` on is in the window, still to come, and one inside it whose rent
+ * day lies past `to` is a later window's. Its own day is still the occurrence's `date`. ONE window for every reader
+ * that asks what came due or is still to come: the arrears (`overdueForSeries`), Upcoming and the forecasts, /budgets'
+ * tail, the page's list. 🔴 Held by its own day, the rent typed Nov 16 and nothing of November posted, the utilities'
+ * Nov 1 was in the arrears on Nov 10, six days before the rent's Nov 16 came (46f19f15's known gap) — and, owed no
+ * earlier than that, it would have been in no window at all until Nov 17. A reader that DRAWS or MATCHES a series'
+ * own days — the calendar's grid, the first-posting rule — reads `projectOwnDays`.
  */
-export function projectOccurrences(
+export function projectOccurrences(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
+  return walkOccurrences(series, from, to, series.pairedWith ?? null);
+}
+
+/**
+ * `projectOccurrences` held by each occurrence's OWN day, whatever day it falls due on: the series' own days inside
+ * [from, to] — what the calendar draws on its grid (its verdict still asks `fallsDueOn`), and what the first-posting
+ * rule matches a row of the series' own against. Billed on its own, the two are one walk.
+ */
+export function projectOwnDays(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
+  return walkOccurrences(series, from, to, null);
+}
+
+function walkOccurrences(
   series: ProjectableSeries,
   from: string,
   to: string,
+  pairedWith: CarrierPairing | null,
 ): SeriesOccurrence[] {
   if (!series.nextExpectedOn || series.nextExpectedAmountCents === null) return [];
   const anchor = series.nextExpectedOn;
@@ -1871,17 +1936,20 @@ export function projectOccurrences(
    * ⚖️ Opened on the series' first payday when it has one (`firstOn`): the anchor's own rhythm, stepped BACK by index
    * from the anchor — never re-anchored on that earlier date, whose day a short month may have clamped. Otherwise the
    * walk is floored at the anchor (`stepsToReach`) — ⚖️ or at the day its schedule opens, when that lies after it
-   * (`opensOn`): stepped FORWARD by index on the anchor's own rhythm, never re-anchored either.
+   * (`opensOn`): stepped FORWARD by index on the anchor's own rhythm, never re-anchored either. ⚖️ …and, held by the
+   * day each falls due on, from the first falling due from `from` on (`firstStepFallingDue`).
    */
   const start = notBeforeItOpens(anchor, series.opensOn, from);
   const firstStep = series.firstOn
     ? Math.max(signedStepsToReach(anchor, plan, start), signedStepsToReach(anchor, plan, series.firstOn))
-    : stepsToReach(anchor, plan, start);
+    : firstStepFallingDue(anchor, plan, series.opensOn, pairedWith, from);
 
   const occurrences: SeriesOccurrence[] = [];
   for (let i = firstStep; ; i++) {
     const date = stepFrom(anchor, plan, i);
     if (compareDates(date, last) > 0) break;
+    // ⚖️ …falling due past `to`, a later window's — and every day after it, as each falls due after the one before
+    if (compareDates(fallsDueOn(pairedWith, date), to) > 0) break;
     // a step back from the anchor is drawn only in the past or where money reached (`walkBackBefore`); beyond, the
     // anchor's walk opens
     if (i < 0 && series.walkBackBefore && compareDates(date, series.walkBackBefore) >= 0) continue;
@@ -1909,6 +1977,30 @@ export function projectOccurrences(
 function notBeforeItOpens(anchor: string, opensOn: string | null | undefined, day: string): string {
   if (!opensOn || compareDates(opensOn, anchor) <= 0 || compareDates(opensOn, day) <= 0) return day;
   return opensOn;
+}
+
+/**
+ * The step of a walk from `anchor` whose day is the first to FALL DUE on or after `day` (`fallsDueOn`): its first own
+ * day on or after `day` — never before its anchor or the day its schedule opens (`notBeforeItOpens`) — or, ⚖️ billed
+ * inside another on its carrier's step, a day of its own before that one whose carrier's day it pairs with is still
+ * from `day` on (default (B), built, not asked, 2026-10-30): the utilities' Nov 1 asked on Nov 10, with the rent's
+ * Nov 16. One reading for the list a walk draws (`projectOccurrences`) and the one next date it names
+ * (`rollForwardNextExpected`), so the page's sentence and the All tab's Next name the day Upcoming lists first.
+ */
+function firstStepFallingDue(
+  anchor: string,
+  plan: StepPlan,
+  opensOn: string | null | undefined,
+  pairedWith: CarrierPairing | null | undefined,
+  day: string,
+): number {
+  const first = stepsToReach(anchor, plan, notBeforeItOpens(anchor, opensOn, day));
+  if (!pairedWith) return first;
+  const floor = stepsToReach(anchor, plan, notBeforeItOpens(anchor, opensOn, anchor));
+  let step = first;
+  // each day falls due no earlier than the one before it, so the days still falling due from `day` on run unbroken
+  while (step > floor && compareDates(fallsDueOn(pairedWith, stepFrom(anchor, plan, step - 1)), day) >= 0) step -= 1;
+  return step;
 }
 
 /** What a series' due days are stepped from: its effective schedule's step and anchor (`toProjectable`). */
@@ -1990,14 +2082,21 @@ export function liesNearerTheLater(day: string, earlier: string, later: string):
 
 /**
  * A series' due days either side of one, as every grader of a bill's day steps them (`paymentFor`) — and the day its
- * schedule opens, and whether that is his date (`opening`: `DueDays.opensOn`, `openingOf`).
+ * schedule opens, and whether that is his date (`opening`: `DueDays.opensOn`, `openingOf`) — and, billed inside another
+ * on its carrier's step, the carrier's day each pairs with (`pairedWith`: `DueDays.pairedWith`, `pairingOf`), null
+ * billed on its own.
  */
-export function dueDaysOf(series: DueDaySchedule, opening: ScheduleOpening): DueDays {
+export function dueDaysOf(
+  series: DueDaySchedule,
+  opening: ScheduleOpening,
+  pairedWith: CarrierPairing | null,
+): DueDays {
   return {
     after: (day) => nextDueDayAfter(series, day),
     before: (day) => dueDayBefore(series, day),
     opensOn: opening.opensOn,
     opensOnHisDate: opening.opensOnHisDate,
+    pairedWith,
   };
 }
 
@@ -2081,13 +2180,17 @@ export function upcomingOccurrences(
  * belongs in it" (`committedBook`). The rent paid Sep 30 for Oct 1 is still one of twelve; left out, a $2,109.00 bill
  * reads $1,933.25 a month on the day it was paid early — the sawtooth `committedBook` measured and refused. A list of
  * what is still to pay reads `upcomingOccurrences`.
+ *
+ * ⚖️ …held by each one's OWN day (`projectOwnDays`), the days a rate counts — never the day a day of what the rent
+ * carries falls due with the rent's (`fallsDueOn`, a list's question): the committed book admits its months by their
+ * own days (`withinMonthHorizon`), so one window for both ends keeps N payments in N months.
  */
 export function scheduledOccurrences(
   db: AppDatabase,
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
-  return forecastWalk(db, today, windowDays)
+  return forecastWalk(db, today, windowDays, projectOwnDays)
     .flatMap((w) => w.projected)
     .sort(byDayThenName);
 }
@@ -2095,8 +2198,16 @@ export function scheduledOccurrences(
 const byDayThenName = (a: SeriesOccurrence, b: SeriesOccurrence): number =>
   compareDates(a.date, b.date) || a.name.localeCompare(b.name);
 
-/** The series the forecast carries, each with what its schedule holds in `[today, today + windowDays − 1]`. */
-function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
+/**
+ * The series the forecast carries, each with what its schedule holds in `[today, today + windowDays − 1]` — held by
+ * the day each falls due on (`projectOccurrences`), or by its own day for a rate (`scheduledOccurrences`).
+ */
+function forecastWalk(
+  db: AppDatabase,
+  today: string,
+  windowDays: number,
+  project: typeof projectOccurrences = projectOccurrences,
+) {
   const live = withBillingCarriers(
     db,
     db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
@@ -2121,7 +2232,7 @@ function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .map((s) => ({
       series: s,
-      projected: projectOccurrences(
+      projected: project(
         toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id), oneCharge.get(s.id) ?? null)),
         today,
         to,

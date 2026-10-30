@@ -30,6 +30,8 @@ import { isAgentsSeries, loadCategoryIndex } from "./analytics";
 import {
   billDueDaysBySeries,
   billPaymentsBySeries,
+  dayPaidAs,
+  fallsDueOn,
   onTimePayment,
   paymentFor,
   paysEarly,
@@ -51,7 +53,7 @@ import {
   hasStoppedForecasting,
   MIN_OCCURRENCES,
   populationStddev,
-  projectOccurrences,
+  projectOwnDays,
   seriesEvidence,
 } from "./recurring";
 import { seriesCategoryIds } from "./series-category";
@@ -714,11 +716,16 @@ export function recurringCalendar(
    */
   const paymentNamedFor = (payments: readonly BillPayment[], dueOn: string, dueDays: DueDays): BillPayment | undefined => {
     const paid = paymentFor(payments, dueOn, dueDays);
-    if (paid === undefined || !paysOnTime(paid, dueOn)) return paid;
+    if (paid === undefined) return paid;
+    // ⚖️ on time for the day it was graded on: billed inside another, the carrier's day `dueOn` pairs with — and then
+    // only the carrier's payments are on time for it (`dayPaidAs`, default (B), built, not asked, 2026-10-30)
+    const day = dayPaidAs(dueDays, dueOn, paid);
+    if (!paysOnTime(paid, day)) return paid;
+    const named = day === dueOn ? payments : payments.filter((p) => p.carried);
     return (
-      onTimePayment(payments.filter((p) => !p.carried && insideMonth(p.postedOn)), dueOn) ??
-      onTimePayment(payments.filter((p) => !p.carried), dueOn) ??
-      onTimePayment(payments.filter((p) => insideMonth(p.postedOn)), dueOn) ??
+      onTimePayment(named.filter((p) => !p.carried && insideMonth(p.postedOn)), day) ??
+      onTimePayment(named.filter((p) => !p.carried), day) ??
+      onTimePayment(named.filter((p) => insideMonth(p.postedOn)), day) ??
       paid
     );
   };
@@ -874,7 +881,8 @@ export function recurringCalendar(
    * before (his decisions 73 and 76) — FPL's Jul 28, drawn in July, pays August's Aug 8.
    */
   const paymentsBySeries = billPaymentsBySeries(db, forecastRows);
-  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
+  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens, each day
+  // paired with the carrier's own day of that period (`pairingOf`)
   const dueDaysBySeries = billDueDaysBySeries(forecastRows);
 
   for (const s of forecastRows) {
@@ -885,9 +893,11 @@ export function recurringCalendar(
      * all: Jun 4's $1,047.00 read "toward no payday" beside an income card that had earned four cash weeks that month.
      */
     const projectable = paydayProjectable(s, settlements.get(s.id), today);
-    const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
+    // its own days on this grid — each still graded on the day it falls due (`fallsDueOn`, below)
+    const occurrences = projectOwnDays(projectable, monthStart, monthEnd);
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
-    // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
+    // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days —
+    // its carrier's payments on the carrier's day each pairs with
     const payments = paymentsBySeries.get(s.id) ?? [];
     const dueDays = dueDaysBySeries.get(s.id)!;
     const confidence = forecastConfidence(s);
@@ -985,7 +995,15 @@ export function recurringCalendar(
         }
       }
 
-      const isFuture = compareDates(o.date, today) >= 0;
+      /*
+       * ⚖️ Past or still to come on the day it FALLS DUE (`fallsDueOn`): billed inside another on its carrier's step,
+       * the later of its own day and the carrier's day it pairs with — so a day of what the rent carries is drawn
+       * missed only once the rent's day is read past, never before (default (B), built, not asked, 2026-10-30), the
+       * arrears' own window (`projectOccurrences`). 🔴 On its own day, the rent typed Nov 16 and nothing of November
+       * posted, November drew the utilities' Nov 1 missed on Nov 10, six days before the rent's Nov 16 came.
+       */
+      const dueOn = fallsDueOn(projectable.pairedWith, o.date);
+      const isFuture = compareDates(dueOn, today) >= 0;
       // The state and its reason are one decision, taken once. Splitting them
       // is how `budgetVerdict` came to print a headline beside a definition that
       // contradicted it.
@@ -993,7 +1011,7 @@ export function recurringCalendar(
         ? null
         : settledVerdict(
             s.kind,
-            o.date,
+            dueOn,
             {
               // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
               dueDay: readingOf

@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import type { BillingCarrier } from "@/lib/billed-with";
-import { addDays } from "@/lib/dates";
+import { addDays, compareDates } from "@/lib/dates";
 import {
   firstPaydayOn,
   hasArrived,
@@ -18,12 +18,13 @@ import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { asMoneyIn, billDueDaysBySeries, billPaymentsBySeries, paymentFor } from "./billing-carriers";
+import { asMoneyIn, billDueDaysBySeries, billPaymentsBySeries, paymentFor, type DueDays } from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
+  walkDayAfter,
   type ProjectionOverrides,
   type SeriesOverrides,
 } from "./recurring";
@@ -303,7 +304,8 @@ export function nextStillToCome(
 ): string | null {
   const eff = toProjectable(series);
   let next = rollForwardNextExpected(eff, today);
-  while (next !== null && !toCome(series.id, next)) next = rollForwardNextExpected(eff, addDays(next, 1));
+  // past a paid day to the walk's next own day — a day of what the rent carries may fall due after the next of its own
+  while (next !== null && !toCome(series.id, next)) next = walkDayAfter(eff, next);
   return next;
 }
 
@@ -335,8 +337,11 @@ export interface StillToComeSeries extends SeriesOverrides {
  * before (`paymentFor`, ⚖️ his decision 76, 2026-10-14), its own or its carrier's, as the arrears and the calendar
  * grade it. FPL's Jul 28 pays its Aug 8: from Jul 28 on, Aug 8 is not still to come.
  *
- * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
- * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as
+ * ⛔ Asked of days that fall due from today on — every caller walks forward from today — so nothing late is asked of a
+ * day from today on (`nothingLateFrom`): a payment past its grace would post after today, and no import has brought
+ * one. ⚖️ A day of what the rent carries is asked by the rent's day it pairs with, which falls due with it (default
+ * (B), built, not asked, 2026-10-30): its own day may have passed — the utilities' Nov 1 asked on Nov 10, still to come
+ * with the rent's Nov 16 — and so may the rent's day, paid late, which is asked in full. Every payment is read, as
  * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before. ⚖️ …and so does a
  * catch-up, LATE for the day before (`paymentFor`'s, default built, not asked, 2026-10-23), which reads this day as
  * the one after it: Sep 19's -$715.16 for a premium due the 11th, Sep 11 missed, pays Oct 11 — on Sep 25 Upcoming and
@@ -361,16 +366,32 @@ export function stillToComeReader(
   const settled = new Map(income.map((s) => [s.id, settledPaydaysForSeries(db, s.id, today, idx)] as const));
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
-  // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, and the day
-  // its schedule opens and whether it is his (its own row, or its carrier's for one billed inside another) — with
-  // nothing late asked (above)
+  // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, the day its
+  // schedule opens and whether it is his (its own row, or its carrier's for one billed inside another), and the
+  // carrier's day each pairs with — with nothing late asked of a day from today on (above)
   const graded = billDueDaysBySeries(bills);
-  const dueDays = new Map(bills.map((s) => [s.id, { ...graded.get(s.id)!, after: () => null }] as const));
+  const dueDays = new Map(bills.map((s) => [s.id, nothingLateFrom(graded.get(s.id)!, today)] as const));
   return (seriesId, date) => {
     const paydays = settled.get(seriesId);
     if (paydays !== undefined) return !paydays.has(date);
     const days = dueDays.get(seriesId);
     return days === undefined || paymentFor(payments.get(seriesId) ?? [], date, days) === undefined;
+  };
+}
+
+/**
+ * A bill's due days with nothing late asked of a day from `today` on — no posting is dated past today, so none pays
+ * one late — and, billed inside another, its carrier's days alike (`DueDays.pairedWith`). ⚖️ A day before today is
+ * still asked in full: one of what the rent carries falls due with the rent's day it pairs with (`fallsDueOn`;
+ * default (B), built, not asked, 2026-10-30), so the readers that look ahead ask it while its own day has passed —
+ * and the rent's day it pairs with may have passed too, its payment late (`paymentFor`'s late branch).
+ */
+function nothingLateFrom(dueDays: DueDays, today: string): DueDays {
+  const paired = dueDays.pairedWith;
+  return {
+    ...dueDays,
+    after: (day) => (compareDates(day, today) >= 0 ? null : dueDays.after(day)),
+    pairedWith: paired === null ? null : { ...paired, carrierDays: nothingLateFrom(paired.carrierDays, today) },
   };
 }
 
