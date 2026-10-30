@@ -1465,6 +1465,27 @@ describe("cashEarningsSectionNotes", () => {
       expect(said).not.toContain("rows named above");
     });
 
+    /*
+     * ⛔ …"the rows named above" only of the very rows the claim named — the same rows, never as many other ones
+     * (`namedAbove`'s row ids). 🔴 Review of 8b's round 2 (8b-2, MEDIUM): its id half was held by no test — the guard
+     * cut to the count alone passed all 9,147 tests — and a claim naming Jul 2's row beside a silence holding Aug 6's
+     * read "— that money sits in the rows named above, …": Jul 2, before the last deposit, is no part of the silence.
+     */
+    test("…nor 'the rows named above' where the claim named as many rows, but other ones", () => {
+      const said = body({
+        ...checked,
+        lastBankedOn: "2026-07-09",
+        unattachedPaydays: [match("2026-07-02"), match("2026-08-06")],
+      });
+      expect(said).toContain(
+        "$1,046.00 is matched to the cent by a row of $1,046.00 on Jul 2 that is not attached to it.",
+      );
+      expect(said).toContain(
+        "— that money sits in a row of $1,046.00 on Aug 6 that is not attached to it, was held as cash, ",
+      );
+      expect(said).not.toContain("rows named above");
+    });
+
     test("no row in the silence: the list it always was", () => {
       expect(body({ ...checked, unattachedPaydays: [] })).toBe(body({ ...checked }));
       expect(body({ ...checked, unattachedPaydays: [] })).toContain("— that money was held as cash, spent as cash, ");
