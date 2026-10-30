@@ -321,6 +321,7 @@ describe("both surfaces that print the figure carry the split", () => {
       checkedOccurrenceCount: 0,
       pastGraceOccurrenceCount: 0,
       unattached: [],
+      inEomCash: [],
       frontier: { kind: "day", through: "2026-08-12" },
       names: ["Cash job (weekly pay)"],
     });

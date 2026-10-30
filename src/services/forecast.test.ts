@@ -5,6 +5,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
 import { dailyBalances } from "@/db/schema/balances";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
@@ -417,6 +418,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inEomCash: [],
       names: [],
     });
   });
@@ -485,6 +487,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inEomCash: [],
       names: ["Payroll"],
     });
   });
@@ -510,6 +513,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inEomCash: [],
       names: [],
     });
   });
@@ -582,6 +586,7 @@ describe("forecastCurrentMonth", () => {
       pastGraceOccurrenceCount: 0,
       frontier: { kind: "unchecked" },
       unattached: [],
+      inEomCash: [],
       names: ["Payroll"],
     });
   });
@@ -601,6 +606,59 @@ describe("forecastCurrentMonth", () => {
     const f = forecastCurrentMonth(bundle.db, TODAY);
     expect(f.unbankedIncome.totalCents).toBe(0);
     expect(f.unbankedIncome.occurrenceCount).toBe(0);
+  });
+
+  /*
+   * 🔴 THE CALLER THE SWEEP MISSED (review of 082a0ef5, B1, MEDIUM). EOM cash is spendable cash today plus the committed
+   * net (`cashPosition` over `latestBalances`), so it holds every posted deposit on an account it counts as cash,
+   * attached or not — while the note under it said the passed paydays were "not in EOM cash". On a copy of his
+   * pre-filing ledger with the five October payroll rows filed Salary from the review queue (four attached to nothing),
+   * read Oct 29: "3 paydays worth $3,425.76 … — not counted above, and not in EOM cash" over EOM cash $6,442.78, the
+   * same $6,442.78 as with the rows attached.
+   *
+   * ⛔ `inEomCash`: of the rows the one rule matched to the passed paydays (`unattached`), those on an account EOM cash
+   * counts — an active one `cashPosition` calls spendable. A card's credit, or an archived account's, is in none of it.
+   */
+  test("of the rows matching a passed payday to the cent, those on an account EOM cash counts are in it", () => {
+    insertSeries({
+      name: "Payroll",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 300000,
+      status: "confirmed",
+      accountId: checkingId,
+    });
+    // Jul 1's pay, filed as his pay is and attached to nothing; its account checked through its days to land
+    insertTxn(checkingId, "2026-07-01", 300000, { categoryName: "Salary" });
+    checkedThrough(bundle.db, checkingId, "2026-07-06");
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.unbankedIncome.unattached?.map((m) => m.date)).toEqual(["2026-07-01"]);
+    expect(f.unbankedIncome.inEomCash).toEqual(f.unbankedIncome.unattached);
+    // archived, the account leaves cash — `cashPosition` reads active accounts only — and the row is in none of it
+    bundle.db.update(accounts).set({ isActive: false }).where(eq(accounts.id, checkingId)).run();
+    const archived = forecastCurrentMonth(bundle.db, TODAY).unbankedIncome;
+    expect(archived.unattached?.map((m) => m.date)).toEqual(["2026-07-01"]);
+    expect(archived.inEomCash).toEqual([]);
+  });
+
+  test("a row matching a passed payday on a card is named, and in no EOM cash: a card's credit is no cash", () => {
+    insertSeries({
+      name: "Cash back",
+      kind: "income",
+      cadence: "monthly",
+      intervalDaysAvg: 30,
+      nextExpectedOn: "2026-07-01",
+      nextExpectedAmountCents: 2500,
+      status: "confirmed",
+      accountId: cardId,
+    });
+    insertTxn(cardId, "2026-07-01", 2500, { categoryName: "Salary" });
+    checkedThrough(bundle.db, cardId, "2026-07-06");
+    const f = forecastCurrentMonth(bundle.db, TODAY);
+    expect(f.unbankedIncome.unattached?.map((m) => m.date)).toEqual(["2026-07-01"]);
+    expect(f.unbankedIncome.inEomCash).toEqual([]);
   });
 
   /* ⛔ The two legs abut at `today`, mirrored from the bills one: a payday dated

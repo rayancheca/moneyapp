@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
+import type { UnattachedMatch } from "@/lib/unattached-match";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { arrearsTail, HAS_NOT_POSTED } from "@/lib/arrears-reading";
@@ -19,7 +20,13 @@ import { formatCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import { seriesIsIncomeOrSpending } from "@/lib/series-kind";
 import { allocationsFor } from "@/lib/transaction-splits";
-import { accountLiquidity, cashPosition, listAccountOptions, outsidePortfolioCashAccountIds } from "./accounts";
+import {
+  accountLiquidity,
+  cashPosition,
+  inSpendableCash,
+  listAccountOptions,
+  outsidePortfolioCashAccountIds,
+} from "./accounts";
 import {
   agentsCostBucket,
   agentsSeriesBands,
@@ -387,7 +394,19 @@ export interface MonthForecast {
    * `committed` says in so many words that the whole point of that headline was
    * to stop those two halves disagreeing.
    */
-  unbankedIncome: UnbankedIncomeTotals;
+  unbankedIncome: UnbankedIncomeTotals & {
+    /**
+     * Of `unattached` — the rows the one rule matched to these paydays (`lib/unattached-match`) — those on an account
+     * EOM cash counts (`inSpendableCash`): its balance replays them, attached or not, so the note never calls their
+     * paydays "not in EOM cash" (`UnbankedIncomeNote`, `leftOutOf`). Absent: none.
+     *
+     * 🔴 Review of 082a0ef5 (B1, MEDIUM): on a copy of his pre-filing ledger with the five October payroll rows filed
+     * Salary from the review queue (four attached to nothing), read Oct 29, the note said "3 paydays worth $3,425.76 …
+     * — not counted above, and not in EOM cash" over EOM cash $6,442.78 — the same $6,442.78 as with the rows
+     * attached: the $3,425.76 was in it, through Wells Fargo's balance.
+     */
+    inEomCash?: readonly UnattachedMatch[];
+  };
   /**
    * What each reading's EOM cash leaves out: the lines that post to accounts
    * outside cash (`accountsOutsideCash`). The nets and EOM net worth keep them,
@@ -1664,7 +1683,11 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
       .map((r) => r.id),
   );
   // the month's window, the one the pay series' own page lists the same paydays over (`unbankedIncomeThisMonth`)
-  const unbanked = unbankedIncomeThisMonth(db, incomeSeriesIds, today);
+  const unbanked = unbankedIncomeTotals(unbankedIncomeThisMonth(db, incomeSeriesIds, today));
+  // …and of the rows the one rule matched to them, those EOM cash holds through a balance it starts from
+  const matched = unbanked.unattached ?? [];
+  const spendable = inSpendableCash(db, matched.map((m) => m.row.id));
+  const inEomCash = matched.filter((m) => spendable.has(m.row.id));
 
   // the components ARE the math: totals derive from them, exactly
   const projectedIncomeCents = components.reduce((sum, c) => (c.cents > 0 ? sum + c.cents : sum), 0);
@@ -1708,7 +1731,7 @@ function currentMonthForecast(db: AppDatabase, today: string, reads: ForecastRea
     },
     components,
     ...paceFields(reads),
-    unbankedIncome: unbankedIncomeTotals(unbanked),
+    unbankedIncome: { ...unbanked, inEomCash },
     outsideCash: outsideCashOf(db, parts),
     agentsIncome: { netCents: parts.agentsNet, committedNetCents: parts.committedAgentsNet },
     agentsCosts: { netCents: parts.agentsCostNet, committedNetCents: parts.committedAgentsCostNet },

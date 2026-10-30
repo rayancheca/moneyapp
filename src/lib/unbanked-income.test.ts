@@ -2,10 +2,13 @@ import { describe, expect, test } from "vitest";
 import { formatDayLong } from "./format-date";
 import type { UnattachedMatch } from "./unattached-match";
 import {
+  leftOutOf,
+  leftOutText,
   noIncomeDayCheckedIn,
   noIncomeDayCheckedNote,
   noIncomeDayCheckedOf,
   noIncomeDayCheckedWindowNote,
+  passedPaydaysLeftOut,
   passedPaydaysWords,
   sharedFrontier,
   unbankedIncomeFrontierClause,
@@ -292,5 +295,85 @@ describe("noIncomeDayCheckedWindowNote / noIncomeDayCheckedIn — a window's wor
     expect(noIncomeDayCheckedIn({ from: "2026-10-01", to: "2026-10-01", label: "Oct 1, 2026" })).toBe(
       "Oct 1, 2026 has not been checked in the accounts that pay lands in",
     );
+  });
+});
+
+/*
+ * ⛔ ONE SPLIT, every figure that names passed paydays it does not count (`leftOutOf`): a payday whose row the one rule
+ * matched (`lib/unattached-match`) is never called outside a figure that HOLDS that row, and every other payday keeps
+ * its claim — Free to spend's line (`passedPaydaysLeftOut`), /budgets' header (`PassedPaydaysLine`) and the forecast's
+ * note (`UnbankedIncomeNote`). 🔴 Review of 082a0ef5 (B1, B3): the claim was withheld of EVERY payday while any Income
+ * sat unattached where the pay lands, whichever payday it was and whatever its amount — and kept, on /recurring, of
+ * $3,425.76 its EOM cash held.
+ */
+describe("leftOutOf — what a figure may still be said to leave out of the passed paydays it names", () => {
+  const PAYROLL = 114_192;
+  const held = (date: string): UnattachedMatch => ({
+    date,
+    row: { id: `r-${date}`, postedOn: date, amountCents: PAYROLL },
+  });
+
+  test("no row it holds: all of it, said without an amount", () => {
+    expect(leftOutOf(3 * PAYROLL, [], "not in Free to spend")).toEqual({ cents: null, words: "not in Free to spend" });
+    expect(leftOutText(leftOutOf(3 * PAYROLL, [], "not in Free to spend")!)).toBe("not in Free to spend");
+  });
+
+  test("a row it holds for every payday: nothing is said of the figure", () => {
+    expect(leftOutOf(2 * PAYROLL, [held("2026-10-01"), held("2026-10-08")], "not in EOM cash")).toBeNull();
+  });
+
+  test("rows it holds for some: the money no row it holds answers, as part of the paydays' money", () => {
+    const some = leftOutOf(4 * PAYROLL, ["2026-10-01", "2026-10-08", "2026-10-22"].map(held), "not in EOM cash");
+    expect(some).toEqual({ cents: PAYROLL, words: "of it not in EOM cash" });
+    expect(leftOutText(some!)).toBe("$1,141.92 of it not in EOM cash");
+  });
+});
+
+/*
+ * ⚖️ Default built, not asked (2026-10-29): Free to spend names the paydays it has in neither leg (`passedPaydaysLeftOut`)
+ * — and since 2026-10-30 calls them "not in Free to spend" only of the paydays no row it holds answers (`leftOutOf`).
+ * The shape of a copy of his pre-filing ledger with the five October payroll rows filed Salary from the review queue,
+ * four attached to nothing, read Oct 30: Oct 1, 8 and 22's rows are in the figure; nobody has looked for Oct 29.
+ */
+describe("passedPaydaysLeftOut — the line under Free to spend, of the paydays it names", () => {
+  const PAYROLL = 114_192;
+  const held = (date: string): UnattachedMatch => ({
+    date,
+    row: { id: `r-${date}`, postedOn: date, amountCents: PAYROLL },
+  });
+  const october = {
+    totalCents: 4 * PAYROLL,
+    occurrenceCount: 4,
+    checkedOccurrenceCount: 3,
+    pastGraceOccurrenceCount: 3,
+    frontier: { kind: "day" as const, through: "2026-10-26" },
+    unattached: ["2026-10-01", "2026-10-08", "2026-10-22"].map(held),
+  };
+  const UNREAD =
+    "3 fall on days already checked, with no deposit attached to it — they are matched to the cent by rows of " +
+    "$1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that are not attached to it; the other " +
+    "one falls after Mon, Oct 26, 2026, the last day every account that pay lands in has been checked through.";
+
+  test("the rows the figure holds take back the claim of their own paydays — the payday no row answers keeps it", () => {
+    expect(passedPaydaysLeftOut(october, "Free to spend", formatDayLong, october.unattached)?.text).toBe(
+      `4 paydays worth $4,567.68 already passed this month — $1,141.92 of it not in Free to spend. ${UNREAD}`,
+    );
+  });
+
+  test("rows it does not hold take back nothing: the claim stands of every payday", () => {
+    expect(passedPaydaysLeftOut(october, "Free to spend", formatDayLong, [])?.text).toBe(
+      `4 paydays worth $4,567.68 already passed this month — not in Free to spend. ${UNREAD}`,
+    );
+  });
+
+  test("a row it holds for every payday: the paydays are named, and nothing is said of the figure", () => {
+    const checked = { ...october, totalCents: 3 * PAYROLL, occurrenceCount: 3, checkedOccurrenceCount: 3 };
+    expect(passedPaydaysLeftOut(checked, "Free to spend", formatDayLong, checked.unattached)).toEqual({
+      text:
+        "3 paydays worth $3,425.76 already passed this month with no deposit attached to it. Pay matched to the cent " +
+        "by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that are not attached to " +
+        "it cannot be projected as arriving.",
+      warning: true,
+    });
   });
 });

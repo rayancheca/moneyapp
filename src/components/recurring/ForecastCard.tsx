@@ -4,7 +4,7 @@ import { forecastSplit } from "@/lib/forecast-split";
 import { formatDayLong } from "@/lib/format-date";
 import { incomePaceMeasurable } from "@/lib/income-forecast";
 import { projectedEvidence } from "@/lib/series-evidence";
-import { passedPaydaysWords } from "@/lib/unbanked-income";
+import { leftOutOf, passedPaydaysWords } from "@/lib/unbanked-income";
 import type { MonthForecast } from "@/services/forecast";
 import { ForecastComposition } from "./ForecastComposition";
 import { monthLabel, staleComponentEntries } from "./labels";
@@ -26,14 +26,33 @@ interface ForecastCardProps {
  *
  * ⛔ In `passedPaydaysWords`, the words the pay series' own page heads its list of the same paydays with — the
  * warning (a payday checked through its days to land) and "Pay that never reaches a bank" too, never "Cash pay".
+ *
+ * ⛔ "Not in EOM cash" only of the paydays no row EOM cash holds answers (`leftOutOf` over `inEomCash`): its balance
+ * replays a row the one rule matched to a payday whether or not it is attached — "and $1,141.92 of it not in EOM cash"
+ * where it holds some, and where it holds them all "though EOM cash holds the rows that match them", so "not counted
+ * above" is never read of EOM cash. "Not counted above" stays of every one: no line of the forecast projects a passed
+ * payday. 🔴 Review of 082a0ef5 (B1, MEDIUM): the tile and /budgets were taught this and the note was not — "3 paydays
+ * worth $3,425.76 … — not counted above, and not in EOM cash" over EOM cash $6,442.78, the same with the rows attached
+ * (a copy of his pre-filing ledger, its payroll filed Salary, read Oct 29).
  */
 export function UnbankedIncomeNote({ unbanked: u }: { unbanked: MonthForecast["unbankedIncome"] }) {
   const w = passedPaydaysWords(u, formatDayLong);
   const names = u.names.length > 0 ? ` (${u.names.join(", ")})` : "";
+  const outOfCash = leftOutOf(u.totalCents, u.inEomCash ?? [], "not in EOM cash");
+  const rowsThatMatch = u.occurrenceCount === 1 ? "the row that matches it" : "the rows that match them";
   return (
     <p className={`mt-1 text-xs ${w.warning ? "text-warning" : "text-ink-faint"}`}>
       {w.count} worth <Money cents={u.totalCents} /> {w.passed}
-      {names} — not counted above, and not in EOM cash. {w.unread === null ? "" : `${w.unread} `}
+      {names} — not counted above
+      {outOfCash === null ? (
+        `, though EOM cash holds ${rowsThatMatch}`
+      ) : (
+        <>
+          , and {outOfCash.cents !== null && <><Money cents={outOfCash.cents} /> </>}
+          {outOfCash.words}
+        </>
+      )}
+      . {w.unread === null ? "" : `${w.unread} `}
       {w.notProjected}; the month strip below counts it, because that line is the schedule.
     </p>
   );

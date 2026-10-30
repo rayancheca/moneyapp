@@ -2,6 +2,7 @@ import {
   countedDepositWords,
   MATCHED_TO_THE_CENT_BY,
   matchedOfWords,
+  unattachedCents,
   unattachedRowsWords,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
@@ -431,8 +432,46 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
 }
 
 /**
- * A line naming the passed paydays a figure leaves out — said to be out of it only where its rows bear that out
- * (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
+ * What a figure is still said to leave out of the passed paydays a sentence names (`leftOutOf`): every payday's money
+ * (`cents` null — said without an amount), or the part of it no row the figure holds answers ("$1,141.92 of it").
+ */
+export interface LeftOut {
+  /** the part left out, where it is not all of the paydays' money; null when it is */
+  readonly cents: number | null;
+  /** what is said of it — "not in Free to spend", or after the part's amount "of it not in Free to spend" */
+  readonly words: string;
+}
+
+/**
+ * ⛔ ONE SPLIT, every figure that names passed paydays it does not count: a payday whose row the one rule matched
+ * (`lib/unattached-match` — on its series' account, within its tolerance, to the cent) is never said to be outside a
+ * figure that HOLDS that row (`held`), and a payday no row it holds answers keeps its claim. Free to spend's line
+ * (`passedPaydaysLeftOut`, `notIn` "not in Free to spend"), /budgets' header (`PassedPaydaysLine`, "counted in neither
+ * figure above") and the forecast's note (`UnbankedIncomeNote`, "not in EOM cash") say it through this one split. Null
+ * when the figure holds a row for every payday: nothing is said of it, and the paydays are still named. ⛔ It moves
+ * no money: the paydays stay passed unpaid, and only the claim that their money is outside the figure is taken back.
+ *
+ * Each held row is its payday's money to the cent (the one rule's match), so what is left is the other paydays' money.
+ *
+ * 🔴 Review of 082a0ef5 (B1, B3, MEDIUM): the claim was withheld of EVERY payday while any Income sat unattached where
+ * some pay landed — a $50 tip of Tutoring's in Savings held back It America's Jun 11, which no deposit paid, and on his
+ * ledger copy with Oct 15's off-cycle $200.00 detached, read Oct 30, the tile dropped "— not in Free to spend" of Oct
+ * 29, a payday no $200.00 of Oct 15 can be; and /recurring kept "not in EOM cash" of the $3,425.76 its EOM cash held.
+ */
+export function leftOutOf(totalCents: number, held: readonly UnattachedMatch[], notIn: string): LeftOut | null {
+  const leftCents = totalCents - unattachedCents(held);
+  if (leftCents <= 0) return null;
+  return leftCents >= totalCents ? { cents: null, words: notIn } : { cents: leftCents, words: `of it ${notIn}` };
+}
+
+/** The split as plain text: "not in Free to spend", "$1,141.92 of it not in Free to spend" — for a line of words. */
+export function leftOutText(l: LeftOut): string {
+  return l.cents === null ? l.words : `${formatCents(l.cents)} ${l.words}`;
+}
+
+/**
+ * A line naming the passed paydays a figure leaves out — said to be out of it only of the paydays no row it holds
+ * answers (`passedPaydaysLeftOut`) — and whether it wears the warning's tone (`warning`).
  */
 export interface PaydaysLeftOut {
   text: string;
@@ -451,23 +490,24 @@ export interface PaydaysLeftOut {
  * account is read for. 🔴 Free to spend left Jul 9's $1,000 out of both legs on Jul 10 and said nothing (review of
  * a5ce8b15).
  *
- * ⛔ "— not in Free to spend" only where the figure's posted rows bear it out: where its posted Income holds money no
- * pay schedule is attached to in an account that pay lands in (`postedMayHoldThem`,
- * `unattachedIncomeWherePayLandsCents`), the paydays are named and nothing is said of the figure. 🔴 The paydays are
- * settlement's, which reads only attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000
- * filed Income › Salary and attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case
- * shows (review of 5c1c4903, MEDIUM).
+ * ⛔ "— not in Free to spend" only of the paydays no row the figure's posted leg holds answers (`leftOutOf`, over the
+ * rows the one rule matched that the leg counts — `postedIncomeHolds`): "— $1,141.92 of it not in Free to spend" where
+ * it holds some, nothing said of the figure where it holds them all. 🔴 The paydays are settlement's, which reads only
+ * attached rows, and the posted leg counts every row filed under Income: Jul 9's $1,000 filed Income › Salary and
+ * attached to nothing read "— not in Free to spend" under the $4,920.00 the attached case shows (review of 5c1c4903,
+ * MEDIUM).
  */
 export function passedPaydaysLeftOut(
   passed: PassedPaydaysReading & { totalCents: number },
   figure: string,
   formatDay: (iso: string) => string,
-  /** the figure's posted Income holds money no pay schedule is attached to where that pay lands */
-  postedMayHoldThem: boolean,
+  /** of the rows the one rule matched to these paydays (`passed.unattached`), those the figure's posted leg counts */
+  held: readonly UnattachedMatch[],
 ): PaydaysLeftOut | null {
   if (passed.totalCents <= 0) return null;
   const w = passedPaydaysWords(passed, formatDay);
-  const notIn = postedMayHoldThem ? "" : ` — not in ${figure}`;
+  const left = leftOutOf(passed.totalCents, held, `not in ${figure}`);
+  const notIn = left === null ? "" : ` — ${leftOutText(left)}`;
   const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed}${notIn}.`;
   return { text: `${lead} ${w.unread ?? `${w.notProjected}.`}`, warning: w.warning };
 }

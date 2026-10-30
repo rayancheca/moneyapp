@@ -135,3 +135,63 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
     expect(words).not.toMatch(/\b(?:Aug|Sep) \d/);
   });
 });
+
+/*
+ * 🔴 THE CALLER THE SWEEP MISSED (review of 082a0ef5, B1, MEDIUM): EOM cash is spendable cash today plus the committed
+ * net, so it holds every posted deposit on a spendable account, attached or not. On a copy of his pre-filing ledger with
+ * the five October payroll rows filed Salary from the review queue (four attached to nothing), read Oct 29, the note
+ * said "3 paydays worth $3,425.76 already passed this month … — not counted above, and not in EOM cash" over an EOM
+ * cash of $6,442.78 — the same $6,442.78 as with the rows attached, the $3,425.76 in it through Wells Fargo's balance.
+ *
+ * ⛔ "Not in EOM cash" only of the paydays no row EOM cash holds answers (`MonthForecast.unbankedIncome.inEomCash`,
+ * `leftOutOf`); "not counted above" stays, of all of them: no line of the forecast projects a passed payday.
+ */
+describe("UnbankedIncomeNote — 'not in EOM cash' only of the paydays no row EOM cash holds answers", () => {
+  const PAYROLL = 114_192;
+  const matchOn = (date: string) => ({ date, row: { id: `r-${date}`, postedOn: date, amountCents: PAYROLL } });
+  const ROWS = ["2026-10-01", "2026-10-08", "2026-10-22"].map(matchOn);
+  const october = {
+    totalCents: 3 * PAYROLL,
+    occurrenceCount: 3,
+    names: ["It America LLC (weekly pay)"],
+    checkedOccurrenceCount: 3,
+    pastGraceOccurrenceCount: 3,
+    frontier: { kind: "day" as const, through: "2026-10-26" },
+    unattached: ROWS,
+  };
+  const PAY_MATCHED =
+    "Pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that " +
+    "are not attached to it cannot be projected as arriving; the month strip below counts it, because that line is " +
+    "the schedule.";
+
+  // ⛔ …and "not counted above" — the forecast's lines — never read of the EOM cash that holds them
+  test("rows EOM cash holds for every payday: not counted above, though EOM cash holds those rows", () => {
+    expect(text({ ...october, inEomCash: ROWS }).words).toBe(
+      "3 paydays worth $3,425.76 already passed this month with no deposit attached to it (It America LLC (weekly " +
+        `pay)) — not counted above, though EOM cash holds the rows that match them. ${PAY_MATCHED}`,
+    );
+    const one = { ...october, totalCents: PAYROLL, occurrenceCount: 1, checkedOccurrenceCount: 1 };
+    expect(text({ ...one, pastGraceOccurrenceCount: 1, unattached: ROWS.slice(0, 1), inEomCash: ROWS.slice(0, 1) }).words)
+      .toContain("— not counted above, though EOM cash holds the row that matches it. Pay matched to the cent by a row");
+  });
+
+  test("…for some: the money no row it holds answers is the part not in EOM cash — Oct 29, read Oct 30", () => {
+    const { words } = text({
+      ...october,
+      totalCents: 4 * PAYROLL,
+      occurrenceCount: 4,
+      inEomCash: ROWS,
+    });
+    expect(words).toContain(
+      "4 paydays worth $4,567.68 already passed this month (It America LLC (weekly pay)) — not counted above, and " +
+        "$1,141.92 of it not in EOM cash. 3 fall on days already checked,",
+    );
+  });
+
+  test("rows it does not hold — on an account outside cash, or after its balance's day — take nothing back", () => {
+    expect(text({ ...october, inEomCash: [] }).words).toBe(
+      "3 paydays worth $3,425.76 already passed this month with no deposit attached to it (It America LLC (weekly " +
+        `pay)) — not counted above, and not in EOM cash. ${PAY_MATCHED}`,
+    );
+  });
+});
