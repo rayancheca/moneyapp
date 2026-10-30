@@ -573,6 +573,82 @@ describe("an import's link that files nothing: his payroll rows attached and unf
     expect(oct1.map((e) => [e.state, e.transactionId !== null, e.settledCents])).toEqual([["paid", true, 114_192]]);
     expect(filed.postedNetCents).toBe(114_192);
   });
+
+  /** An import's link that files nothing (`importLinkedUnfiled`): one credit attached to his pay, filed nowhere. */
+  function linkedUnfiled(day: string, amountCents: number): string {
+    const id = row(day, amountCents, { seriesId: PAY });
+    bundle.db.update(transactions).set({ seriesLinkSource: "detected" }).where(eq(transactions.id, id)).run();
+    return id;
+  }
+
+  /*
+   * ⛔ …but a credit NO payday mark stands for is his history: drawn where it landed, "paid — toward no payday", and
+   * Settled as it always was. Only a payday mark of its series takes its place — the row the one rule names there, or a
+   * payday on its own day (one mark a payday: the $200.00 of Oct 15). 🔴 Review of ff0bf19 (8b-1, MEDIUM): every such
+   * credit was skipped, so one off any payday was drawn nowhere — and a series built from such credits lost its whole
+   * history (the e2e post-suite copy, read Jul 8: ten marks over Apr – Jun 2026).
+   */
+  test("a credit no payday mark stands for keeps its mark and its Settled; the one on a payday draws it once", () => {
+    importLinkedUnfiled(PAYDAYS.slice(0, 3));
+    // Oct 22's payroll a day late: Oct 22's "?" names it, so Fri Oct 23 draws nothing of its own
+    const late = linkedUnfiled("2026-10-23", 114_192);
+    const offCycle = linkedUnfiled("2026-10-15", 20_000);
+    // a Monday, three days from either Thursday: no payday is on its day, and none matches it to the cent
+    const monday = linkedUnfiled("2026-10-05", 50_000);
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    const pay = (day: string) => (october.entriesByDay[day] ?? []).filter((e) => e.seriesId === PAY);
+    expect(pay("2026-10-05").map((e) => [e.transactionId, e.state, e.towardNoPayday, e.settledCents])).toEqual([
+      [monday, "paid", true, 50_000],
+    ]);
+    const drawn = Object.values(october.entriesByDay).flat();
+    expect(drawn.some((e) => e.transactionId === offCycle || e.transactionId === late)).toBe(false);
+    for (const day of PAYDAYS) expect(pay(day).map((e) => e.unsettledReason)).toEqual(["matched_unattached"]);
+    expect(pay("2026-10-22")[0]!.unattached?.row.id).toBe(late);
+    expect(october.postedNetCents).toBe(50_000);
+    expect([october.unsettledCount, october.unsettledGrossCents]).toEqual([4, 4 * 114_192]);
+  });
+
+  /*
+   * ⛔ …and the row the one rule names on a payday in the NEXT or the LAST month is that payday's, not a mark of its own
+   * month: each month asks the one rule of its series' paydays within a tolerance of its edges too. ⚖️ His Wed Sep 30
+   * payroll paid Thu Oct 1 (decisions 29/32): imported attached and unfiled, October's Oct 1 names it, so September
+   * draws nothing of it and settles none of it — never one week told in two months.
+   */
+  test("a credit the next month's payday names is drawn in neither month; one the last month's names, the same", () => {
+    importLinkedUnfiled(PAYDAYS.slice(1));
+    const sep30 = linkedUnfiled("2026-09-30", 114_192);
+    const october = recurringCalendar(bundle.db, "2026-10", TODAY);
+    const oct1 = october.entriesByDay["2026-10-01"]!.filter((e) => e.seriesId === PAY);
+    expect(oct1.map((e) => [e.unsettledReason, e.unattached?.row.id])).toEqual([["matched_unattached", sep30]]);
+    const september = recurringCalendar(bundle.db, "2026-09", TODAY);
+    expect(Object.values(september.entriesByDay).flat().some((e) => e.transactionId === sep30)).toBe(false);
+    // his four filed September deposits and the lease's Sep 15 payment — nothing of Sep 30's
+    expect(september.postedNetCents).toBe(4 * 114_192 - 69_504);
+
+    // …and the other edge: Thu Oct 29's pay landing Sun Nov 1, Wells Fargo read through Nov 4, read Nov 5
+    checkedThrough(bundle.db, WF, "2026-11-04", "2026-08-01");
+    row("2026-11-04", -450);
+    const nov1 = linkedUnfiled("2026-11-01", 114_192);
+    const later = "2026-11-05";
+    const oct29 = recurringCalendar(bundle.db, "2026-10", later).entriesByDay["2026-10-29"]!;
+    expect(oct29.filter((e) => e.seriesId === PAY).map((e) => e.unattached?.row.id)).toEqual([nov1]);
+    const november = recurringCalendar(bundle.db, "2026-11", later);
+    expect(Object.values(november.entriesByDay).flat().some((e) => e.transactionId === nov1)).toBe(false);
+    expect(november.postedNetCents).toBe(0);
+  });
+
+  // ⛔ …but a payday its own deposit paid names no row, in its month or beside it: the credit next to it is history
+  test("a credit beside a payday its own deposit paid, across the edge, is drawn where it landed", () => {
+    row("2026-10-01", 114_192, { seriesId: PAY, categoryId: categoryId("Salary", "Income") });
+    const sep30 = linkedUnfiled("2026-09-30", 114_192);
+    const oct1 = recurringCalendar(bundle.db, "2026-10", TODAY).entriesByDay["2026-10-01"]!;
+    expect(oct1.filter((e) => e.seriesId === PAY).map((e) => [e.state, e.transactionId !== null, e.unattached]))
+      .toEqual([["paid", true, null]]);
+    const sep30Drawn = recurringCalendar(bundle.db, "2026-09", TODAY).entriesByDay["2026-09-30"]!;
+    expect(sep30Drawn.map((e) => [e.transactionId, e.towardNoPayday, e.settledCents])).toEqual([
+      [sep30, true, 114_192],
+    ]);
+  });
 });
 
 /*

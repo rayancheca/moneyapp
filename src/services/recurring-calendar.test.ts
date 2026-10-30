@@ -682,6 +682,37 @@ describe("recurringCalendar", () => {
   });
 
   /*
+   * ⛔ A CREDIT LINKED TO A PAY SERIES THAT ITS SETTLEMENT NEVER READ IS STILL ITS HISTORY (`notFiledAsIncome`): drawn
+   * where it landed, "paid — toward no payday", and Settled as it always was — unless a payday mark of its series
+   * stands for it (the row the one rule names there, or a payday on its own day). 🔴 Review of ff0bf19 (8b-1, MEDIUM):
+   * every such credit was skipped, so a series Detect now builds from unfiled credits lost its whole posted history —
+   * this fixture left unfiled drew none of Jan 2, 9, 16 or 23 and only Jan 30, and the e2e post-suite copy read Jul 8
+   * lost ten marks over Apr – Jun 2026: April 29 → 26 entries, its Settled $2,936.67 → $2,474.94, June 34 → 30.
+   */
+  test("a pay series built from unfiled credits keeps its posted history, Settled, beside the payday after it", () => {
+    const days = ["2026-01-02", "2026-01-09", "2026-01-16", "2026-01-23"];
+    for (const day of days) insertTxn({ postedOn: day, amountCents: 104700, rawDescription: "CASH JOB WEEKLY PAY" });
+    detectRecurringSeries(bundle.db, "2026-01-30");
+    bundle.db
+      .update(recurringSeries)
+      .set({ kind: "income", status: "confirmed", userAmountCents: 104700 })
+      .where(eq(recurringSeries.name, "CASH JOB WEEKLY PAY"))
+      .run();
+    cardCheckedThrough("2026-01-01", "2026-07-07");
+
+    const january = recurringCalendar(bundle.db, "2026-01", TODAY);
+    for (const day of days) {
+      const drawn = january.entriesByDay[day] ?? [];
+      expect(drawn.map((e) => [e.state, e.transactionId !== null, e.towardNoPayday, e.settledCents])).toEqual([
+        ["paid", true, true, 104700],
+      ]);
+    }
+    expect(january.postedNetCents).toBe(4 * 104700);
+    // the payday after them is graded on its own, a mark of its own — no row the one rule names
+    expect(january.entriesByDay["2026-01-30"]!.map((e) => [e.transactionId, e.unattached])).toEqual([[null, null]]);
+  });
+
+  /*
    * 🔴 "EVIDENCE STALE" OVER A BILL THE BANK HAS NEVER CHARGED. Measured on the
    * real ledger at today = 2026-09-14, `/recurring?tab=calendar` printed
    * "Car lease upcoming (scheduled, evidence stale) -$695.04" and "Gym upcoming

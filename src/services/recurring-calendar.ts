@@ -5,7 +5,7 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { daysInMonthOf } from "@/lib/calendar-math";
 import { isCategoryHueName, type CategoryHueName } from "@/lib/category-palette";
-import { compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addDays, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { flowEntryOf, monthFlow, type MonthFlow, type MonthFlowEntry } from "@/lib/month-flow";
 import { hasArrived, portionsAcross, type SettlementPortion } from "@/lib/payday-settlement";
 import {
@@ -596,6 +596,42 @@ function chargeRow(owed: SettlementPortion[] | undefined, amountCents: number): 
   return { cents, paydays: [...paydays].sort(compareDates) };
 }
 
+/** A month's credit linked to a pay series that its settlement never read, as step 1 would draw it. */
+interface UnreadCredit {
+  date: string;
+  entry: CalendarEntry;
+}
+
+/**
+ * Of a month's credits linked to a pay series that its settlement never read (`PaydayReading.notFiledAsIncome`), the
+ * ones drawn — each where it landed, "paid — toward no payday", and Settled, as it always was: his history.
+ * ⛔ Never one a payday mark of its series stands for: the row the one rule names on a payday (`named`) — of the
+ * month, or just past its edges, whose month's mark names it — nor one on a day its series draws a payday: one mark a
+ * payday, so the off-cycle $200.00 of Oct 15 stays drawn nowhere until it is filed (8b's default of 2026-10-29, kept to
+ * the reach it named).
+ *
+ * 🔴 Review of e6ad55a (HIGH): drawn and settled whole, one week was told twice on one Thursday. The trial import of
+ * the Oct 26 statement into his pre-import copy, read Oct 29: Oct 1, 8, 15 and 22 each drew the row "paid — toward no
+ * payday" beside the "?" naming it, and October's Settled +$2,412.47 held $4,767.68 of rows no other surface counts
+ * (the four, and that $200.00) while Not yet known held the same paydays' $4,567.68. One mark a payday: −$2,355.21.
+ * 🔴 Review of ff0bf19 (8b-1, MEDIUM): every such credit was then skipped, not just those — a series Detect now builds
+ * from unfiled credits lost its whole posted history, and no "?" named any of it (no deposit read, no first payday).
+ * The e2e post-suite copy read Jul 8 lost ten marks over Apr – Jun 2026 (+$400.00 ×3, interest ×6, a $33.00
+ * cashback): April 29 → 26 entries and its Settled $2,936.67 → $2,474.94, June 34 → 30 — and marks in every month
+ * from Jul 2024 on. Measured again 2026-10-30: that copy reads as 72a9959f did, Jan 2024 – Dec 2026, byte for byte.
+ */
+function unreadCreditsDrawn(
+  credits: readonly UnreadCredit[],
+  named: ReadonlyMap<string, readonly UnattachedMatch[]>,
+  entriesByDay: Readonly<Record<string, readonly CalendarEntry[]>>,
+): UnreadCredit[] {
+  if (credits.length === 0) return [];
+  const namedRows = new Set([...named.values()].flatMap((matches) => matches.map((m) => m.row.id)));
+  const paydayOn = (c: UnreadCredit): boolean =>
+    (entriesByDay[c.date] ?? []).some((e) => e.seriesId === c.entry.seriesId && e.transactionId === null);
+  return credits.filter((c) => !namedRows.has(c.entry.transactionId ?? "") && !paydayOn(c));
+}
+
 export function recurringCalendar(
   db: AppDatabase,
   month: string = monthKey(todayIso()),
@@ -779,6 +815,8 @@ export function recurringCalendar(
 
   // 1) posted charges tagged to a drawable series, inside the month — what pays a bill's day is step 2's to read
   const postedDatesBySeries = new Map<string, string[]>();
+  /** the month's credits linked to a pay series that its settlement never read — drawn once step 2 has its paydays */
+  const unreadCredits: UnreadCredit[] = [];
   if (historyRows.length > 0) {
     const posted = db
       .select({
@@ -816,23 +854,6 @@ export function recurringCalendar(
        */
       if (settlements.has(s.id) && !hasArrived(p.postedOn, today)) continue;
       const reading = readings.get(s.id)?.get(p.id);
-      /*
-       * ⛔ …NOR IS A CREDIT ITS SETTLEMENT NEVER READ (`PaydayReading.notFiledAsIncome`): money linked to the pay on a
-       * day no row of it is filed as his pay, or itself filed as spending, is no pay of the series on any surface — and
-       * to the one rule a row it may only NAME. So it is drawn where the one rule names it, by the payday it matches to
-       * the cent ("matched to the cent by a row of $1,141.92 on Oct 1 that is attached to it but not filed as income"),
-       * and settles nothing: like an unattached row, never a mark of its own. Money out off its pay days is still drawn,
-       * as the money out it is (`ReadableRow.offPayDay`).
-       *
-       * 🔴 Review of e6ad55a (HIGH): drawn and settled whole, one week was told twice on one Thursday. The trial import
-       * of the Oct 26 statement into his pre-import copy, read Oct 29: Oct 1, 8, 15 and 22 each drew the row "paid —
-       * toward no payday" beside the "?" naming it, and October's Settled +$2,412.47 held $4,767.68 of rows no other
-       * surface counts (the four, and the off-cycle $200.00 of Oct 15) while Not yet known held the same paydays'
-       * $4,567.68. Now one mark a payday, naming its row, and Settled −$2,355.21.
-       * ⚖️ Default built, not asked (2026-10-29): a credit of it the one rule matches to no payday — that $200.00 — is
-       * drawn nowhere, as an unattached row is not; filed as his pay (his act, or the import's), it is drawn and counted.
-       */
-      if (reading?.notFiledAsIncome === true) continue;
       const stddev = s.amountCentsStddev ?? measured.get(s.id) ?? null;
       /*
        * ⚖️ A PAY ROW IS GRADED PER PAYDAY (`lib/per-payday`): a lump whose money
@@ -855,7 +876,7 @@ export function recurringCalendar(
       // the money this deposit spent on another month's paydays is THAT month's
       // Settled figure, where the chip naming this day stands
       const elsewhere = chargeRow(owedElsewhere.get(s.id)?.get(p.postedOn), p.amountCents);
-      pushEntry(p.postedOn, {
+      const entry: CalendarEntry = {
         seriesId: s.id,
         name: s.name,
         kind: s.kind,
@@ -876,7 +897,20 @@ export function recurringCalendar(
         billedWith: null,
         paidWith: null,
         hue: hues.get(s.id) ?? null,
-      });
+      };
+      /*
+       * ⛔ …AND A CREDIT ITS SETTLEMENT NEVER READ (`PaydayReading.notFiledAsIncome`) WAITS FOR ITS PAYDAYS: money
+       * linked to the pay on a day no row of it is filed as his pay, or itself filed as spending, is no pay of the
+       * series on any surface, and to the one rule a row it may only NAME. Where a payday mark of its series stands for
+       * it — the row the one rule names there, or a payday on its own day — it is no mark of its own
+       * (`unreadCreditsDrawn`, after step 2); everywhere else it is his history, drawn where it landed as it always
+       * was. Money out off its pay days is drawn at once, as the money out it is (`ReadableRow.offPayDay`).
+       */
+      if (reading?.notFiledAsIncome === true) {
+        unreadCredits.push({ date: p.postedOn, entry });
+        continue;
+      }
+      pushEntry(p.postedOn, entry);
       const dates = postedDatesBySeries.get(s.id) ?? [];
       dates.push(p.postedOn);
       postedDatesBySeries.set(s.id, dates);
@@ -942,6 +976,19 @@ export function recurringCalendar(
     reading: OccurrenceReading;
     proven: ScheduleProven;
   }[] = [];
+  /** …and, for a series with a credit its settlement never read, its unpaid paydays just past the month's edges */
+  const edges: Omit<(typeof past)[number], "proven">[] = [];
+  const unreadCreditSeries = new Set(unreadCredits.map((c) => c.entry.seriesId));
+  /** How far the ledger has read a past occurrence's day — one reading for the month's days and the edges' alike. */
+  const readingFor = (s: (typeof forecastRows)[number]): OccurrenceReading => ({
+    // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
+    dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
+    // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
+    // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
+    paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
+    // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
+    paydayLandingDays: s.toleranceDays,
+  });
 
   for (const s of forecastRows) {
     if (hasStoppedForecasting(s, today, silenceThroughOf(s.id))) continue;
@@ -952,6 +999,24 @@ export function recurringCalendar(
      */
     const projectable = paydayProjectable(s, settlements.get(s.id), today);
     const occurrences = projectOccurrences(projectable, monthStart, monthEnd);
+    /*
+     * ⛔ …and where a credit of it settlement never read waits (`unreadCredits`), its paydays within its tolerance
+     * outside the month too, paid by no deposit — asked as the month's own are (`asksForUnattachedMatch`, which reads
+     * only a payday checked through its days to land): the one rule may give the credit to one of them
+     * (`unreadCreditsDrawn`). ⚖️ His Wed Sep 30 payroll paid Thu Oct 1 (decisions 29/32): left unfiled, it is
+     * October's Oct 1 "?" that names it, and September must not draw it as well.
+     */
+    if (unreadCreditSeries.has(s.id)) {
+      const portions = settlements.get(s.id)?.portions ?? [];
+      const outside = [
+        ...projectOccurrences(projectable, addDays(monthStart, -s.toleranceDays), addDays(monthStart, -1)),
+        ...projectOccurrences(projectable, addDays(monthEnd, 1), addDays(monthEnd, s.toleranceDays)),
+      ];
+      // a payday its deposits paid is drawn paid in its month, naming no row — so it names none here either
+      for (const o of outside.filter((d) => !portions.some((p) => p.paydayOn === d.date))) {
+        edges.push({ s, o, reading: readingFor(s) });
+      }
+    }
     const postedDates = postedDatesBySeries.get(s.id) ?? [];
     // the arrears' test of a covering posting (`paymentFor`), over the postings the arrears read, on its own due days
     const payments = paymentsBySeries.get(s.id) ?? [];
@@ -1067,15 +1132,7 @@ export function recurringCalendar(
       past.push({
         s,
         o,
-        reading: {
-          // ⚖️ the arrears' reading of the same day (`dueDayReadings`): a ✕ exactly where they say "not posted"
-          dueDay: readingOf ? readingOf(s.id) : { observedThrough: null, graceDays: s.toleranceDays, readsToToday: false },
-          // the passed paydays' frontier (`unbankedIncomeForSeries`): "the ledger has not looked for its deposit"
-          // (`not_looked_for`) exactly where the forecast, his pay's page, /budgets and the dashboard say it
-          paydaysCheckedThrough: paydaysCheckedOf ? paydaysCheckedOf(s.id) : null,
-          // …and its days to land: "never reached a bank" exactly where Earned vs banked says it (`unbankedSplit`)
-          paydayLandingDays: s.toleranceDays,
-        },
+        reading: readingFor(s),
         // ⚖️ a day billed inside another's payment is the carrier's day, measured by the carrier's charges — never
         // "missed" alone beside a rent whose own date is too thinly charged to grade (§6A 59)
         proven: scheduleIsProven(postingCounts.get(s.billedWith?.id ?? s.id) ?? 0),
@@ -1096,7 +1153,8 @@ export function recurringCalendar(
    * $50.00 on Oct 10 that is not attached to it".
    */
   const asked = new Map<string, ExpectedDay[]>();
-  for (const { s, o, reading } of past) {
+  // the month's days draw their marks; the edges' only say which row is theirs (`unreadCreditsDrawn`)
+  for (const { s, o, reading } of [...past, ...edges]) {
     if (!asksForUnattachedMatch(s.kind, o.date, reading)) continue;
     asked.set(s.id, [...(asked.get(s.id) ?? []), { date: o.date, amountCents: o.amountCents }]);
   }
@@ -1117,6 +1175,7 @@ export function recurringCalendar(
       billedWith: null,
     });
   }
+  for (const c of unreadCreditsDrawn(unreadCredits, unattachedOf, entriesByDay)) pushEntry(c.date, c.entry);
 
   let entryCount = 0;
   let postedNetCents = 0;
