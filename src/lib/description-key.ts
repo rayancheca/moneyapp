@@ -17,6 +17,8 @@
  * keys (mirrors the null-key skip in recurring detection).
  */
 
+import { withoutAchReferences } from "./normalize";
+
 const TICKER_SUFFIX_RE = /\(([A-Z][A-Z0-9.]{0,6})\)\s*$/;
 const BROKERAGE_MARKER_RE = /\b(?:CUSIP|DIV|DIVIDENDS?|SHARES|REINVEST(?:MENT)?|SPLIT)\b/;
 
@@ -69,7 +71,11 @@ export function humanizeDescriptionKey(key: string): string {
 }
 
 export function strippedDescriptionKey(normalizedDescription: string): string {
-  const s = normalizedDescription.toUpperCase().trim();
+  // ⛔ the key is read from the STORED description, and a row stored before normalizer v3 still holds its ACH
+  // individual ID: read in v3's form, it keys as the next payment's row does (`withoutAchReferences`). 🔴 Keyed as
+  // stored, his ledger copy (2026-10-29) named each Capital One payment a payee of its own on /spending, while the
+  // heatmap beside it — which keys `normalizeDescription(raw)` — would have named the same payments one payee.
+  const s = withoutAchReferences(normalizedDescription.toUpperCase().trim());
   if (s === "") return "";
 
   const tickerMatch = TICKER_SUFFIX_RE.exec(s);

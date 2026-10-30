@@ -261,6 +261,7 @@ describe("unbankedIncomeTotals — one reading for a sentence about several seri
       occurrenceCount: 4,
       checkedOccurrenceCount: 1, // Tutoring's Sep 3
       pastGraceOccurrenceCount: 0, // …but not its days to land: Sep 4 is checked, Sep 5 and 6 are not
+      unattached: [],
       frontier: { kind: "per-schedule" },
       names: ["Cash job (weekly pay)", "Tutoring"],
     });
@@ -298,6 +299,7 @@ describe("unbankedIncomeTotals — one reading for a sentence about several seri
       occurrenceCount: 0,
       checkedOccurrenceCount: 0,
       pastGraceOccurrenceCount: 0,
+      unattached: [],
       frontier: { kind: "unchecked" },
       names: [],
     });
@@ -318,6 +320,7 @@ describe("both surfaces that print the figure carry the split", () => {
       occurrenceCount: 2,
       checkedOccurrenceCount: 0,
       pastGraceOccurrenceCount: 0,
+      unattached: [],
       frontier: { kind: "day", through: "2026-08-12" },
       names: ["Cash job (weekly pay)"],
     });

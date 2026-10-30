@@ -787,11 +787,12 @@ describe("dashboardData: spending pace", () => {
       const pace = dashboardData(bundle.db, "2026-07-14").pace!;
       // its posted leg holds Jul 9's deposit: Jul 2 and Jul 9 + Jul 16, 23 and 30 to come − $80
       expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
-      // …so the payday is named in the forecast's words, and nothing is said of the figure
+      // …so the payday is named in the forecast's words, and nothing is said of the figure — ⛔ nor "no deposit
+      // imported" of it: the one rule names the row that matches it to the cent (`lib/unattached-match`, batch 8b)
       expect(pace.paydaysLeftOut).toEqual({
         text:
-          "1 payday worth $1,000.00 already passed this month with no deposit imported. Pay that never reaches a bank " +
-          "cannot be projected as arriving.",
+          "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.",
         warning: true,
       });
       // attached, it is the same figure, and no payday passed with no deposit
@@ -806,19 +807,28 @@ describe("dashboardData: spending pace", () => {
      * not land in, or filed as no pay of his is filed — his filing is his word for what the money is. ⚖️ His Sep 4
      * $468.20 from It America LLC on Wells Fargo, filed under Refunds & Reimbursements, is "them paying them back for
      * claude subscription" (his words, 2026-09-28), not pay.
+     * ⛔ …and where the pay lands, the one rule names the row that matches the payday to the cent
+     * (`lib/unattached-match`, batch 8b) — still left out of the figure, by his filing: "with no deposit attached to
+     * it", never "imported".
      */
+    const PAY_MATCHED =
+      "1 payday worth $1,000.00 already passed this month with no deposit attached to it — not in Free to spend. Pay " +
+      "matched to the cent by a row of $1,000.00 on Jul 9 that is not attached to it cannot be projected as arriving.";
     test.each([
-      ["filed as his pay is, in an account the pay does not land in", "checking", "Salary"],
-      ["filed as no pay of his is filed, where the pay lands", "wells", "Refunds & Reimbursements"],
-    ])("Income attached to no schedule %s leaves the payday called left out", (_, where, category) => {
+      [
+        "filed as his pay is, in an account the pay does not land in",
+        "checking",
+        "Salary",
+        "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
+          "that never reaches a bank cannot be projected as arriving.",
+      ],
+      ["filed as no pay of his is filed, where the pay lands", "wells", "Refunds & Reimbursements", PAY_MATCHED],
+    ])("Income attached to no schedule %s leaves the payday called left out", (_, where, category, said) => {
       const { wells } = weeklyPayFoundJul2("2026-07-13");
       filedFromTheReviewQueue(where === "wells" ? wells : checking, "2026-07-09", 1000_00, category);
       const pace = dashboardData(bundle.db, "2026-07-14").pace!;
       expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 3 * 1000_00 - 80_00);
-      expect(pace.paydaysLeftOut?.text).toBe(
-        "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
-          "that never reaches a bank cannot be projected as arriving.",
-      );
+      expect(pace.paydaysLeftOut?.text).toBe(said);
     });
   });
 });

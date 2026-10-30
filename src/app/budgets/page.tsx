@@ -1,3 +1,4 @@
+import { countedDepositWords, MATCHED_TO_THE_CENT_BY, unattachedRowsWords } from "@/lib/unattached-match";
 import type { Metadata } from "next";
 import { getDb } from "@/db/client";
 import { spendUnread } from "@/lib/budget-coverage";
@@ -71,9 +72,19 @@ export default async function BudgetsPage({
       occurrenceCount: income.passedUnpaidOccurrences,
       checkedOccurrenceCount: income.passedUnpaidCheckedOccurrences,
       frontier: income.passedUnpaidFrontier,
+      unattached: income.passedUnpaidUnattached,
     },
     formatDayLong,
   );
+  // ⛔ "with no deposit against them" only where no row matches one unattached (`lib/unattached-match`): the rows named
+  const passedMatched = income.passedUnpaidUnattached;
+  const passedThem = income.passedUnpaidOccurrences === 1 ? "it" : "them";
+  // ⚖️ …"and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`)
+  const passedNoDeposit =
+    passedMatched.length === 0
+      ? `with no deposit against ${passedThem}`
+      : `with no deposit ${countedDepositWords(passedMatched, passedThem)}, ` +
+        `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(passedMatched, formatDayShort)}`;
   // the fourth leg: paydays this month that another month's money paid — null when none
   const paidElsewhere = paidByAnotherMonthNote(
     {
@@ -115,6 +126,7 @@ export default async function BudgetsPage({
       // …and how far the ledger has read it, so the note says "not posted" only where the row does
       overdueUnreadCents: s.overdueUnreadCents,
       overdueInGraceCents: s.overdueInGraceCents,
+      overdueUnattached: s.overdueUnattached,
       uncoveredDays: s.uncoveredDays,
       pace: s.pace,
       // so a row spent only from cash wallets is left out on the row's own rule
@@ -300,7 +312,7 @@ export default async function BudgetsPage({
               {income.passedUnpaidOccurrences === 1 ? "1 payday" : `${income.passedUnpaidOccurrences} paydays`}{" "}
               worth <Money cents={income.passedUnpaidCents} /> already passed this month
               {passedUnread === null && (
-                <> with no deposit against {income.passedUnpaidOccurrences === 1 ? "it" : "them"}</>
+                <> {passedNoDeposit}</>
               )}
               {income.postedUnattachedCents > 0 ? "." : " — counted in neither figure above."}{" "}
               {passedUnread ?? IMPORTS_NOT_EARNINGS}

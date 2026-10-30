@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
+import type { UnattachedMatch } from "./unattached-match";
 import {
   absenceIsEvidence,
+  asksForUnattachedMatch,
   dueDayIsRead,
   forecastConfidence,
   lastDueDayRead,
@@ -323,6 +325,60 @@ describe("settledVerdict", () => {
     for (const v of cases) {
       expect(v.reason === null).toBe(v.state === "missed");
     }
+  });
+});
+
+/*
+ * ⛔ A row matching the day to the cent, sitting unattached (`lib/unattached-match`), is asked of exactly the days every
+ * other surface asks it of: a payday checked through its days to land — the ones it would call "never reached a bank" —
+ * and a due day read with its grace — the arrears' read half, "has not posted". 🔴 Review of de31d22 (HIGH): the calendar
+ * never asked, and on his ledger copy (2026-10-29, after the Oct 26 import and before his filing) drew Oct 1, 8, 15 and
+ * 22 "not yet known — never reached a bank $1,141.92" beside the forecast card's "Pay matched to the cent by rows of
+ * $1,141.92 on Thu, Oct 1, 2026, …", and with Breezeline's Oct 10 −$50.00 unlinked a red ✕ on Oct 8 beside /recurring's
+ * "Oct 8 — matched to the cent by a row of $50.00 on Oct 10 that is not attached to it".
+ */
+describe("settledVerdict, with a row matching the day to the cent unattached", () => {
+  const payRow: UnattachedMatch = { date: "2026-10-01", row: { id: "r1", postedOn: "2026-10-01", amountCents: 114192 } };
+  const billRow: UnattachedMatch = { date: "2026-10-08", row: { id: "r2", postedOn: "2026-10-10", amountCents: -5000 } };
+
+  test("a payday checked through its days to land is named by the row — never 'never reached a bank', never paid", () => {
+    expect(settledVerdict("income", "2026-10-01", pay("2026-10-26"), true, payRow)).toEqual({
+      state: "unsettled",
+      reason: "matched_unattached",
+      unattached: payRow,
+    });
+  });
+
+  test("a due day read with its grace is named by the row — never a red ✕, and never 'too few charges' over it", () => {
+    expect(settledVerdict("bill", "2026-10-08", bill("2026-10-26"), true, billRow)).toEqual({
+      state: "unsettled",
+      reason: "matched_unattached",
+      unattached: billRow,
+    });
+    // the arrears name the row whatever the posting count, so the calendar beside them does too
+    expect(settledVerdict("bill", "2026-10-08", bill("2026-10-26"), false, billRow).reason).toBe("matched_unattached");
+  });
+
+  test("a day nobody has read keeps its own reason: the row is asked of no day another surface would not ask", () => {
+    // a payday after the checked day, one checked short of its days to land, a due day short of its grace
+    expect(settledVerdict("income", "2026-10-01", pay("2026-09-24"), true, payRow).reason).toBe("not_looked_for");
+    expect(settledVerdict("income", "2026-10-01", pay("2026-10-03"), true, payRow).reason).toBe("unbanked");
+    expect(settledVerdict("bill", "2026-10-08", bill("2026-10-10"), true, billRow).reason).toBe("not_imported");
+    expect(settledVerdict("bill", "2026-10-08", bill("2026-10-10"), true, billRow).unattached).toBeUndefined();
+  });
+
+  test("without a row the verdicts are what they were", () => {
+    expect(settledVerdict("income", "2026-10-01", pay("2026-10-26"), true, null).reason).toBe("never_banked");
+    expect(settledVerdict("bill", "2026-10-08", bill("2026-10-26"), true, null)).toEqual({ state: "missed", reason: null });
+  });
+
+  test("the days it is asked of are the ones the surfaces ask (`asksForUnattachedMatch`), each boundary inclusive", () => {
+    // a payday: checked through its days to land (3) — Oct 4 is the first checked day that lands Oct 1
+    expect(asksForUnattachedMatch("income", "2026-10-01", pay("2026-10-04"))).toBe(true);
+    expect(asksForUnattachedMatch("income", "2026-10-01", pay("2026-10-03"))).toBe(false);
+    // a due day: read with its grace (3) — Oct 11 is the first read day that covers Oct 8
+    expect(asksForUnattachedMatch("bill", "2026-10-08", bill("2026-10-11"))).toBe(true);
+    expect(asksForUnattachedMatch("bill", "2026-10-08", bill("2026-10-10"))).toBe(false);
   });
 });
 

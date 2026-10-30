@@ -24,6 +24,8 @@ describe("arrearsSplit", () => {
       readCents: 210900,
       unreadCents: 0,
       inGraceCents: 0,
+      unattachedCents: 0,
+      unattached: [],
       kind: "read",
     });
   });
@@ -33,6 +35,8 @@ describe("arrearsSplit", () => {
       readCents: 0,
       unreadCents: 210900,
       inGraceCents: 0,
+      unattachedCents: 0,
+      unattached: [],
       kind: "unread",
     });
   });
@@ -42,6 +46,8 @@ describe("arrearsSplit", () => {
       readCents: 2000,
       unreadCents: 1000,
       inGraceCents: 0,
+      unattachedCents: 0,
+      unattached: [],
       kind: "mixed",
     });
   });

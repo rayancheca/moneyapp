@@ -312,7 +312,9 @@ export const RECURRING_JARGON = {
    * Fargo derived through Fri Oct 16, October drew Oct 1 and Oct 8 "never reached a bank" and Oct 15 "not banked yet",
    * while /spending's note named payroll paid into an account the ledger does not read.
    */
-  notYetKnown: `Nothing turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet; for pay, it may be that the ledger has not looked for its deposit, the money may be cash you were handed and have not deposited, or it may have been paid into ${ACCOUNT_NOT_READ}; or this bill may not have charged enough times yet for the app to grade it. None of those is evidence that a payment failed.`,
+  // ⛔ …and "Nothing turned up" is not where it opens: beside a row the mark names (`matched_unattached`), something did
+  // (review of de31d22).
+  notYetKnown: `Nothing attached to it has turned up, but the ledger cannot say whether it should have — the day, or the few days after it a payment may still post on, may not be covered by a statement yet; for pay, it may be that the ledger has not looked for its deposit, the money may be cash you were handed and have not deposited, or it may have been paid into ${ACCOUNT_NOT_READ}; or this bill may not have charged enough times yet for the app to grade it; or a row matching it to the cent is there but not attached to it (or, for pay, not filed as income), and the app counts nothing it has not been told is this one. None of those is evidence that a payment failed.`,
   upcoming: "Expected on or after today, so nothing has had the chance to happen yet.",
   scheduled:
     "You told the app this amount or this date, which makes it the firmest kind of claim here — firmer than a bill with years of history behind it.",

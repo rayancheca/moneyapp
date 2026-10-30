@@ -457,7 +457,8 @@ type PayRowSource = Omit<ReadableRow, "offPayDay"> & Pick<AnalyticsTxn, "categor
 /**
  * A pay series' rows as `lib/per-payday` reads them beside settlement's answer — each one that is no row of its pay
  * days (`payDayRows`: his spending, or money on a day no row of it is filed as his pay) flagged `offPayDay`, so it is
- * drawn and counted as the money it is and never netted into its day, as settlement never read it. ONE flagging for
+ * never netted into its day, as settlement never read it: a debit is the money out it is, a credit no pay of the series
+ * (`PaydayReading.notFiledAsIncome` — the calendar draws it nowhere, the one rule names it). ONE flagging for
  * every reader of a pay series' rows per payday: the calendar (`paydayReadingsBySeries`), the series page's Amount
  * history and the posted average with the popover's words (`postedAveragesBySeries`). `rows` are one series'.
  */

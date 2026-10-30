@@ -34,6 +34,7 @@ import {
   mergedToastTitle,
   mergeFilingClause,
   unsettledReasonWord,
+  unsettledWords,
   upcomingEvidenceWord,
 } from "./labels";
 
@@ -119,6 +120,22 @@ describe("unsettledReasonWord", () => {
     expect(tip).toContain("cash you were handed and have not deposited"); // unbanked, never_banked — cash
     expect(tip).toContain(`it may have been paid into ${ACCOUNT_NOT_READ}`); // unbanked, never_banked — payroll
     expect(tip).toContain("charged enough times yet"); // schedule_unproven
+    expect(tip).toContain("a row matching it to the cent is there"); // matched_unattached
+    // ⛔ and it never opens on "Nothing turned up" — beside a row the mark names, that is false (review of de31d22)
+    expect(tip.startsWith("Nothing turned up")).toBe(false);
+  });
+
+  /*
+   * ⛔ A mark the one rule matched names its row by day and amount, in every surface's words (`lib/unattached-match`):
+   * the cell's aria-label and the Day Sheet both print it. 🔴 Review of de31d22 (HIGH): the calendar said "never reached
+   * a bank" beside the forecast card naming the same rows.
+   */
+  test("a mark matched by a row sitting unattached names the row — and a mark of any other reason says its reason", () => {
+    const row = { id: "r", postedOn: "2026-10-10", amountCents: -5000 };
+    expect(unsettledWords({ unsettledReason: "matched_unattached", unattached: { date: "2026-10-08", row } })).toBe(
+      "matched to the cent by a row of $50.00 on Oct 10 that is not attached to it",
+    );
+    expect(unsettledWords({ unsettledReason: "never_banked", unattached: null })).toBe("never reached a bank");
   });
 });
 

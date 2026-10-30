@@ -8,7 +8,10 @@ import { compareDates, diffDays, monthKey, periodBounds } from "@/lib/dates";
 import { humanizeDescriptionKey, strippedDescriptionKey } from "@/lib/description-key";
 // the stored `normalizedDescription` column IS normalizeDescription(raw)
 // (manual-transactions.ts:148), so recomputing it here reproduces the value
-// topMerchants groups on — activeTxnsInRange doesn't select that column
+// topMerchants groups on — activeTxnsInRange doesn't select that column.
+// ⚠️ Not for a row stored before normalizer v3: it still holds its ACH
+// individual ID. Its KEY agrees all the same — `strippedDescriptionKey` reads
+// it in v3's form (measured on his ledger copy 2026-10-29: all 13,026 rows)
 import { normalizeDescription } from "@/lib/normalize";
 import { comparePeriods, type PeriodComparison } from "@/lib/compared-windows";
 import { spendingNotFoundFact } from "@/lib/budget-coverage";

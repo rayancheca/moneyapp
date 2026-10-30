@@ -1,6 +1,16 @@
+import {
+  countedDepositWords,
+  matchedOfWords,
+  neverClauses,
+  neverSplit,
+  notCountedWords,
+  silenceMatches,
+  type NeverSplit,
+  type UnattachedMatch,
+} from "@/lib/unattached-match";
 import type { AppDatabase } from "@/db/client";
 import { payGap, STALE_PERIODS, unbankedSplit, type CashEarningsBasis } from "@/lib/cash-earnings";
-import { addCalendarMonths, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
+import { addCalendarMonths, compareDates, diffDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { formatDayLong, formatDayShort, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
@@ -151,6 +161,14 @@ interface Gap {
    */
   neverCents: number;
   /**
+   * Of `neverCents`, the part for paydays a row matches to the cent that sits unattached (`unattachedPaydays`) — still
+   * in `neverCents` and in the difference (linking is his act or the import's), and named by the rows' day and amount
+   * in `gapLabel`, never "never reached a bank".
+   */
+  unattachedCents: number;
+  /** the rows `unattachedCents` is — each matching a payday of the window to the cent, unattached — oldest first */
+  unattached: readonly UnattachedMatch[];
+  /**
    * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
    * a day of its own, in /spending's words (`withMoneyOut`)
    */
@@ -180,25 +198,35 @@ function gapOf(
   frontier: UnbankedFrontier,
   inGrace: InGrace,
   wentBackOut: readonly WentBackOut[],
+  unattached: readonly UnattachedMatch[],
 ): Gap {
   // ⛔ the one subtraction, shared with /spending's shortfall note (`payGap`)
   const { gapCents, unreadGapCents, readGapCents } = payGap(impliedCents, bankedCents, unreadImpliedCents);
   // ⛔ …and the one split of its read part (`unbankedSplit`): "never reached a bank" only past the days to land
   const { notBankedYetCents, neverCents } = unbankedSplit(readGapCents, inGrace.cents);
+  // ⛔ …and of that, what rows sitting unattached match to the cent (`lib/unattached-match`): named, still counted —
+  // the one split, /spending's shortfall note's too (`neverSplit`)
+  const never = neverSplit(neverCents, unattached);
   return {
     gapCents,
     gapMagnitudeCents: gapCents === 0 ? 0 : Math.abs(gapCents),
     unreadGapCents,
     notBankedYetCents,
     neverCents,
+    unattachedCents: never.matchedCents,
+    unattached: never.matched,
     gapLabel: withMoneyOut(
       notBankedYetCents > 0
-        ? inGraceGapLabel(neverCents, { ...inGrace, cents: notBankedYetCents }, unreadGapCents, frontier)
-        : gapLabelFor(gapCents, unreadGapCents, neverCents, frontier),
+        ? inGraceGapLabel(never, { ...inGrace, cents: notBankedYetCents }, unreadGapCents, frontier)
+        : gapLabelFor(gapCents, unreadGapCents, never, frontier),
       wentBackOut,
     ),
   };
 }
+
+/** The difference's never part as the card says it: "$X of it never reached a bank", or bare (`neverClauses`). */
+const cardNeverClauses = (never: NeverSplit, bare: boolean): string[] =>
+  neverClauses(never, formatDayShort, { ofIt: true, bare });
 
 /** "after Sep 24, the last day every account that pay lands in has been checked through", or by schedule. */
 function afterFrontier(frontier: Exclude<UnbankedFrontier, { kind: "unchecked" }>): string {
@@ -223,20 +251,24 @@ function withMoneyOut(label: string, wentBackOut: readonly WentBackOut[]): strin
   return label.endsWith(".") ? `${label.slice(0, -1)}; ${back}.` : `${label}; ${back}`;
 }
 
-function gapLabelFor(gapCents: number, unreadGapCents: number, readCents: number, frontier: UnbankedFrontier): string {
+function gapLabelFor(gapCents: number, unreadGapCents: number, never: NeverSplit, frontier: UnbankedFrontier): string {
   if (gapCents < 0) return "more than this window implies you earned";
   if (gapCents === 0) return "exactly what this window implies you earned";
-  if (unreadGapCents === 0) return "never reached a bank";
+  if (unreadGapCents === 0) {
+    const whole = cardNeverClauses(never, true);
+    return whole.length === 1 && never.matchedCents === 0 ? whole[0]! : `${whole.join("; ")}.`;
+  }
 
+  const read = cardNeverClauses(never, false).join("; ");
   if (frontier.kind === "unchecked") {
-    return readCents === 0
+    return never.cents === 0
       ? `${NOT_CHECKED}, so it cannot say whether any of it reached a bank.`
-      : `${formatCents(readCents)} of it never reached a bank; for the other ${formatCents(unreadGapCents)}, ${NOT_CHECKED}.`;
+      : `${read}; for the other ${formatCents(unreadGapCents)}, ${NOT_CHECKED}.`;
   }
   const after = afterFrontier(frontier);
-  return readCents === 0
+  return never.cents === 0
     ? `all of it is for paydays ${after} — so the ledger has not looked for it.`
-    : `${formatCents(readCents)} of it never reached a bank; the other ${formatCents(unreadGapCents)} is for paydays ${after} — so the ledger has not looked for it.`;
+    : `${read}; the other ${formatCents(unreadGapCents)} is for paydays ${after} — so the ledger has not looked for it.`;
 }
 
 /**
@@ -247,7 +279,7 @@ function gapLabelFor(gapCents: number, unreadGapCents: number, readCents: number
  * called Thu Sep 3 "Pay not banked yet" while this card said "$1,000.00 of it never reached a bank" of it.
  */
 function inGraceGapLabel(
-  neverCents: number,
+  never: NeverSplit,
   notYet: InGrace,
   unreadGapCents: number,
   unreadFrontier: UnbankedFrontier,
@@ -256,7 +288,7 @@ function inGraceGapLabel(
     notYet.frontier.kind === "day"
       ? `${formatDayShort(notYet.frontier.through)}, ${LAST_CHECKED_DAY}`
       : "the last day the accounts their pay lands in have been checked through, which differs by schedule";
-  const parts = neverCents > 0 ? [`${formatCents(neverCents)} of it never reached a bank`] : [];
+  const parts = cardNeverClauses(never, false);
   // "$X" after a figure, "$X of it" opening the clause, and "all of it" when it is the whole difference
   const lead =
     parts.length > 0
@@ -316,6 +348,12 @@ export interface IncomePayLine extends Gap {
    * bank" — the paydays /spending's note for a stale schedule names (`CashEarningsReading.checkedSilentNotBankedYet`).
    */
   checkedSilentNotBankedYet: readonly string[];
+  /**
+   * Of the silence's paydays checked through their days to land, those a row matches to the cent that sits unattached
+   * (`CashEarningsReading.unattachedPaydays`), oldest first — never "the pay did not reach a bank", never "with no
+   * deposit", and still counted in the silence.
+   */
+  silenceUnattached: readonly UnattachedMatch[];
   /** earliest day the accounts this pay lands in stop being checked */
   checkedThrough: string | null;
   /** days between `checkedThrough` and today — the stretch nobody has imported */
@@ -455,13 +493,30 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
    * deposit, and no day of that silence rests on a checked record — …", four Thursdays passed.
    */
   const aside = paidEarlyAside(line.silencePaidEarly, formatDayShort);
-  const since = `${passed} since ${formatDayShort(lastBankedOn)} with no deposit${aside}`;
-  // which of the silent paydays the ledger has looked for, in the forecast's words — null when it looked for them all
+  /*
+   * ⛔ "With no deposit" only where no row matches one of them unattached (`silenceUnattached`, the one rule's): "with
+   * no deposit attached to this schedule" then, and the rows named. 🔴 His ledger copy 2026-10-29 (before his filing):
+   * "4 paydays have passed since Sep 24 with no deposit. 4 of them fall on days the records already cover, through Oct
+   * 26 — so the pay did not reach a bank." beside four +$1,141.92 payroll rows on Wells Fargo, unattached. ⚖️ …and of
+   * rows the import attached and filed nowhere, "attached to this schedule and filed as income" (`countedDepositWords`).
+   */
+  const matched = line.silenceUnattached;
+  const noDeposit =
+    matched.length === 0 ? "with no deposit" : `with no deposit ${countedDepositWords(matched, "this schedule")}`;
+  const since = `${passed} since ${formatDayShort(lastBankedOn)} ${noDeposit}${aside}`;
+  /*
+   * which of the silent paydays the ledger has looked for, in the forecast's words — null when it looked for them all.
+   * ⛔ With the rows the one rule matched, as /budgets and the forecast pass them: never "with no deposit" of a checked
+   * payday a row answers. 🔴 Found sweeping the rule's readers (2026-10-29): on a copy of his ledger with Oct 1, 8 and 15
+   * filed, Oct 22's row unattached and today Nov 2, the verdict read "1 falls on a day already checked, with no deposit"
+   * one line over the difference naming the row.
+   */
   const unread = unbankedIncomeFrontierClause(
     {
       occurrenceCount: silentPeriods,
       checkedOccurrenceCount: checkedSilentPeriods,
       frontier: checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
+      unattached: matched,
     },
     formatDayShort,
   );
@@ -473,9 +528,13 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
     if (silentPeriods === 0) {
       return `Pay is arriving: the last deposit landed on ${formatDayShort(lastBankedOn)}.`;
     }
+    // ⛔ of the silent paydays, the ones the rows answer (`matchedOfWords`): "…with no deposit attached to this
+    // schedule: it is matched to the cent by a row of …" was said of a silence two paydays long that one row answers
+    // (found sweeping the rule's readers for the review of e6ad55a)
+    const rows = matched.length === 0 ? "" : `: ${matchedOfWords(matched, silentPeriods, formatDayShort)}`;
     return (
       notAllLooked ??
-      `${since} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`
+      `${since}${rows} — a schedule is called stale only after ${STALE_PERIODS} quiet periods, so this is not a warning yet.`
     );
   }
 
@@ -506,7 +565,7 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">): string {
    */
   const unlooked = silentPeriods - checkedSilentPeriods;
   const lead = unlooked > 0 ? sinceLast : since;
-  const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough, unlooked);
+  const checked = staleChecked(checkedSilentPeriods, line.checkedSilentNotBankedYet, checkedThrough, unlooked, matched);
   return `${lead}. ${checked}. Whether it was earned is a different question, and this card cannot answer it.`;
 }
 
@@ -532,9 +591,18 @@ function staleChecked(
   notBankedYet: readonly string[],
   checkedThrough: string,
   unlooked: number,
+  matched: readonly UnattachedMatch[] = [],
 ): string {
   const covered = `on days the records already cover, through ${formatDayShort(checkedThrough)}`;
-  const didNot = "so the pay did not reach a bank";
+  // ⛔ "did not reach a bank" only of the paydays no row matches unattached (`silenceUnattached`): those are named
+  const pastCount = checked - notBankedYet.length;
+  const didNot =
+    matched.length === 0
+      ? "so the pay did not reach a bank"
+      : matchedOfWords(matched, pastCount, formatDayShort) +
+        (matched.length >= pastCount
+          ? ""
+          : `, and for the other ${pastCount - matched.length} the pay did not reach a bank`);
   const after = (dayNamed: boolean): string =>
     unlooked <= 0
       ? ""
@@ -643,6 +711,9 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       checkedSilentPeriods: r.checkedPeriodsSinceBanked ?? 0,
       // ⛔ the silence's — /spending's stale note's own reading (`silentPaydaysNotBankedYet`), never a second one
       checkedSilentNotBankedYet: r.checkedSilentNotBankedYet ?? [],
+      // ⛔ …and of its paydays the one rule matched unattached — the silence opens after the last day that banked — by
+      // the one reading /spending's note for a stale schedule names them by (`silenceMatches`)
+      silenceUnattached: silenceMatches(r.unattachedPaydays ?? [], r.lastBankedOn),
       checkedThrough,
       unreadDays: checkedThrough === null ? null : diffDays(checkedThrough, today),
       ...gapOf(
@@ -652,6 +723,8 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         frontier,
         { cents: inGraceCents, frontier },
         r.wentBackOut ?? [],
+        // the window's paydays the one rule matched unattached (`unattachedPaydays`)
+        (r.unattachedPaydays ?? []).filter((m) => compareDates(m.date, windowFrom) >= 0),
       ),
     };
     return { ...base, verdict: verdictFor(base) };
@@ -675,6 +748,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
         frontier: sharedFrontier(inGrace.map((l) => l.checkedThrough)),
       },
       pay.flatMap((l) => l.wentBackOut),
+      pay.flatMap((l) => l.unattached),
     ),
   };
   const bankedSharePct = impliedCents <= 0 ? null : Math.round((bankedCents / impliedCents) * 100);
@@ -683,6 +757,10 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
   const expectation = incomeExpectation(db, month.start, month.end, today);
   const postedThisMonthCents = expectation.postedCents;
   const postedMonth = formatMonthYear(today);
+  // the rows the lines above name that landed this month — what an empty month's note says is there
+  const thisMonthsRows = pay.flatMap((l) =>
+    l.silenceUnattached.filter((m) => compareDates(m.row.postedOn, month.start) >= 0),
+  );
 
   return {
     monthlyRateCents: expectation.basis.cents,
@@ -699,10 +777,18 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
      * stood under a $0.00 nobody had looked for — his ledger copy 2026-10-12, Wells Fargo checked through Sep 24 —
      * while /budgets' header printed "— in so far" off the same reading. The note says why there is no figure.
      */
+    /*
+     * ⛔ …and an empty month whose paydays rows match unattached (`silenceUnattached`) is neither unimported nor
+     * unpaid: the note says the rows are there. 🔴 His ledger copy 2026-10-29 (before his filing): "An empty month is
+     * what an unimported month looks like as well as what an unpaid one looks like" under four payroll rows of October.
+     * ⚖️ …and of rows attached and filed nowhere, why: "not filed as income" (`notCountedWords`).
+     */
     postedNote: expectation.noIncomeDayRead
       ? noIncomeDayCheckedNote(postedMonth)
       : postedThisMonthCents === 0
-        ? `No income at all has been recorded in ${postedMonth}. An empty month is what an unimported month looks like as well as what an unpaid one looks like — the lines above say which this is.`
+        ? thisMonthsRows.length > 0
+          ? `No income at all has been recorded in ${postedMonth}, though the rows the lines above name match its paydays to the cent — they are ${notCountedWords(thisMonthsRows, "the schedule")}, so none of them is counted.`
+          : `No income at all has been recorded in ${postedMonth}. An empty month is what an unimported month looks like as well as what an unpaid one looks like — the lines above say which this is.`
         : `That is what has been imported so far, not what was earned in ${postedMonth}.`,
     caveat: CAVEAT,
     windowFrom,

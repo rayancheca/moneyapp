@@ -379,6 +379,7 @@ describe("seriesInCategory", () => {
       owedCents: 180_000,
       unreadCents: 180_000,
       inGraceCents: 0,
+      unattached: [],
     });
     // the next date STAYS — August's charge is still coming
     expect(rows[0]!.nextExpectedOn).toBe("2026-08-01");
