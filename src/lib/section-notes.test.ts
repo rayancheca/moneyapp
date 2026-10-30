@@ -1504,6 +1504,19 @@ describe("cashEarningsSectionNotes", () => {
       expect(said).not.toContain("rows named above");
     });
 
+    /*
+     * ⛔ …and of the paydays its lead counts from its FIRST (`unattachedAmong`'s lower bound): a row of a payday before
+     * the window is the silence's, never the claim's. 🔴 Review of 8b (L53, LOW): with that half of the filter gone —
+     * here, or in the one filter the shortfall note shares — all 1,336 related tests stayed green (2026-10-30).
+     */
+    test("…and a row of a payday before the window is never the claim's, though the silence holds it", () => {
+      const said = body({ ...checked, unattachedPaydays: [match("2026-06-25"), ...JULY.map((d) => match(d))] });
+      expect(said).toContain(`; $3,138.00 is matched to the cent by ${ROWS} that are not attached to it.`);
+      expect(said).toContain(
+        "— that money sits in rows of $1,046.00 on Jun 25, Jul 2, Jul 9, and Jul 16 that are not attached to it, was ",
+      );
+    });
+
     test("no row in the silence: the list it always was", () => {
       expect(body({ ...checked, unattachedPaydays: [] })).toBe(body({ ...checked }));
       expect(body({ ...checked, unattachedPaydays: [] })).toContain("— that money was held as cash, spent as cash, ");

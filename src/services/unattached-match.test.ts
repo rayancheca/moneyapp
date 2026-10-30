@@ -868,6 +868,53 @@ describe("a stale schedule's note: the rows' money as the card's difference hold
   });
 });
 
+/*
+ * ⛔ Earned vs banked names a row only where its sentence is about that row's payday: the difference over its window
+ * (`windowFrom`), the verdict over its silence (`silenceMatches`), the empty month's note over this month. 🔴 Review of
+ * 8b (L53, LOW): each of those three filters was held by no test — with any one gone, all 1,336 related tests stayed
+ * green (measured 2026-10-30).
+ */
+describe("Earned vs banked names each row only in the sentence about its own payday", () => {
+  test("the empty month's note: October's rows are no answer for November, read Nov 5", () => {
+    importUnattached(PAYDAYS, false);
+    checkedThrough(bundle.db, WF, "2026-11-04", "2026-10-27");
+    const card = incomeCard(bundle.db, "2026-11-05")!;
+    // the lines still name October's rows
+    expect(card.pay[0]!.silenceUnattached.map((m) => m.date)).toEqual(PAYDAYS);
+    expect(card.postedNote).toBe(
+      "No income at all has been recorded in Nov 2026. An empty month is what an unimported month looks like as well " +
+        "as what an unpaid one looks like — the lines above say which this is.",
+    );
+  });
+
+  test("the verdict over the silence: a row of a payday before the last deposit is the difference's alone", () => {
+    bundle.db
+      .delete(transactions)
+      .where(and(eq(transactions.postedOn, "2026-09-17"), eq(transactions.recurringSeriesId, PAY)))
+      .run();
+    row("2026-09-17", 114_192);
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(line.silenceUnattached).toEqual([]);
+    expect(line.verdict).toContain("4 paydays have passed since Sep 24 with no deposit. 4 of them fall on days the records");
+    expect(line.verdict).not.toContain("Sep 17");
+    expect(line.gapLabel).toContain("a row of $1,141.92 on Sep 17 that is not attached to it");
+  });
+
+  test("the difference over its window: a row of a payday before the card measures from is named nowhere", () => {
+    const salary = categoryId("Salary", "Income");
+    // his pay attached from Thu Mar 19, Mar 26 unpaid beside its row — before the card's window opens on Apr 1
+    row("2026-03-19", 114_192, { seriesId: PAY, categoryId: salary });
+    row("2026-03-26", 114_192);
+    checkedThrough(bundle.db, WF, "2026-07-31", "2026-03-01");
+    const card = incomeCard(bundle.db, TODAY)!;
+    expect(card.windowFrom).toBe("2026-04-01");
+    const line = card.pay[0]!;
+    expect(line.unattachedCents).toBe(0);
+    expect(line.gapLabel).not.toContain(MATCHED);
+    expect(line.gapLabel).not.toContain("Mar 26");
+  });
+});
+
 /** A rendered sentence as a reader reads it: its words, the markup gone. */
 const textOf = (element: ReactElement): string =>
   renderToStaticMarkup(element)
