@@ -295,10 +295,11 @@ export function stillToCome<T extends { ownDate: string }>(
  * `paydaySettlement` walks. A bill's day paid early is on the schedule the same way.
  *
  * ⛔ Not a second copy of the rule: `toCome` is the predicate `stillToCome`
- * filters with, and the steps are `rollForwardNextExpected`'s, so the walk visits
- * exactly the dates settlement and the payments graded (both step the effective
- * schedule from its anchor). It ends because settlement names finitely many paydays,
- * a ledger holds finitely many payments, and every step moves strictly forward.
+ * filters with, and the steps are the walk's — `rollForwardNextExpected`'s first,
+ * then `walkDayAfter`'s past each day paid — so the walk visits exactly the dates
+ * settlement and the payments graded (both step the effective schedule from its
+ * anchor). It ends because settlement names finitely many paydays, a ledger holds
+ * finitely many payments, and every step moves strictly forward (below).
  *
  * Null when the schedule has no next date, or none not already paid: a series whose
  * last occurrence was paid early expects nothing more, which is what its own page's
@@ -312,6 +313,14 @@ export function stillToCome<T extends { ownDate: string }>(
  * not asked, 2026-10-30) — the rent typed Nov 16, the utilities' Nov 1 is next on Nov 16. Stepped and asked paid on
  * its own days, as the list's are. 🔴 It named the own day (review of aa05a56d): on Nov 10 the All tab's Next read
  * "Nov 1", a day already past, beside an Upcoming tab listing them with the rent's Nov 16.
+ *
+ * ⛔ …and past a day paid, to the walk's next own day AFTER it (`walkDayAfter`) — never `rollForwardNextExpected` from
+ * the day after: billed inside another on its carrier's step, the first day falling due from there can be that same
+ * paid day, its carrier's day still to come (`firstStepFallingDue` steps back to it), and the walk asks it for good.
+ * The rent typed Nov 16 and paid early on Nov 5 opens the utilities on their Nov 1, paired with it and paid by it: on
+ * Nov 10, asked from Nov 2, their Nov 1 still falls due Nov 16. 🔴 Nothing pinned it (review of a456a6fc): stepped as
+ * before aa05a56d, 4,585 tests passed while `listSeries`, and so the /recurring render, would hang. Pinned in
+ * nearer-due-day.test.ts ("…paid early Nov 5", and the rent's Dec 5 early for its Dec 16), the walk bounded there.
  */
 export function nextStillToCome(
   toCome: StillToCome,

@@ -19,6 +19,7 @@ import { checkedThrough } from "./checked-days-fixture";
 import { committedBook } from "./committed";
 import { dashboardData } from "./dashboard";
 import { forecastForMonth } from "./forecast";
+import { nextStillToCome, stillToComeReader, type StillToCome } from "./payday-settlement";
 import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
@@ -1165,6 +1166,65 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     expect(listSeries(bundle.db, NOV25).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-01");
   });
 
+  /**
+   * The All tab's Next for a series — `nextStillToCome` over the predicate `listSeries` builds (`stillToComeReader`) —
+   * and each own day its walk asked, stopped should it ask one twice: a walk that does never ends.
+   */
+  const walkOf = (id: string, today: string): [string | null, string[]] => {
+    const row = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, id)).get()!;
+    const series = { ...row, billedWith: billingCarriers(bundle.db).get(id) ?? null };
+    const reader = stillToComeReader(bundle.db, [series], today);
+    const asked: string[] = [];
+    const toCome: StillToCome = (seriesId, ownDate) => {
+      if (asked.includes(ownDate)) throw new Error(`the walk asked ${ownDate} again, after ${asked.join(", ")}`);
+      asked.push(ownDate);
+      return reader(seriesId, ownDate);
+    };
+    return [nextStillToCome(toCome, series, today), asked];
+  };
+
+  /*
+   * ⛔ …and the All tab's Next steps past a day of theirs already paid to the walk's NEXT own day (`walkDayAfter`) —
+   * never back to the day it just asked. A day of theirs falls due with the rent's day it pairs with, so the first day
+   * falling due from the day after a paid one (`rollForwardNextExpected`'s `firstStepFallingDue`) can be that same
+   * paid day: the rent typed Nov 16 and paid early on Nov 5 opens them on their Nov 1, the rent's Nov 16, paid by it —
+   * and on Nov 10, asked from Nov 2, their Nov 1 still falls due on or after it (Nov 16). 🔴 Nothing pinned it (review
+   * of a456a6fc): stepped as before aa05a56d, `rollForwardNextExpected(eff, addDays(next, 1))`, the walk asked Nov 1
+   * again for good — 4,585 tests passed (the review's run) while `listSeries`, and so the /recurring render, would
+   * hang. The walk here is bounded by the predicate it asks (`walkOf`); the same shape later in the year below.
+   */
+  test("⛔ …the rent paid early Nov 5 pays their Nov 1: on Nov 10 the All tab steps past it once, to Dec 16", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-05",
+    );
+    checkedThrough(bundle.db, "acct", "2026-11-09");
+    const NOV10 = "2026-11-10";
+    // Nov 5 pays the rent's Nov 16 early, its own day's payment: their Nov 1, nearest it, opens them, paired with it
+    expect(billingCarriers(bundle.db).get(UTIL)!.opensPaidBy).toEqual({ postedOn: "2026-11-05", dueDaysPast: 0 });
+    // each own day asked once — their Nov 1, paid, then Dec 1 — named by the day Dec 1 falls due, the rent's Dec 16
+    expect(walkOf(UTIL, NOV10)).toEqual(["2026-12-16", ["2026-11-01", "2026-12-01"]]);
+    expect(walkOf(RENT, NOV10)).toEqual(["2026-12-16", ["2026-11-16", "2026-12-16"]]);
+    // …the day every reader that looks ahead names: the All tab, Upcoming, their page's list — nothing owed
+    const next = listSeries(bundle.db, NOV10);
+    expect([UTIL, RENT].map((id) => next.find((s) => s.id === id)!.nextExpectedOn)).toEqual([
+      "2026-12-16",
+      "2026-12-16",
+    ]);
+    expect(coming(NOV10, UTIL)).toEqual(["2026-12-16"]);
+    expect(coming(NOV10, RENT)).toEqual(["2026-12-16"]);
+    expect(seriesDetail(bundle.db, UTIL, NOV10)!.nextExpected.map((o) => o.date)).toEqual([
+      "2026-12-16",
+      "2027-01-16",
+      "2027-02-16",
+    ]);
+    expect(owed(NOV10)).toEqual([]);
+  });
+
   /*
    * ⚖️ (B) …and the calendar names the payment the rent's day was paid by, on time for THAT day (`dayPaidAs`): what it
    * carries on the 5th, the rent typed Nov 2 — their Dec 5 is the rent's Dec 2 — and two rows on time for Dec 5, Dec 2
@@ -1336,7 +1396,9 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
    * ⚖️ (B) …and "paid early" is measured against the day the grid draws it on, the day it falls due: the rent typed Nov
    * 16 and paid Nov 16, then Dec 5 — nearer its Dec 16 (decision 76), so early for it — pays their Dec 1, which falls
    * due with that Dec 16: drawn there "paid early with the rent's payment of Dec 5". Measured against their own Dec 1 it
-   * would read as paid on its day, four days after it.
+   * would read as paid on its day, four days after it. ⛔ …and the All tab steps past that paid Dec 1 once, to their
+   * Jan 1 — on Dec 10, asked from Dec 2, it still falls due on or after it (the rent's Dec 16): a day of theirs paid
+   * early past the first period, where the walk's step back (above, "…paid early Nov 5") reaches it again too.
    */
   test("⚖️ (B) …the rent's Dec 5, early for its Dec 16: their Dec 1 is drawn on Dec 16, paid early by it", () => {
     rentWith(
@@ -1355,6 +1417,8 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     ]);
     expect(owed(DEC10)).toEqual([]);
     expect(coming(DEC10, UTIL)[0]).toBe("2027-01-16");
+    expect(walkOf(UTIL, DEC10)).toEqual(["2027-01-16", ["2026-12-01", "2027-01-01"]]);
+    expect(listSeries(bundle.db, DEC10).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2027-01-16");
   });
 
   test("⚖️ (B) …on the 25th, the rent typed Sep 1: each day of theirs is drawn, forecast and owed on the rent's 1st", () => {
