@@ -5,15 +5,17 @@ import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { categories } from "@/db/schema/categories";
 import { institutions } from "@/db/schema/institutions";
 import { recurringSeries, type Cadence, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
-import { transactions, type SeriesLinkSource } from "@/db/schema/transactions";
+import { transactionSplits } from "@/db/schema/transaction-splits";
+import { transactions, type CategorizationSource, type SeriesLinkSource } from "@/db/schema/transactions";
 import { dedupeHash } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { createAccount } from "./accounts";
 import { overdueForSeries } from "./arrears";
-import { projectOccurrences, toProjectable } from "./recurring";
-import { linkRowsMadeActive } from "./recurring-import-links";
+import { loadRecomputeCtx, projectOccurrences, recomputeSeriesStats, toProjectable } from "./recurring";
+import { importFilingLine, linkRowsMadeActive } from "./recurring-import-links";
 
 /** The day the Breezeline row of 2026-09-10 was imported into the real ledger. */
 const TODAY = "2026-09-14";
@@ -154,7 +156,7 @@ describe("linking at import — the rows an operation made active, and only thos
     // the fixture expresses the defect: unlinked, the bill reads as owed
     expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY, TODAY).totalCents).toBe(5000);
 
-    expect(linkRowsMadeActive(bundle.db, [imported], TODAY)).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [imported], TODAY)).toEqual({ absorbed: 1, firstPostings: 0, filed: [] });
 
     expect(seriesOf(imported).recurringSeriesId).toBe(breezeline);
     expect(seriesOf(imported).seriesLinkSource).toBe("detected");
@@ -185,7 +187,7 @@ describe("linking at import — the rows an operation made active, and only thos
     const absorbable = post({ postedOn: "2026-09-10", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA" });
     const before = ledgerState();
 
-    expect(linkRowsMadeActive(bundle.db, [], TODAY)).toEqual({ absorbed: 0, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [], TODAY)).toEqual({ absorbed: 0, firstPostings: 0, filed: [] });
     expect(ledgerState()).toEqual(before);
 
     // the control: the same row in scope IS linked, so the empty set did it
@@ -244,7 +246,12 @@ describe("his weekly pay links at import though the rows it owns were stored by 
       accountId: checking,
     });
 
-    expect(linkRowsMadeActive(bundle.db, [...weeks, offCycle, reimbursement], TODAY_OCT)).toEqual({ absorbed: 5, firstPostings: 0 });
+    // the pay's rows are filed nowhere here, so its links name no category to file under
+    expect(linkRowsMadeActive(bundle.db, [...weeks, offCycle, reimbursement], TODAY_OCT)).toEqual({
+      absorbed: 5,
+      firstPostings: 0,
+      filed: [],
+    });
 
     expect(weeks.map((id) => seriesOf(id).recurringSeriesId)).toEqual([pay, pay, pay, pay]);
     expect(seriesOf(offCycle).recurringSeriesId).toBe(pay);
@@ -308,7 +315,7 @@ describe("a charge a never-posted commitment expects to the cent is its first po
     expect(normalizeDescription(PROGRESSIVE_WF_CARD)).toBe(normalizeDescription(PROGRESSIVE_VENTURE_X));
     expect(overdueForSeries(bundle.db, new Set([balance]), "2026-11-01", TODAY_NOV, TODAY_NOV).totalCents).toBe(7274);
 
-    expect(linkRowsMadeActive(bundle.db, [row], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 1 });
+    expect(linkRowsMadeActive(bundle.db, [row], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 1, filed: [] });
 
     expect(seriesOf(row).recurringSeriesId).toBe(balance);
     expect(seriesRow(insurance).lastMatchedOn).toBe("2026-08-12");
@@ -321,7 +328,7 @@ describe("a charge a never-posted commitment expects to the cent is its first po
     novemberBalance();
     const row = post({ postedOn: "2026-12-11", amountCents: -35758, raw: PROGRESSIVE_WF_CARD, accountId: checking });
 
-    expect(linkRowsMadeActive(bundle.db, [row], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [row], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0, filed: [] });
     expect(seriesOf(row).recurringSeriesId).toBe(insurance);
   });
 });
@@ -345,7 +352,11 @@ describe("a series past its last date owns no later charge by description", () =
     post({ postedOn: "2026-11-10", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA", seriesId: breezeline });
     const control = post({ postedOn: "2026-12-08", amountCents: -5000, raw: "BREEZELINE 866-290-5400 MA" });
 
-    expect(linkRowsMadeActive(bundle.db, [later, control], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [later, control], TODAY_DEC)).toEqual({
+      absorbed: 1,
+      firstPostings: 0,
+      filed: [],
+    });
 
     expect(seriesOf(later).recurringSeriesId).toBeNull();
     expect(seriesRow(balance).lastMatchedOn).toBe("2026-11-10");
@@ -361,7 +372,7 @@ describe("a series past its last date owns no later charge by description", () =
     post({ postedOn: "2026-11-11", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking, seriesId: balance });
     const december = post({ postedOn: "2026-12-11", amountCents: -35758, raw: PROGRESSIVE_WF_CARD, accountId: checking });
 
-    expect(linkRowsMadeActive(bundle.db, [december], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [december], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0, filed: [] });
 
     expect(seriesOf(december).recurringSeriesId).toBe(insurance);
     expect(overdueForSeries(bundle.db, new Set([insurance]), "2026-12-01", TODAY_DEC, TODAY_DEC).totalCents).toBe(0);
@@ -374,8 +385,413 @@ describe("a series past its last date owns no later charge by description", () =
     post({ postedOn: "2026-11-10", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking, seriesId: balance });
     const inside = post({ postedOn: "2026-11-12", amountCents: -1500, raw: PROGRESSIVE_WF_CARD, accountId: checking });
 
-    expect(linkRowsMadeActive(bundle.db, [inside], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 0 });
+    expect(linkRowsMadeActive(bundle.db, [inside], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 0, filed: [] });
     expect(seriesOf(inside).recurringSeriesId).toBeNull();
     expect(seriesRow(insurance).lastMatchedOn).toBe("2026-08-12");
+  });
+});
+
+describe("⚖️ default built, not asked (2026-10-29): what the import links to a series he confirmed, it files", () => {
+  /*
+   * 🔴 Measured on his ledger copy 2026-10-30, a trial of the Wells Fargo statement Sep 25 → Oct 26 on the copy from
+   * before that import: linking at import attached the four +$1,141.92 payroll deposits and the off-cycle +$200.00
+   * to "It America LLC (weekly pay)" — confirmed, every deposit he attached filed Income > Salary — and filed none
+   * of them, so every pay surface counted none of it: Earned vs banked read $7,156.60 of $23,983.20 (30%) and "5
+   * paydays have passed since the last deposit on Sep 24". His own attach files an unfiled row (§6A 47); the
+   * import's link to a series he confirmed now files it by the same rule, stamped as the import's so his own
+   * filings stay his.
+   */
+  const TODAY_OCT = "2026-10-29";
+  const PAY = "It America LLC (weekly pay)";
+  const WEEKS = [
+    ["2026-10-01", "It America LLC Payroll 261001 9303446743548Qj Karim Checa,Rayan"],
+    ["2026-10-08", "It America LLC Payroll 261008 7820845303038Qj Karim Checa,Rayan"],
+    ["2026-10-15", "It America LLC Payroll 261015 5970777473238Qj Karim Checa,Rayan"],
+    ["2026-10-22", "It America LLC Payroll 261022 9288454030138Qj Karim Checa,Rayan"],
+  ] as const;
+  const OFF_CYCLE = "It America LLC Payroll 261015 Rayancheca Rayan Checa";
+
+  function categoryId(parent: string, child?: string): string {
+    const top = bundle.db.select().from(categories).all().find((c) => c.parentId === null && c.name === parent)!;
+    if (child === undefined) return top.id;
+    return bundle.db.select().from(categories).all().find((c) => c.parentId === top.id && c.name === child)!.id;
+  }
+
+  function file(
+    txnId: string,
+    to: string | null,
+    source: CategorizationSource | null,
+    confidence: number | null = 1,
+  ): void {
+    bundle.db
+      .update(transactions)
+      .set({ categoryId: to, categorizationSource: source, categorizationConfidence: confidence })
+      .where(eq(transactions.id, txnId))
+      .run();
+  }
+
+  /** the columns a filing writes */
+  function filingOf(txnId: string) {
+    const r = seriesOf(txnId);
+    return {
+      categoryId: r.categoryId,
+      categorizationSource: r.categorizationSource,
+      categorizationConfidence: r.categorizationConfidence,
+      needsReview: r.needsReview,
+    };
+  }
+
+  /** what the import's filing writes: the category, as the import's — never his 'user' */
+  const filedByImport = (to: string) => ({
+    categoryId: to,
+    categorizationSource: "confirmed_series",
+    categorizationConfidence: 1,
+    needsReview: false,
+  });
+  const unfiled = { categoryId: null, categorizationSource: null, categorizationConfidence: null, needsReview: false };
+
+  /** His pay as his ledger holds it: the deposits he attached, filed Income > Salary by his hand. */
+  function confirmedPay(status: SeriesStatus = "confirmed"): string {
+    const pay = register({
+      name: PAY,
+      amountCents: 114192,
+      nextOn: "2026-10-01",
+      cadence: "weekly",
+      kind: "income",
+      accountId: checking,
+      status,
+    });
+    const salary = categoryId("Income", "Salary");
+    const held = [
+      post({
+        postedOn: "2026-09-23",
+        amountCents: 456768,
+        raw: "It America LLC Payroll 260923 Rayancheca Rayan Checa",
+        accountId: checking,
+        seriesId: pay,
+        linkSource: "user",
+      }),
+      post({
+        postedOn: "2026-09-24",
+        amountCents: 114192,
+        raw: "It America LLC Payroll 260924 9357426222928Qj Karim Checa,Rayan",
+        accountId: checking,
+        seriesId: pay,
+        linkSource: "user",
+      }),
+    ];
+    for (const id of held) file(id, salary, "user");
+    return pay;
+  }
+
+  /** a deposit the statement brought in, flagged for review as the import flags a large credit */
+  function deposit(postedOn: string, raw: string, amountCents = 114192): string {
+    const id = post({ postedOn, amountCents, raw, accountId: checking });
+    bundle.db.update(transactions).set({ needsReview: true }).where(eq(transactions.id, id)).run();
+    return id;
+  }
+
+  test("his four weekly deposits and the off-cycle $200 are filed Income > Salary — stamped as the import's", () => {
+    const pay = confirmedPay();
+    const salary = categoryId("Income", "Salary");
+    const weeks = WEEKS.map(([postedOn, raw]) => deposit(postedOn, raw));
+    const offCycle = deposit("2026-10-15", OFF_CYCLE, 20000);
+    // his employer paying back a subscription — another payee's words, never his pay
+    const reimbursement = deposit(
+      "2026-10-20",
+      "Instant Pmt From It America LLC on 10/20 Ref#20261020021000021P1Brjpc08540023001",
+      46820,
+    );
+
+    const { filed, ...linked } = linkRowsMadeActive(bundle.db, [...weeks, offCycle, reimbursement], TODAY_OCT);
+
+    expect(linked).toEqual({ absorbed: 5, firstPostings: 0 });
+    for (const id of [...weeks, offCycle]) expect(filingOf(id)).toEqual(filedByImport(salary));
+    expect(seriesOf(reimbursement).recurringSeriesId).toBeNull();
+    expect(filingOf(reimbursement)).toEqual({ ...unfiled, needsReview: true });
+    // one line for the one series: what it filed, under which category, and the very rows
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toMatchObject({
+      seriesId: pay,
+      seriesName: PAY,
+      categoryId: salary,
+      categoryPath: "Income > Salary",
+      count: 5,
+    });
+    expect([...filed[0]!.transactionIds].sort()).toEqual([...weeks, offCycle].sort());
+    expect(importFilingLine(filed[0]!)).toBe("It America LLC (weekly pay): 5 rows filed under Income > Salary");
+  });
+
+  test("the report's line counts one row as one row", () => {
+    confirmedPay();
+    const [first] = WEEKS;
+    const { filed } = linkRowsMadeActive(bundle.db, [deposit(first[0], first[1])], TODAY_OCT);
+    expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 1 row filed under Income > Salary"]);
+  });
+
+  test("a series the detector found and he never confirmed files nothing — its charge is linked and left unfiled", () => {
+    const streaming = categoryId("Subscriptions", "Streaming");
+    const detected = register({
+      name: "NFLX",
+      amountCents: -1549,
+      nextOn: "2026-10-03",
+      kind: "subscription",
+      status: "detected",
+    });
+    for (const day of ["2026-07-03", "2026-08-03", "2026-09-03"]) {
+      const held = post({ postedOn: day, amountCents: -1549, raw: "NFLX DIGITAL NTFLX US", seriesId: detected });
+      file(held, streaming, "merchant_map");
+    }
+    const october = post({ postedOn: "2026-10-03", amountCents: -1549, raw: "NFLX DIGITAL NTFLX US" });
+    // the control: his confirmed pay, in the same run, IS filed
+    const pay = confirmedPay();
+    const week = deposit(WEEKS[0][0], WEEKS[0][1]);
+
+    const { filed } = linkRowsMadeActive(bundle.db, [october, week], TODAY_OCT);
+
+    expect(seriesOf(october).recurringSeriesId).toBe(detected);
+    expect(filingOf(october)).toEqual(unfiled);
+    expect(filingOf(week)).toEqual(filedByImport(categoryId("Income", "Salary")));
+    expect(filed.map((f) => f.seriesId)).toEqual([pay]);
+  });
+
+  test("the first charge of a commitment he registered is filed under the category he named it by", () => {
+    const fitness = categoryId("Health", "Fitness");
+    const gym = register({ name: "Gym", amountCents: -10037, nextOn: "2026-10-22", accountId: checking });
+    bundle.db.update(recurringSeries).set({ userCategoryId: fitness }).where(eq(recurringSeries.id, gym)).run();
+    const charge = post({
+      postedOn: "2026-10-22",
+      amountCents: -10037,
+      raw: "MOVE FITNESS MIAMI BEACH FL",
+      accountId: checking,
+    });
+
+    const { filed, ...linked } = linkRowsMadeActive(bundle.db, [charge], TODAY_OCT);
+
+    expect(linked).toEqual({ absorbed: 0, firstPostings: 1 });
+    expect(seriesOf(charge).recurringSeriesId).toBe(gym);
+    expect(filingOf(charge)).toEqual(filedByImport(fitness));
+    expect(filed.map(importFilingLine)).toEqual(["Gym: 1 row filed under Health > Fitness"]);
+  });
+
+  describe("what the import's filing never touches — each beside a deposit of his pay the same run files", () => {
+    function payAndControl(): { pay: string; control: string } {
+      const pay = confirmedPay();
+      return { pay, control: deposit(WEEKS[0][0], WEEKS[0][1]) };
+    }
+
+    test("a transfer leg: a row in a transfer group stays unfiled though it carries his pay's words", () => {
+      const { pay, control } = payAndControl();
+      const leg = post({
+        postedOn: "2026-10-08",
+        amountCents: 114192,
+        raw: WEEKS[1][1],
+        accountId: checking,
+        transferGroupId: "group-1",
+      });
+
+      linkRowsMadeActive(bundle.db, [leg, control], TODAY_OCT);
+
+      expect(seriesOf(leg).recurringSeriesId).toBe(pay);
+      expect(filingOf(leg)).toEqual(unfiled);
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("a transfer series: a confirmed series of transfer kind files nothing", () => {
+      const { control } = payAndControl();
+      const internal = categoryId("Transfers", "Internal Transfer");
+      const SWEEP = "ONLINE TRANSFER TO SAV ...8721";
+      const sweep = register({
+        name: "Savings sweep",
+        amountCents: -30000,
+        nextOn: "2026-10-02",
+        kind: "transfer",
+        accountId: checking,
+      });
+      const held = post({
+        postedOn: "2026-09-02",
+        amountCents: -30000,
+        raw: SWEEP,
+        accountId: checking,
+        seriesId: sweep,
+        linkSource: "user",
+      });
+      file(held, internal, "user");
+      const october = post({ postedOn: "2026-10-02", amountCents: -30000, raw: SWEEP, accountId: checking });
+
+      linkRowsMadeActive(bundle.db, [october, control], TODAY_OCT);
+
+      expect(seriesOf(october).recurringSeriesId).toBe(sweep);
+      expect(filingOf(october)).toEqual(unfiled);
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("a split row: its parts decide its category, and it stays as they leave it", () => {
+      const { pay, control } = payAndControl();
+      const split = post({ postedOn: "2026-10-08", amountCents: 114192, raw: WEEKS[1][1], accountId: checking });
+      bundle.db
+        .insert(transactionSplits)
+        .values([
+          { transactionId: split, categoryId: categoryId("Income", "Salary"), amountCents: 100000, sortOrder: 0 },
+          { transactionId: split, categoryId: categoryId("Income", "Other Income"), amountCents: 14192, sortOrder: 1 },
+        ])
+        .run();
+
+      linkRowsMadeActive(bundle.db, [split, control], TODAY_OCT);
+
+      expect(seriesOf(split).recurringSeriesId).toBe(pay);
+      expect(filingOf(split)).toEqual(unfiled);
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("money against the series' sign: his pay going back out stays unfiled", () => {
+      const { pay, control } = payAndControl();
+      const back = post({ postedOn: "2026-10-09", amountCents: -114192, raw: WEEKS[1][1], accountId: checking });
+
+      linkRowsMadeActive(bundle.db, [back, control], TODAY_OCT);
+
+      expect(seriesOf(back).recurringSeriesId).toBe(pay);
+      expect(filingOf(back)).toEqual(unfiled);
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("a row already filed keeps its own category, source and confidence", () => {
+      const { pay, control } = payAndControl();
+      const other = categoryId("Income", "Other Income");
+      const filedAlready = post({ postedOn: "2026-10-08", amountCents: 114192, raw: WEEKS[1][1], accountId: checking });
+      file(filedAlready, other, "rule", 0.5);
+
+      linkRowsMadeActive(bundle.db, [filedAlready, control], TODAY_OCT);
+
+      expect(seriesOf(filedAlready).recurringSeriesId).toBe(pay);
+      expect(filingOf(filedAlready)).toEqual({
+        categoryId: other,
+        categorizationSource: "rule",
+        categorizationConfidence: 0.5,
+        needsReview: false,
+      });
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("his own 'Uncategorized' is his filing: a row he cleared stays cleared", () => {
+      const { pay, control } = payAndControl();
+      const cleared = post({ postedOn: "2026-10-08", amountCents: 114192, raw: WEEKS[1][1], accountId: checking });
+      file(cleared, null, "user");
+
+      linkRowsMadeActive(bundle.db, [cleared, control], TODAY_OCT);
+
+      expect(seriesOf(cleared).recurringSeriesId).toBe(pay);
+      expect(filingOf(cleared)).toEqual({ ...unfiled, categorizationSource: "user", categorizationConfidence: 1 });
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+
+    test("a row outside the operation's scope stays unfiled, though it sits unfiled on his confirmed pay", () => {
+      const { pay, control } = payAndControl();
+      const history = post({
+        postedOn: "2026-09-17",
+        amountCents: 114192,
+        raw: WEEKS[1][1],
+        accountId: checking,
+        seriesId: pay,
+      });
+
+      linkRowsMadeActive(bundle.db, [control], TODAY_OCT);
+
+      expect(filingOf(history)).toEqual(unfiled);
+      expect(filingOf(control).categorizationSource).toBe("confirmed_series");
+    });
+  });
+
+  test("the series' category is read before the import links — rows it links filed elsewhere do not rename it", () => {
+    const rent = categoryId("Housing", "Rent");
+    const supplies = categoryId("Housing", "Home Supplies");
+    const RENT = "043257 Flamingo Rent 261001 xxxxx5441 Rayan Karim Checa";
+    const flamingo = register({
+      name: "Flamingo South Beach (rent)",
+      amountCents: -230521,
+      nextOn: "2026-10-01",
+      accountId: checking,
+    });
+    const held = post({
+      postedOn: "2026-09-01",
+      amountCents: -230521,
+      raw: RENT,
+      accountId: checking,
+      seriesId: flamingo,
+      linkSource: "user",
+    });
+    file(held, rent, "user");
+    // two rows the merchant map filed elsewhere would outvote his one were the category read after the link
+    const elsewhere = ["2026-10-01", "2026-10-02"].map((day) => {
+      const id = post({ postedOn: day, amountCents: -230521, raw: RENT, accountId: checking });
+      file(id, supplies, "merchant_map");
+      return id;
+    });
+    const loose = post({ postedOn: "2026-10-03", amountCents: -230521, raw: RENT, accountId: checking });
+
+    const { filed } = linkRowsMadeActive(bundle.db, [...elsewhere, loose], TODAY_OCT);
+
+    expect([...elsewhere, loose].map((id) => seriesOf(id).recurringSeriesId)).toEqual([flamingo, flamingo, flamingo]);
+    expect(filingOf(loose)).toEqual(filedByImport(rent));
+    for (const id of elsewhere) expect(filingOf(id).categoryId).toBe(supplies);
+    expect(filed.map(importFilingLine)).toEqual(["Flamingo South Beach (rent): 1 row filed under Housing > Rent"]);
+  });
+
+  test("a row in scope that arrives linked to his confirmed pay — a re-read's carry — is filed too", () => {
+    const pay = confirmedPay();
+    const carried = post({
+      postedOn: WEEKS[0][0],
+      amountCents: 114192,
+      raw: WEEKS[0][1],
+      accountId: checking,
+      seriesId: pay,
+    });
+
+    const { filed, ...linked } = linkRowsMadeActive(bundle.db, [carried], TODAY_OCT);
+
+    expect(linked).toEqual({ absorbed: 0, firstPostings: 0 });
+    expect(filingOf(carried)).toEqual(filedByImport(categoryId("Income", "Salary")));
+    expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 1 row filed under Income > Salary"]);
+  });
+
+  test("what the filing feeds is settled in the same step: a recompute afterwards changes nothing", () => {
+    // ⛔ The kind a series' stats derive reads its rows' categories (`classifyKind`): three deposits he filed as
+    // Internal Transfer outvote four unfiled ones, and four filed Income > Salary outvote the three — so a filing that
+    // left the stats as linking settled them would leave a stale kind for the next Detect now to rewrite.
+    const internal = categoryId("Transfers", "Internal Transfer");
+    const pay = register({
+      name: PAY,
+      amountCents: 114192,
+      nextOn: "2026-10-01",
+      cadence: "weekly",
+      kind: "income",
+      accountId: checking,
+    });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userCategoryId: categoryId("Income", "Salary") })
+      .where(eq(recurringSeries.id, pay))
+      .run();
+    for (const day of ["2026-09-10", "2026-09-17", "2026-09-24"]) {
+      const held = post({
+        postedOn: day,
+        amountCents: 114192,
+        raw: WEEKS[0][1],
+        accountId: checking,
+        seriesId: pay,
+        linkSource: "user",
+      });
+      file(held, internal, "user");
+    }
+    const weeks = WEEKS.map(([postedOn, raw]) => deposit(postedOn, raw));
+    const statsOf = (id: string) => ({ ...seriesRow(id), updatedAt: undefined });
+
+    linkRowsMadeActive(bundle.db, weeks, TODAY_OCT);
+    const settled = statsOf(pay);
+    bundle.db.transaction((tx) => recomputeSeriesStats(tx, pay, TODAY_OCT, loadRecomputeCtx(bundle.db)));
+
+    expect(weeks.map((id) => filingOf(id).categorizationSource)).toEqual(Array(4).fill("confirmed_series"));
+    expect(statsOf(pay)).toEqual(settled);
+    expect(settled.kind).toBe("income");
   });
 });

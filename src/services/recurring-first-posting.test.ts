@@ -139,7 +139,12 @@ describe("the first posting of a commitment that has never posted", () => {
     // the fixture expresses the defect: posted, and still owed
     expect(overdueForSeries(bundle.db, new Set([utilities]), "2026-09-01", TODAY, TODAY).totalCents).toBe(18221);
 
-    expect(linkRowsMadeActive(bundle.db, [leaseRow, utilitiesRow, gymRow], TODAY)).toEqual({ absorbed: 0, firstPostings: 3 });
+    // named by no category here, so the links file nothing (`fileImportedLinks`)
+    expect(linkRowsMadeActive(bundle.db, [leaseRow, utilitiesRow, gymRow], TODAY)).toEqual({
+      absorbed: 0,
+      firstPostings: 3,
+      filed: [],
+    });
 
     for (const [row, series, day] of [
       [leaseRow, lease, "2026-09-15"],

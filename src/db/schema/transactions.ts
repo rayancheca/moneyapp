@@ -15,6 +15,9 @@ export const CATEGORIZATION_SOURCES = [
   "claude",
   "transfer_detect",
   "credit_match",
+  // ⚖️ default built, not asked (2026-10-29): an import's link to a series he confirmed, filed under its category —
+  // an engine's source, never his 'user' (`fileImportedLinks`, services/recurring-links)
+  "confirmed_series",
 ] as const;
 export type CategorizationSource = (typeof CATEGORIZATION_SOURCES)[number];
 

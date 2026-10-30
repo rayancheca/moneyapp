@@ -17,7 +17,7 @@ import { unimportedRowAttributes } from "@/db/schema/unimported-row-attributes";
 import { unimportedTransferLegs } from "@/db/schema/unimported-transfer-legs";
 import { latestBalances, netWorthSeries, rebuildAccount } from "@/services/derivation";
 import { listSplits, setSplits } from "@/services/transaction-splits";
-import { asParsedFile, fidelityOf, importStatementFiles, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
+import { asParsedFile, fidelityOf, importStatementFiles, importStatementFilesWithReport, migrateStorageLayout, unimportFile, acceptGap, parseContextFor, reconcileAccounts, resolveAccount, type ImportInput } from "./service";
 import { merchants } from "@/db/schema/merchants";
 import { PROFILES } from "./profiles";
 import { parseChaseCardLines } from "./profiles/chase-card-statement-profile";
@@ -27,6 +27,7 @@ import { importFiles as importFilesTable } from "@/db/schema/imports";
 import { dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { attachTransactions } from "@/services/recurring-links";
+import { importFilingLine } from "@/services/recurring-import-links";
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "synthetic");
 
@@ -1670,6 +1671,28 @@ describe("an import links what it brought in to the series that already carry it
     unimportFile(bundle.db, julyFile.id);
 
     expect(lastMatched()).toBe("2026-06-03");
+  });
+
+  test("⚖️ default built, not asked (2026-10-29): it files what it links to a series he confirmed, and says so", async () => {
+    // The checking fixture pays WESTVIEW APARTMENTS RENT on the 1st; with the merchant map no longer naming the
+    // payee, July's charge lands unfiled — as his weekly pay lands, which no merchant or rule names.
+    const Q2_CHECKING = "Chase4321_Activity_2026-04-01_2026-06-30.CSV";
+    const JULY_CHECKING = "Chase4321_Activity_2026-07-01_2026-07-05.CSV";
+    await importStatementFiles(bundle.db, [load("chase", Q2_CHECKING)]);
+    const june = rowOn("2026-06-01", "ACH PYMT WESTVIEW");
+    const rent = registerSeries("Rent");
+    setLink(june.id, rent, "user");
+    bundle.db.update(merchants).set({ defaultCategoryId: null }).where(eq(merchants.id, june.merchantId!)).run();
+
+    const report = await importStatementFilesWithReport(bundle.db, [load("chase", JULY_CHECKING)]);
+
+    const july = rowOn("2026-07-01", "ACH PYMT WESTVIEW");
+    expect(july.recurringSeriesId).toBe(rent);
+    expect(july.categoryId).toBe(june.categoryId);
+    expect(july.categorizationSource).toBe("confirmed_series");
+    expect(report.outcomes.map((o) => o.status)).toEqual(["parsed"]);
+    expect(report.filed.map(importFilingLine)).toEqual(["Rent: 1 row filed under Housing > Rent"]);
+    expect(report.filed[0]!.transactionIds).toEqual([july.id]);
   });
 });
 

@@ -31,6 +31,7 @@ import { categorizeAll, detectTransfers } from "../categorize";
 import { rebuildAccount } from "../derivation";
 import { flagDuplicateCandidates } from "../duplicate-flags";
 import { linkRowsMadeActive, seriesOfTransactions, settleSeriesStats } from "../recurring-import-links";
+import type { ImportFiling } from "../recurring-links";
 import { detachTransferLegs, type StaleTransferLeg } from "../transfer-links";
 import {
   accountsOfTransactions,
@@ -532,7 +533,9 @@ function carriedLinkSource(
  *  - `transfer_detect` overwrites, with the transfer group it belongs to: detection pairs only rows with no group, and
  *    the group travels with the carry, so detection never reads the row again — its verdict on the pair stays.
  * Every other engine (rules, the merchant map, bank categories, credit matching) runs over the new row once the batch
- * settles, and carrying its answer would freeze a stale guess.
+ * settles, and carrying its answer would freeze a stale guess — as does the import's filing of a row linked to a series
+ * he confirmed (`confirmed_series`): the link travels, and `fileImportedLinks` files the new row under the category the
+ * series has then.
  *
  * 🔴 Only a hand-set category travelled. Measured on a copy of the real ledger, 2026-09-16: re-reading the Discover CSV
  * (v1 → v2, the money identical) re-derived 485 Claude and transfer-detection categories through the merchant map,
@@ -1360,7 +1363,22 @@ export interface ImportInput {
   buffer: Buffer;
 }
 
+/**
+ * An upload as the scripts report it: each file's outcome, and what linking the rows it made active filed under a
+ * series he confirmed — one per series (`ImportLinkResult.filed`), printed by trial-import before --confirm and by
+ * import-statements after it (`importFilingLine`). The filing is the upload's, not a file's: it runs once, over every
+ * row the upload wrote or promoted.
+ */
+export interface ImportReport {
+  outcomes: FileOutcome[];
+  filed: ImportFiling[];
+}
+
 export async function importStatementFiles(db: AppDatabase, files: ImportInput[]): Promise<FileOutcome[]> {
+  return (await importStatementFilesWithReport(db, files)).outcomes;
+}
+
+export async function importStatementFilesWithReport(db: AppDatabase, files: ImportInput[]): Promise<ImportReport> {
   // higher-fidelity formats first so ownership settles with minimal takeovers;
   // final state is order-independent, this just does less work
   const sniffed = files
@@ -1386,6 +1404,7 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
   // A book this call left holding nothing — a re-read that no longer proves its month, a statement that failed after
   // its book was made — leaves, as an un-import's does: a first read that withheld the section never made one.
   for (const removed of removeEmptyBooks(db, [...touchedAccounts])) touchedAccounts.delete(removed);
+  let filed: ImportFiling[] = [];
 
   // A row an un-import detached is filed again under the statement that now
   // holds its day (`attached-rows`). Before the reconcile, so a gap holds it
@@ -1407,8 +1426,12 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     // AFTER the reconcile, because the reconcile decides which rows are active.
     // Only what this call inserted or promoted may be claimed (owner,
     // 2026-09-14); a row the reconcile quarantined is not active and waits for
-    // its gap to be accepted, which links it then.
-    linkRowsMadeActive(db, [...rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)), ...quarantinedBefore]);
+    // its gap to be accepted, which links it then. What it links to a series he
+    // confirmed it files, and the report says so (⚖️ default built, not asked, 2026-10-29).
+    filed = linkRowsMadeActive(db, [
+      ...rowIdsOfFiles(db, writtenFileIds).filter((id) => !refiled.has(id)),
+      ...quarantinedBefore,
+    ]).filed;
     // …and a series a record gave a link back to counts that charge again (`unimported-attributes`) — as does one
     // whose linked copy this read retired again for the kept side it brought back (`retireStandIn`)
     settleSeriesStats(db, batch.givenBackSeries);
@@ -1429,7 +1452,7 @@ export async function importStatementFiles(db: AppDatabase, files: ImportInput[]
     flagDuplicateCandidates(db, [...touchedAccounts]);
   }
   // LAST: a later turn can read again the very file an earlier outcome would say still prints a line left out
-  return outcomes.map((outcome) => withLinesLeftOut(db, outcome, batch.retiredBy.get(outcome)));
+  return { outcomes: outcomes.map((outcome) => withLinesLeftOut(db, outcome, batch.retiredBy.get(outcome))), filed };
 }
 
 /**
