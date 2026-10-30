@@ -48,7 +48,7 @@ export function InlineCategorizeList({
 
   function recategorize(id: string, categoryId: string): void {
     const option = categories.find((c) => c.id === categoryId);
-    runCategoryCorrection({
+    void runCategoryCorrection({
       transactionId: id,
       categoryId,
       categoryName: option?.name ?? "category",
