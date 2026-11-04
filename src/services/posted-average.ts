@@ -39,7 +39,7 @@ export interface SeriesPostedAverage extends PostedAverage {
    * ledger copy 2026-10-23. ⚖️ default built, not asked (2026-10-23): …and none less after it but the remainder one
    * implies — a bill varying after its one high month names nothing. ⛔ The payments every grader of a bill's day
    * reads as paying two due days (`paidAheadDays`, `paymentFor`'s catch-up): this rule, never a copy of it (pinned,
-   * nearer-due-day.test.ts).
+   * nearer-due-day-catch-up.test.ts).
    */
   paidAhead: readonly Occurrence[];
   /**

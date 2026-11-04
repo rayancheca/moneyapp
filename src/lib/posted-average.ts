@@ -451,7 +451,8 @@ export function postedAsWord(o: Pick<Occurrence, "postings">): string | null {
  * A late catch-up — two charges paid at once after a missed month — is named too, and truly: it covered the month it
  * missed and its own, and the words say no more than that ("covered more than one month"), whenever it posts. Every
  * grader of a bill's day pays both days with it — after two missed charges IN A ROW, those two (`paymentFor`'s
- * catch-up, ⚖️ default built, not asked, 2026-10-23, reading `paidAheadDays`; pinned in nearer-due-day.test.ts).
+ * catch-up, ⚖️ default built, not asked, 2026-10-23, reading `paidAheadDays`; pinned in
+ * nearer-due-day-catch-up.test.ts).
  * ⚠️ Not every shape — two known gaps (`paymentFor`): after two missed with a paid one between them it pays the later
  * and the day after it, still to come — Aug 11 missed, Sep 11 paid, Oct 11 missed, then Oct 20 -$715.16: on his
  * ledger copy 2026-10-29 November draws Nov 11 "paid early by its payment of Oct 20", Upcoming lists Dec 11 alone and

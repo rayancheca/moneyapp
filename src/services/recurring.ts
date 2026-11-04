@@ -1785,7 +1785,7 @@ export function rollForwardNextExpected(eff: SteppedSchedule, today: string = to
  * ⛔ Strictly AFTER `day`: its next own day by index from the anchor — never the first day FALLING DUE from the day
  * after (`rollForwardNextExpected`), which, billed inside another, can be `day` itself: the utilities' Nov 1, paired
  * with a rent's Nov 16, still falls due from Nov 2 on, and `nextStillToCome` would ask it for good (pinned in
- * nearer-due-day.test.ts, "…paid early Nov 5").
+ * nearer-due-day-paired.test.ts, "…paid early Nov 5").
  */
 export function walkDayAfter(eff: SteppedSchedule, day: string): string | null {
   if (!eff.nextExpectedOn) return null;

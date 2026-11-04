@@ -474,7 +474,8 @@ describe("the nearer due day wins (decision 76)", () => {
    * due the 11th, Sep 11 missed, then one payment of two premiums: between the two days it pays the one it lies nearer
    * (decision 76) and then the other; on time for Oct 11, Oct 11 and the missed Sep 11, late — never Nov 11, a day
    * still to come. 🔴 At 66daebd it paid one day and left the other unpaid, the twin of the two halves above (review
-   * of 66daebd, 2026-10-23; nearer-due-day.test.ts pins what each surface read). Latent: no bill of his has one.
+   * of 66daebd, 2026-10-23; nearer-due-day-catch-up.test.ts pins what each surface read). Latent: no bill of his has
+   * one.
    */
   describe("⚖️ the catch-up — a payment of two charges pays the unpaid day on its other side", () => {
     const PREMIUM = monthlyOn("2026-09-11");
@@ -620,7 +621,7 @@ describe("the nearer due day wins (decision 76)", () => {
      * second charge paid ahead — so that charge pays no day: five charges, four days, the last one owed; with a third,
      * seven and five. Paying every one reads the run as one allocation, each payment pushing the next a day further
      * ahead, a day still to come at its end — not built (an owner's call, 2026-10-29). The error shows a paid day owed,
-     * the safe direction. nearer-due-day.test.ts pins what each surface reads.
+     * the safe direction. nearer-due-day-catch-up.test.ts pins what each surface reads.
      */
     test("⚠️ the known gap: two ADJACENT late ones pay three days for four charges — the day after stays owed", () => {
       const adjacent = [pay("2026-06-11"), twice("2026-07-20"), twice("2026-08-20")];

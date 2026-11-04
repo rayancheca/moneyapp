@@ -370,8 +370,8 @@ export function arrearsInWindow(
  * and paid Nov 16, December unpaid, and the utilities' own −$182.21 of Dec 1 unattached — on time for their Dec 1,
  * which falls due with the rent's Dec 16 — on Dec 20 the runway read "A further $2,473.42 came due earlier this month
  * and has not posted." and December drew a ✕ on Dec 16 beside the row (a temp database; pinned in
- * nearer-due-day.test.ts). Latent on his ledger copy 2026-10-30: the utilities have no account and no row of their
- * own, and with the rent typed Sep 1 every day of theirs falls due on its own 1st.
+ * nearer-due-day-paired.test.ts). Latent on his ledger copy 2026-10-30: the utilities have no account and no row of
+ * their own, and with the rent typed Sep 1 every day of theirs falls due on its own 1st.
  */
 function readDueDays(
   late: Overdue,

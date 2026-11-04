@@ -259,9 +259,9 @@ export interface DueDays {
    * ⚖️ …and whether that day is HIS (`userNextExpectedOn`): his date IS the schedule, so no day before it was a charge,
    * whatever posted before it (default built, not asked, 2026-10-23), nor one a payment of two catches up from
    * (`liesBeforeHisDate`, 2026-10-29). ⛔ Every grader reads it off the series' own row, the readers that look ahead
-   * too — pinned in nearer-due-day.test.ts ("…on Sep 1 no reader that looks ahead lists Sep 11") — and, billed inside
-   * another, off its carrier's (`openingOf`): the rent's date, not the utilities' (pinned there, "…his date on the
-   * rent").
+   * too — pinned in nearer-due-day-catch-up.test.ts ("…on Sep 1 no reader that looks ahead lists Sep 11") — and,
+   * billed inside another, off its carrier's (`openingOf`): the rent's date, not the utilities' (pinned in
+   * nearer-due-day-carried.test.ts, "…his date on the rent").
    */
   readonly opensOnHisDate: boolean;
   /**
@@ -424,7 +424,7 @@ export interface CarrierPairing {
  * one month — five charges, four days; with Sep 20 a third, seven and five. Paying every one reads the run as one
  * allocation, each payment pushing the next a day further ahead, onto days still to come — not built, an owner's call
  * (2026-10-29): its error shows a paid day owed, the safe direction. Pinned in billing-carriers.test.ts and
- * nearer-due-day.test.ts.
+ * nearer-due-day-catch-up.test.ts.
  *
  * ⛔ Nothing is read back but that run: a day's payment lies between the days either side of it — a catch-up, between
  * the day either side and the one past it — and whether the day after is paid on time; and the day behind one a late
@@ -442,7 +442,7 @@ export interface CarrierPairing {
  * day it pairs with. 🔴 Graded by the rent payment NEAREST each of their days (round 3's reading after the first
  * period), the rent typed Nov 16, paid Nov 16 then Dec 17 — a day past the midpoint, nearer their Jan 1 — owed their
  * Dec 1 $182.21 beside a rent paid on time and drew their Jan 1 "paid early by Dec 17" (the owner question 46f19f15
- * left; pinned in nearer-due-day.test.ts, "⚖️ (B) …").
+ * left; pinned in nearer-due-day-paired.test.ts, "⚖️ (B) …").
  */
 export function paymentFor<P extends Payment>(payments: readonly P[], dueOn: string, dueDays: DueDays): P | undefined {
   const paired = dueDays.pairedWith;
@@ -550,10 +550,10 @@ function paidAheadFromTheDayBefore<P extends Payment>(
  * itself, every test passed and one payment of two paid three days — on his ledger copy 2026-10-29 with a -$357.58
  * premium on Venture X started Sep 11 by his date, Jun 11 at the rate, Aug 20 and Oct 20 each -$715.16, November drew
  * Nov 11 "paid early by its payment of Oct 20", Upcoming listed Dec 11 alone, November's forecast left it out and the
- * All tab and the page named Dec 11 next. Pinned in billing-carriers.test.ts and nearer-due-day.test.ts — 🔴 at first
- * with the day two before his date unpaid, where a run read without his date stops too: read without it in this call,
- * every test passed again (review of d7a5485c), and on the same copy with Jul 11 at the rate as well Oct 20 paid those
- * three days once more. Pinned with it paid.
+ * All tab and the page named Dec 11 next. Pinned in billing-carriers.test.ts and nearer-due-day-catch-up.test.ts — 🔴
+ * at first with the day two before his date unpaid, where a run read without his date stops too: read without it in
+ * this call, every test passed again (review of d7a5485c), and on the same copy with Jul 11 at the rate as well Oct 20
+ * paid those three days once more. Pinned with it paid.
  */
 function dayBehindIsSettled(payments: readonly Payment[], day: string, dueDays: DueDays): boolean {
   const behind = dueDays.before(day);
@@ -687,7 +687,7 @@ function carrierPaymentsBySeries(
  * A payment of a bill (`billPaymentsBySeries`): whose it is — its carrier's (§6A 59), or the series' own — and whether
  * it covered more than one charge of the series that posted it, its carrier's for a carried one
  * (`PaymentDays.coveredMore`): a carrier's payment of two pays two days of what it carries, as two of its own, on
- * days opening where the carrier's open (`billDueDaysBySeries`; pinned in nearer-due-day.test.ts).
+ * days opening where the carrier's open (`billDueDaysBySeries`; pinned in nearer-due-day-carried.test.ts).
  * ⚠️ His rent cannot reach it — a known gap (review of b6e11a76): its payments carry the utilities, each above its
  * -$2,109.00 and none at it, so its average names none. On his ledger copy 2026-10-29 with -$4,582.42 added on Oct 20
  * (October's unposted), the rent's page names only what its payments carry, November draws Nov 1 paid early by Oct 20
@@ -764,7 +764,7 @@ interface PaymentDays {
    * insurance's Sep 3 alone on his ledger copy 2026-10-23, and 2026-10-29. 🔴 Nothing pinned that a grader reads THIS,
    * not the bare multiple (review of 67b3b79): read as |amount| ≥ 2 × |rate|, every unit test passed, and a what-if
    * FPL on Venture X (the -$58.87 he set; Jul 10 -$14.21, Jul 28 -$56.22, Sep 28 -$125.00) drew Sep 8 paid by Sep 28
-   * beside an average naming nothing. nearer-due-day.test.ts pins Sep 8 owed, and these days as paidAhead's.
+   * beside an average naming nothing. nearer-due-day-catch-up.test.ts pins Sep 8 owed, and these days as paidAhead's.
    */
   readonly coveredMore: ReadonlySet<string>;
 }
@@ -848,8 +848,8 @@ export function billPaymentsBySeries(
  * Upcoming listed the rent's Oct 1 and Nov 1 but the utilities' Nov 1 alone. Now both Oct 1s are coming on Sep 25 and
  * owed on Oct 23: "A further $2,473.42 came due earlier this month and has not posted." And through `couldHaveCharged`,
  * at 32aeb3a9 too: Oct 10's two months, late for his Oct 1 itself, drew the rent's Nov 1 "paid early by Oct 10" beside
- * the utilities' Nov 1 upcoming; now both are paid early. Pinned in nearer-due-day.test.ts. On his ledger copy
- * 2026-10-29 with that what-if added on Wells Fargo (read through Sep 24), on Oct 29 the runway read "A further
+ * the utilities' Nov 1 upcoming; now both are paid early. Pinned in nearer-due-day-carried.test.ts. On his ledger
+ * copy 2026-10-29 with that what-if added on Wells Fargo (read through Sep 24), on Oct 29 the runway read "A further
  * $5,811.19 came due earlier this month and no statement has covered it yet." beside what it carries drawn paid early
  * by Sep 10; now both Oct 1s are "?" and it reads "A further $5,993.40 …". Latent on his ledger itself: his rent names
  * no payment of two (`BillPayment`'s known gap), and nothing else is billed inside another.
@@ -858,7 +858,7 @@ export function billPaymentsBySeries(
  * of d7a5485c), so the builder keeping the carried series' own day, taking only "his" from the rent, passed every test:
  * the rent typed Oct 1, the utilities still on detection's Sep 1 — his ledger's shape should he retype only the rent —
  * Sep 10 paid their Oct 1 early beside the rent's "?", and the runway on that copy read "A further $5,811.19 …" again.
- * Pinned with the two apart (nearer-due-day.test.ts, "…still on detection's Sep 1").
+ * Pinned with the two apart (nearer-due-day-carried.test.ts, "…still on detection's Sep 1").
  *
  * ⚖️ …and, on the carrier's own step, the carrier's day each of its days PAIRS with (`pairingOf`, `DueDays.pairedWith`;
  * default (B), built, not asked, 2026-10-30): what pays the rent's Dec 16 pays what the rent carries on its Dec 1.
@@ -892,8 +892,8 @@ export function billDueDaysBySeries(
  * 2026-10-29 with that what-if added on Wells Fargo (read through Oct 26), the runway on Sep 25 read "A further $347.08
  * came due earlier this month: $182.21 has not posted, and no statement has covered the other $164.87 yet."; now
  * September draws nothing of theirs and it reads "A further $164.87 …", his own bills, as with the rent on
- * detection's Oct 1. Pinned in nearer-due-day.test.ts ("…on time for his Oct 1"), with the review's two controls, and
- * on every reader that looks ahead and the first-posting rule (recurring-first-posting.test.ts).
+ * detection's Oct 1. Pinned in nearer-due-day-carried.test.ts ("…on time for his Oct 1"), with the review's two
+ * controls, and on every reader that looks ahead and the first-posting rule (recurring-first-posting.test.ts).
  *
  * ⚖️ …and the carrier's opening is read as a day of ITS OWN: the one the carrier's PAYMENT of that day pays
  * (`BillingCarrier.opensPaidBy`, read by the carrier's own test, `paymentFor`, his date included) — its due day nearest
@@ -910,18 +910,18 @@ export function billDueDaysBySeries(
  * the All tab named Dec 1 and their year read ~$2,004.31 for ~$2,186.52; on Nov 20 the runway read "A further $2,991.65
  * came due earlier this month and no statement has covered it yet." for $3,173.86, November drawing no Nov 1 of theirs.
  * And through `liesBeforeHisDate`, already at ae29cda4 — on a temp database, the what-if rent at −$2,291.21, whose
- * average names a payment of two (pinned in nearer-due-day.test.ts): November missed, Dec 10 two months drew their Jan 1
- * "paid early by Dec 10" beside the rent's Jan 2 still to come, and on Dec 20 Upcoming and the All tab named their Feb 1
- * next. Now their Nov 1 opens them: every figure above reads as at ae29cda4 again, and Dec 10 pays their Nov 1 and Dec
- * 1 as it pays the rent's Nov 2 and Dec 2, their Jan 1 still to come with its Jan 2. ⚠️ Not on his copy (review of
- * 46f19f15, L60): his rent at −$2,109.00 names no payment of two (`BillPayment`'s known gap), so there Dec 10's
- * −$4,582.42 pays the rent's Dec 2 and their Dec 1, late, and November draws both Nov 2 missed — on Dec 20 Upcoming
- * names their Jan 1 by the rent's Jan 2 (his ledger copy 2026-11-04, the rent retyped Nov 2). ⛔ The rent's date
- * BEFORE their own reads the same way: typed Sep 1 beside their own Nov 1 (a Save of their date editor, which opens on
- * Nov 1, types it), they open on their own Sep 1, so a payment of two late for their Nov 1 catches up their Oct 1 and
- * pays no Dec 1 early. 🔴 Nothing pinned that branch (review of 0ac5d059): read as the LATER of the two dates, every
- * test passed. Pinned in nearer-due-day.test.ts ("…the rent typed Nov 2", "…the rent typed Sep 1") and on the day
- * itself in billing-carriers.test.ts.
+ * average names a payment of two (pinned in nearer-due-day-carried.test.ts): November missed, Dec 10 two months drew
+ * their Jan 1 "paid early by Dec 10" beside the rent's Jan 2 still to come, and on Dec 20 Upcoming and the All tab
+ * named their Feb 1 next. Now their Nov 1 opens them: every figure above reads as at ae29cda4 again, and Dec 10 pays
+ * their Nov 1 and Dec 1 as it pays the rent's Nov 2 and Dec 2, their Jan 1 still to come with its Jan 2. ⚠️ Not on
+ * his copy (review of 46f19f15, L60): his rent at −$2,109.00 names no payment of two (`BillPayment`'s known gap), so
+ * there Dec 10's −$4,582.42 pays the rent's Dec 2 and their Dec 1, late, and November draws both Nov 2 missed — on Dec
+ * 20 Upcoming names their Jan 1 by the rent's Jan 2 (his ledger copy 2026-11-04, the rent retyped Nov 2). ⛔ The
+ * rent's date BEFORE their own reads the same way: typed Sep 1 beside their own Nov 1 (a Save of their date editor,
+ * which opens on Nov 1, types it), they open on their own Sep 1, so a payment of two late for their Nov 1 catches up
+ * their Oct 1 and pays no Dec 1 early. 🔴 Nothing pinned that branch (review of 0ac5d059): read as the LATER of the two
+ * dates, every test passed. Pinned in nearer-due-day-carried.test.ts ("…the rent typed Nov 2", "…the rent typed Sep
+ * 1") and on the day itself in billing-carriers.test.ts.
  *
  * 🔴 At ec7fd198 that day was read off the carrier's DATE even once a payment of it had posted (review of ec7fd198):
  * the rent's payments post a day or more after its date (Sep 2, Oct 2, Jul 8, Aug 4 on his ledger), and one a day or
@@ -940,8 +940,8 @@ export function billDueDaysBySeries(
  * Nov 1, late, and opens them there; and November missed, Dec 20's two months — the rent's Nov 16 caught up from its
  * Dec 16 — open them on Dec 1, the day behind their Jan 1 nearest it, so Dec 20 pays their Dec 1 and Jan 1 as it pays
  * the rent's Nov 16 and Dec 16 (read off its nearest day alone, their Dec 1 — the charge the rent's Nov 16 carries —
- * would be drawn, owed and listed nowhere). Pinned in nearer-due-day.test.ts ("…paid Nov 17", "…paid ON Nov 16", "…not
- * yet paid", "…Oct 20's two months before his Nov 16", "…Dec 20's two months") and on the day in
+ * would be drawn, owed and listed nowhere). Pinned in nearer-due-day-carried.test.ts ("…paid Nov 17", "…paid ON Nov
+ * 16", "…not yet paid", "…Oct 20's two months before his Nov 16", "…Dec 20's two months") and on the day in
  * billing-carriers.test.ts.
  *
  * ⚖️ …and from that day on, ONE pairing (`pairingOf`; default (B), built, not asked, 2026-10-30): the day of its own
@@ -1018,7 +1018,7 @@ function earlierOf(a: string | null, b: string | null): string | null {
  * Null billed on its own, with no schedule either side, or on a STEP of its own — a cadence, or a detected interval,
  * that steps apart from the carrier's (`stepPlan`): an annual item carried inside a monthly rent. Then the payment
  * nearest each of its days pays it, as before (A) — on the safe side: no pairing hands next year's day of it to next
- * month's rent payment (pinned in nearer-due-day.test.ts, "…on the rent's step only").
+ * month's rent payment (pinned in nearer-due-day-paired.test.ts, "…on the rent's step only").
  */
 export function pairingOf(s: SeriesOverrides & CarriedBy): CarrierPairing | null {
   const carrier = s.billedWith;

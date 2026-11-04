@@ -900,9 +900,10 @@ describe("paidAhead — the payments that covered more than one charge, said bes
    * ⚖️ default built, not asked (2026-10-23): a late catch-up — two charges paid at once after a missed month — is
    * named as well, and truly, whenever it posts: it covered the month it missed and its own, and its words say only
    * that ("covered more than one month"), never "ahead" or "early". The calendar and the arrears pay BOTH days with it
-   * (`paymentFor`'s catch-up, ⚖️ default built, not asked, 2026-10-23 — nearer-due-day.test.ts): 🔴 at 66daebd they
-   * paid one and left the other unpaid, Sep 19 leaving Oct 11 owed beside these words (review of 66daebd). Latent on
-   * his ledger copy 2026-10-23: Car insurance's Sep 3 is the one payment of twice a rate, paid before Sep 11.
+   * (`paymentFor`'s catch-up, ⚖️ default built, not asked, 2026-10-23 — nearer-due-day-catch-up.test.ts): 🔴 at
+   * 66daebd they paid one and left the other unpaid, Sep 19 leaving Oct 11 owed beside these words (review of
+   * 66daebd). Latent on his ledger copy 2026-10-23: Car insurance's Sep 3 is the one payment of twice a rate, paid
+   * before Sep 11.
    */
   test("a late catch-up after a missed month covered more than one month, whenever it posts — its words say", () => {
     const said = [
