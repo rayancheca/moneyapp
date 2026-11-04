@@ -23,6 +23,7 @@ import { addDays } from "@/lib/dates";
 import { formatDayShort } from "@/lib/format-date";
 import { passedPaydaysWords } from "@/lib/unbanked-income";
 import { forecastCurrentMonth } from "./forecast";
+import { incomeCard } from "./income-card";
 import { priceCache } from "@/db/schema/holdings";
 import { rebuildInvestmentHistory } from "./crypto-history";
 import { upsertHolding } from "./holdings";
@@ -731,15 +732,34 @@ describe("dashboardData: spending pace", () => {
     });
 
     /*
-     * ⛔ The checked day says its year when it is not this month's (`formatDayShortIn`): a bare "Dec 31" under
+     * ⛔ The checked day says its year when it is not this year's (`formatDayShortIn`): a bare "Dec 31" under
      * January's figure reads as a day eleven months away. Here January's interest is found, so the figure stands, and
      * Thu Jan 7's pay falls after Dec 31, the last day its account is checked through.
+     *
+     * ⛔ …and Earned vs banked, on the same page, names that day as the tile does. 🔴 Review of 082a0ef5 (LOW): read Jan
+     * 8 the tile said "It falls after Dec 31, 2026, the last day …" and the card under it "It falls after Dec 31, the
+     * last day …" — one day spelled two ways, while two comments said the two matched.
      */
-    test("a checked day in another year is named with its year", () => {
+    test("a checked day in another year is named with its year — on the tile and the card alike", () => {
       const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "weekly", nextExpectedOn: "2027-01-07", amountCents: 1000_00, lastMatchedOn: "2026-12-31", intervalDaysAvg: 7 });
       const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
       const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
       bundle.db.update(recurringSeries).set({ accountId: wells }).where(eq(recurringSeries.id, pay)).run();
+      // Dec 31's pay, banked: the schedule the card reconciles has a life to count from
+      const salary = bundle.db.select().from(categories).where(eq(categories.name, "Salary")).get()!.id;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: wells,
+          postedOn: "2026-12-31",
+          amountCents: 1000_00,
+          rawDescription: "Payroll",
+          normalizedDescription: "Payroll",
+          dedupeHash: "Payroll-2026-12-31",
+          categoryId: salary,
+          recurringSeriesId: pay,
+        })
+        .run();
       checkedThroughFixture(bundle.db, wells, "2026-12-31");
       const interest = bundle.db.select().from(categories).where(eq(categories.name, "Interest")).get()!.id;
       bundle.db
@@ -757,7 +777,14 @@ describe("dashboardData: spending pace", () => {
       spend("Groceries", "2027-01-02", -80_00);
       const pace = dashboardData(bundle.db, "2027-01-08").pace!;
       expect(pace.freeToSpendCents).not.toBeNull();
-      expect(pace.paydaysLeftOut?.text).toContain("It falls after Dec 31, 2026, the last day every account");
+      const checkedDay = "It falls after Dec 31, 2026, the last day every account";
+      expect(pace.paydaysLeftOut?.text).toContain(checkedDay);
+      const line = incomeCard(bundle.db, "2027-01-08")!.pay[0]!;
+      expect(line.verdict).toBe(
+        `1 payday has passed since the last deposit on Dec 31, 2026. ${checkedDay} that pay lands in has been ` +
+          "checked through — so the ledger has not looked for its deposit.",
+      );
+      expect(line.gapLabel).toContain("after Dec 31, 2026, the last day every account");
     });
 
     // …and a payday the ledger DID look for and found no deposit for is in neither leg too: named, in the warning

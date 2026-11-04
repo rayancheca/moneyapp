@@ -74,7 +74,9 @@ export const ACCOUNT_NOT_READ = "an account the ledger does not read";
 
 /**
  * `ACCOUNT_NOT_READ`'s counterpart: the accounts a sentence's "reached" is scoped to — /spending's note for a stale
- * schedule, "none of it reached an account the ledger reads", before its quiet's "paid into" the other.
+ * schedule, "none of it reached an account the ledger reads", before its quiet's "paid into" the other; and the
+ * calendar's mark of a payday checked through its days to land, "never reached an account the ledger reads", under the
+ * legend's "paid into" (`never_banked`, 2026-10-30).
  *
  * ⚖️ Default built, not asked (2026-10-29), the review's own wording. 🔴 Review of cc30142: "none of it reached an
  * account" beside "paid into an account the ledger does not read" — read literally, money that reached no account was

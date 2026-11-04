@@ -214,8 +214,8 @@ describe("/spending — what no deposit made up is Earned vs banked's figure, sp
     const card = incomeCard(bundle.db, TODAY)!;
     expect(card.totals.gapMagnitudeCents).toBe(360_000);
     expect(card.totals.gapLabel).toBe(
-      "$2,600.00 of it never reached a bank; $1,000.00 is for paydays whose days to land run past Sep 12, the last " +
-        "day every account that pay lands in has been checked through — so it is not banked yet.",
+      "$2,600.00 of it never reached a bank; $1,000.00 is for a payday whose days to land run past Sep 12, the " +
+        "last day every account that pay lands in has been checked through — so it is not banked yet.",
     );
     expect(notesFor("2026-01-01", TODAY).map((n) => n.body)).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 30 – Sep 10, 2026 came to $7,000.00, of which $3,400.00 was banked " +
@@ -349,8 +349,8 @@ describe("/spending — money that crossed the window line is counted once", () 
     const card = incomeCard(bundle.db, OCT_13)!;
     expect([card.totals.gapMagnitudeCents, card.totals.gapLabel]).toEqual([
       114_192,
-      "all of it is for paydays whose days to land run past Oct 10, the last day every account that pay lands in " +
-        "has been checked through — so it is not banked yet.",
+      "all of it is for a payday whose days to land run past Oct 10, the last day every account that pay lands " +
+        "in has been checked through — so it is not banked yet.",
     ]);
     const forecast = forecastCurrentMonth(bundle.db, OCT_13).unbankedIncome;
     expect(passedPaydaysWords(forecast, formatDayLong).notProjected).toBe(

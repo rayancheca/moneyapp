@@ -198,15 +198,17 @@ export const MATCHED_TO_THE_CENT_BY = "matched to the cent by";
 /**
  * Of the `of` paydays a sentence has just counted, the ones the rows answer: "it is matched to the cent by a row of …",
  * "they are matched …" when the rows answer every one, "3 of them are matched …" when they answer some — never "they
- * are" of paydays no row matches, the money that hides. Earned vs banked's verdict and the passed paydays' frontier
- * clause (`unbankedIncomeFrontierClause`) say it in these words.
+ * are" of paydays no row matches, the money that hides. Earned vs banked's verdict, the passed paydays' frontier
+ * clause (`unbankedIncomeFrontierClause`) and /budgets' passed paydays (`PassedPaydaysLine`, its rows "not attached to
+ * them" in its own pronoun, `it`) say it in these words.
  */
 export function matchedOfWords(
   matched: readonly UnattachedMatch[],
   of: number,
   formatDay: (iso: string) => string,
+  it = "it",
 ): string {
-  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay, it)}`;
   if (matched.length >= of) return `${of === 1 ? "it is" : "they are"} ${rows}`;
   return `${matched.length} of them ${matched.length === 1 ? "is" : "are"} ${rows}`;
 }

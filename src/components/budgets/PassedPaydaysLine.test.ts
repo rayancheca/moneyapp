@@ -57,7 +57,7 @@ const IMPORTS = "That is evidence about what has been imported, not about whethe
  * 🔴 Review of 92de2b12 (LOW): it read "…with no deposit attached to them, matched … that are not attached to it".
  */
 const NAMED =
-  "matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to them";
+  "they are matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to them";
 
 describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they are in neither of", () => {
   test("a payday no row answers is counted in neither figure above — the claim stands", () => {
@@ -75,7 +75,7 @@ describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they a
 
   test("rows 'in so far' holds for every payday: the paydays are named, never called counted in neither", () => {
     expect(text(OCT_29)).toBe(
-      `3 paydays worth $3,425.76 already passed this month with no deposit attached to them, ${NAMED}. ${IMPORTS}`,
+      `3 paydays worth $3,425.76 already passed this month with no deposit attached to them: ${NAMED}. ${IMPORTS}`,
     );
     // …and of one payday, "it" both times
     const one = [matchOn("2026-10-22")];
@@ -89,8 +89,8 @@ describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they a
         passedUnpaidInSoFar: one,
       }),
     ).toBe(
-      "1 payday worth $1,141.92 already passed this month with no deposit attached to it, matched to the cent by a " +
-        `row of $1,141.92 on Oct 22 that is not attached to it. ${IMPORTS}`,
+      "1 payday worth $1,141.92 already passed this month with no deposit attached to it: it is matched to the cent " +
+        `by a row of $1,141.92 on Oct 22 that is not attached to it. ${IMPORTS}`,
     );
   });
 
@@ -106,8 +106,32 @@ describe("PassedPaydaysLine — /budgets' passed paydays, and the figures they a
   // ⛔ the rows are named whatever "in so far" holds; only the rows it holds take a payday's claim back
   test("rows the one rule matched that 'in so far' does not hold — unfiled, as imported — take nothing back", () => {
     expect(text({ ...OCT_29, passedUnpaidInSoFar: [] })).toBe(
-      `3 paydays worth $3,425.76 already passed this month with no deposit attached to them, ${NAMED} — counted in ` +
+      `3 paydays worth $3,425.76 already passed this month with no deposit attached to them: ${NAMED} — counted in ` +
         `neither figure above. ${IMPORTS}`,
+    );
+  });
+
+  /*
+   * ⛔ …and of paydays some of which rows answer, the ones they answer (`matchedOfWords`), as the frontier clause and
+   * the card's verdict say them. 🔴 Review of 8aa00da4 (LOW): on a copy of his ledger with Oct 8's payroll detached
+   * (kept Salary) and Oct 22's superseded, read Oct 24, "2 paydays worth $2,283.84 already passed this month with no
+   * deposit attached to them, matched to the cent by a row of $1,141.92 on Oct 8 …" — as if both were matched.
+   */
+  test("a row that answers one of two paydays: the one it answers, never both", () => {
+    const oct8 = [matchOn("2026-10-08")];
+    expect(
+      text({
+        ...OCT_29,
+        passedUnpaidCents: 2 * PAYROLL,
+        passedUnpaidOccurrences: 2,
+        passedUnpaidCheckedOccurrences: 2,
+        passedUnpaidUnattached: oct8,
+        passedUnpaidInSoFar: oct8,
+      }),
+    ).toBe(
+      "2 paydays worth $2,283.84 already passed this month with no deposit attached to them: 1 of them is matched to " +
+        "the cent by a row of $1,141.92 on Oct 8 that is not attached to them — $1,141.92 of it counted in neither " +
+        `figure above. ${IMPORTS}`,
     );
   });
 

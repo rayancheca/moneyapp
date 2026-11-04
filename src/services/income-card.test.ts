@@ -15,6 +15,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays, periodBounds } from "@/lib/dates";
+import { formatDayShort } from "@/lib/format-date";
+import { unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import { incomeExpectation } from "./budgets";
 import { runwayCard } from "./committed";
 import { incomeCard } from "./income-card";
@@ -291,6 +293,37 @@ describe("incomeCard", () => {
       expect(card.totals.gapLabel).not.toContain("never reached");
     });
 
+    /*
+     * ⛔ …"a payday" of one, as the verdict under it counts them (`paydayWord`). 🔴 His ledger copy 2026-10-30: "the
+     * other $1,141.92 is for paydays after Oct 26, …" of Oct 29 alone, under "1 payday has passed since the last
+     * deposit on Oct 22".
+     */
+    test("one payday after the checked day is 'a payday', and so is one whose days to land run past it", () => {
+      addSeries();
+      // paid on time through Aug 6, checked through Fri Aug 14: Aug 13 inside its 3 days to land, Aug 20 after Aug 14
+      for (let day = PAY_START; day <= "2026-08-06"; day = addDays(day, 7)) addTxn(day, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-14");
+
+      expect(incomeCard(bundle.db, TODAY)!.totals.gapLabel).toBe(
+        "$1,000.00 of it is for a payday whose days to land run past Aug 14, the last day every account that pay " +
+          "lands in has been checked through — so it is not banked yet; the other $1,000.00 is for a payday after " +
+          "that day — so the ledger has not looked for it.",
+      );
+    });
+
+    test("all of it for the one payday after the checked day: 'a payday'", () => {
+      addSeries();
+      for (let day = PAY_START; day <= "2026-08-13"; day = addDays(day, 7)) addTxn(day, 100_000);
+      coverThrough(CHASE, "2026-06-01", "2026-08-13");
+
+      const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+      expect(line.gapLabel).toBe(
+        "all of it is for a payday after Aug 13, the last day every account that pay lands in has been checked " +
+          "through — so the ledger has not looked for it.",
+      );
+      expect(line.verdict).toContain("1 payday has passed since the last deposit on Aug 13.");
+    });
+
     test("an unchecked landing account cannot say any of it never reached a bank", () => {
       addSeries();
       addTxn(PAY_START, 100_000);
@@ -326,11 +359,32 @@ describe("incomeCard", () => {
     // "with no deposit" of them. 🔴 It read "11 paydays have passed since Jun 4 with no deposit. 9 of them fall on
     // days the records already cover, through Aug 12 — so the pay did not reach a bank." (review of 0c9bc8d)
     expect(line.verdict).toBe(
-      "11 paydays have passed since the last deposit on Jun 4. 9 of them fall on days the records already cover, " +
-        "through Aug 12 — so the pay did not reach a bank; the other 2 fall after Aug 12, the last day every account " +
-        "that pay lands in has been checked through — so the ledger has not looked for their deposits. Whether it " +
-        "was earned is a different question, and this card cannot answer it.",
+      "11 paydays have passed since the last deposit on Jun 4. 9 of them fall on days already checked — so the pay " +
+        "did not reach a bank; the other 2 fall after Aug 12, the last day every account that pay lands in has been " +
+        "checked through — so the ledger has not looked for their deposits. Whether it was earned is a different " +
+        "question, and this card cannot answer it.",
     );
+  });
+
+  /*
+   * ⛔ …in the forecast's words for a checked payday (`unbankedIncomeFrontierClause`), which the dashboard's tile says
+   * of the same paydays: "fall on days already checked". 🔴 Review of 082a0ef5 (LOW): on a copy of the trial import
+   * read Oct 30 the tile said "4 fall on days already checked, with no deposit; …" and this card, one card over, "4 of
+   * them fall on days the records already cover, through Oct 26 — so the pay did not reach a bank; …".
+   */
+  test("a stale silence's checked paydays are said in the forecast's words", () => {
+    addSeries();
+    addTxn(PAY_START, 100_000);
+    coverThrough(CHASE, "2026-06-01", "2026-08-12");
+
+    const forecast = unbankedIncomeFrontierClause(
+      { occurrenceCount: 11, checkedOccurrenceCount: 9, frontier: { kind: "day", through: "2026-08-12" } },
+      formatDayShort,
+    );
+    expect(forecast).toContain("9 fall on days already checked");
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    expect(line.verdict).toContain("9 of them fall on days already checked — so the pay did not reach a bank;");
+    expect(line.verdict).not.toContain("records already cover");
   });
 
   test("a silence inside the unimported tail is reported as the ledger not having looked", () => {
@@ -401,8 +455,8 @@ describe("incomeCard", () => {
     // ⚖️ the bar counts paydays checked on their day; of those, only the ones checked through their days to land are
     // said not to have reached a bank — Jul 23's run past the checked Jul 23 (review of 4b98f77)
     expect(line.verdict).toContain(
-      "2 of them, and their days to land, fall on days the records already cover, through Jul 23 — so the pay did " +
-        "not reach a bank; Jul 23's days to land run past Jul 23,",
+      "2 of them, and their days to land, fall on days already checked — so the pay did not reach a bank; Jul 23's " +
+        "days to land run past Jul 23,",
     );
   });
 
