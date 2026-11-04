@@ -4084,10 +4084,20 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
 
         expect(carried("Food", OCT_15)).toEqual({ cents: 50_00, availableCents: 550_00, heldBack: [] });
         expect([mayAdd("Food", OCT_15), billMayLapse("Food", OCT_15)]).toEqual([50_00, [AUGUST, SEPTEMBER]]);
+        /*
+         * ⚖️ default built, not asked (2026-11-04): $50.00 more can roll over, below the $150.00 October is past its
+         * line — no later import can undo that over (`riseCannotUndoOver`), so the definition says so again; the line
+         * under the row still names the two months it waits on.
+         */
         expect(verdictOf("Food", OCT_15)).toMatchObject({
           headline: "Over budget by 27%",
-          explanation: BUDGET_JARGON.paceOverBillMayStop,
+          explanation: BUDGET_JARGON.paceOver,
+          lineMayRise: true,
         });
+        expect(lineOf("Food", OCT_15)).toContain(
+          "more can still roll over from August 2026 and September 2026 once their statements land, if a bill " +
+            "subtracted from them has stopped",
+        );
       });
 
       /*

@@ -45,7 +45,14 @@ const HOUSING = {
 
 const AWAITING: CategoryBudgetRef = {
   ...HOUSING,
-  verdict: budgetVerdict({ ...ROW, ...UNREAD, pace: "at-risk", pct: 0, uncoveredDays: 12 }),
+  verdict: budgetVerdict({
+    ...ROW,
+    ...UNREAD,
+    pace: "at-risk",
+    pct: 0,
+    remainingCents: HOUSING.remainingCents,
+    uncoveredDays: 12,
+  }),
   coverageSentence: "spending imported through Aug 12 · 12 days of this period unaccounted",
 };
 
@@ -84,7 +91,14 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
   test("a month read in part keeps its $0.00, the floor its coverage sentence calls it", () => {
     const partly: CategoryBudgetRef = {
       ...HOUSING,
-      verdict: budgetVerdict({ ...ROW, txnCount: 0, pace: "at-risk", pct: 0, uncoveredDays: 9 }),
+      verdict: budgetVerdict({
+        ...ROW,
+        txnCount: 0,
+        pace: "at-risk",
+        pct: 0,
+        remainingCents: HOUSING.remainingCents,
+        uncoveredDays: 9,
+      }),
       coverageSentence: "spending imported through Oct 3 · 9 days of this period unaccounted",
     };
     const html = render(partly);
@@ -115,6 +129,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
         spentFromWallets: 1,
         pace: "under",
         pct: 0,
+        remainingCents: HOUSING.remainingCents,
         uncoveredDays: 12,
         rolloverMayAddCents: 0,
         rolloverHeldBackUnderPlan: [],
@@ -132,7 +147,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
       ...HOUSING,
       spentCents: 120_000,
       remainingCents: 109_121,
-      verdict: budgetVerdict({ ...ROW, pace: "under", pct: 0.52, uncoveredDays: 0 }),
+      verdict: budgetVerdict({ ...ROW, pace: "under", pct: 0.52, remainingCents: 109_121, uncoveredDays: 0 }),
       coverageSentence: null,
     };
     const html = render(measured);
@@ -154,7 +169,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
       remainingCents: 160_385,
       alert: "none",
       pace: "at-risk",
-      verdict: budgetVerdict({ ...ROW, pace: "at-risk", pct: 0.3, uncoveredDays: 0 }),
+      verdict: budgetVerdict({ ...ROW, pace: "at-risk", pct: 0.3, remainingCents: 160_385, uncoveredDays: 0 }),
       coverageSentence: null,
     };
     expect(offPace.verdict.headline).toBe("Off pace · 30% used");
@@ -166,7 +181,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
       remainingCents: 34_368,
       alert: "warn80",
       pace: "under",
-      verdict: budgetVerdict({ ...ROW, pace: "under", pct: 0.85, uncoveredDays: 0 }),
+      verdict: budgetVerdict({ ...ROW, pace: "under", pct: 0.85, remainingCents: 34_368, uncoveredDays: 0 }),
       coverageSentence: null,
     };
     expect(onTrack.verdict.headline).toBe("On track · 85% used");
@@ -185,7 +200,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
       remainingCents: -17_879,
       alert: "over",
       pace: "over",
-      verdict: budgetVerdict({ ...ROW, pace: "over", pct: 1.08, uncoveredDays: 12 }),
+      verdict: budgetVerdict({ ...ROW, pace: "over", pct: 1.08, remainingCents: -17_879, uncoveredDays: 12 }),
       coverageSentence: "spending imported through Aug 12 · 12 days of this period unaccounted",
     };
     const html = render(over);

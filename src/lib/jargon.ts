@@ -248,6 +248,7 @@ export const BUDGET_JARGON = {
    * — a closed period this budget carries from is held back and can still bank — that sentence is false, so this one
    * says what is true of the line as it stands. 🔴 Review of 48475ec4: Food, $30.00 rolling from Jul 1, read past its
    * line by $10.00 under "no later import can undo that", and an import later read $40.00 of $60.00, no Food added.
+   * ⚖️ …where it can rise as far as the over, that is: by less, `paceOver` stands (`riseCannotUndoOver`, 2026-11-04).
    */
   paceOverLineMayRise: `${OVER_AS_IT_STANDS}: a closed period is not fully imported yet, and what it leaves unspent carries into this one once its statements land. ${OVER_BAR}`,
   // ⚖️ …where a bill a period read whole subtracted may have stopped (2026-10-29), alone or beside one held back

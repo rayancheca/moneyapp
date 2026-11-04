@@ -242,7 +242,8 @@ export interface RolloverRiseInput {
  *
  * ⚖️ default built, not asked (2026-10-29): wherever it can, nothing measured against the line is a floor — how far
  * past it an over row is, a withheld row's percentage — and no reading says a later import cannot undo it; the over
- * verdict itself stands (his rule: never withheld). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
+ * verdict itself stands (his rule: never withheld). ⚖️ …unless it can rise by less than the over (`riseCannotUndoOver`,
+ * default built, not asked, 2026-11-04). 🔴 Review of 48475ec4: Food, $30.00 a month rolling from Jul 1,
  * spoke "over budget by at least $10.00" in August while July, held back with $0.00 of it found, could still bank
  * $30.00 — and on the load after July's statement read $40.00 of $60.00 ($30.00 rolled over), no Food added anywhere.
  * 🔴 Review of 4cd38494: it answered false where the line could rise — an older period able to bank while a newer one
@@ -272,6 +273,30 @@ export interface RolloverRiseInput {
  */
 export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">): boolean {
   return row.rolloverMayAddCents > 0;
+}
+
+/**
+ * The line can still rise (`lineMayRise`) — but by less than how far past it the spend already is: whatever the closed
+ * periods it rolls over from bank as their statements land, the spend stays past it. False for a row not past its line,
+ * and where the line can come up to meet the spend: met exactly, the spend has not passed it.
+ *
+ * ⚖️ default built, not asked (2026-11-04): an over row's definition then says no later import can undo it (`paceOver`,
+ * `budgetVerdict`), as a line standing still does — and how far past it stays no floor: the row speaks the bare over
+ * and carries no new figure (`BudgetRow`), its line still says what can still roll over (`budgetCoverageLine`), and the
+ * page note still counts it among the rows that can have more roll over (`budgetSectionNotes`). ⚠️ "No later import"
+ * as `lineMayRise`'s ⚠️ bounds it (L26: kept). 🔴 `lineMayRise` alone was all-or-nothing: Food, $30.00 rolling from
+ * Jul 1 with July held back at $0.00 and $70.00 of August found — $40.00 past a line that can rise $30.00 at most —
+ * read "but the line itself can still rise" (review of ca938320, L24). Latent on his ledger copy 2026-11-04: none of
+ * his 12 rows is over (no November day read, nothing found), and the 6 over on 2026-10-30 could have $0.00 more roll
+ * over.
+ */
+export function riseCannotUndoOver(
+  row: Pick<RolloverRiseInput, "rolloverMayAddCents"> & {
+    /** available − spent: below 0, how far past its line the spend is (`BudgetStatus.remainingCents`) */
+    remainingCents: number;
+  },
+): boolean {
+  return row.rolloverMayAddCents < -row.remainingCents;
 }
 
 /**

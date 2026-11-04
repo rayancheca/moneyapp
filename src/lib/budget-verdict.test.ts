@@ -12,6 +12,8 @@ const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
   budgetVerdict({
     pace: "under",
     pct: 0.2,
+    // read only past the line: met exactly unless a test says how far past it (`riseCannotUndoOver`)
+    remainingCents: 0,
     uncoveredDays: 0,
     spentFromAccounts: 1,
     spentFromWallets: 0,
@@ -363,7 +365,8 @@ describe("budgetVerdict", () => {
     const RISES = { rolloverMayAddCents: 3_000 } as const;
 
     test("an over row keeps its verdict and its floors, and its definition no longer says nothing can undo it", () => {
-      const v = verdict({ pace: "over", pct: 40 / 30, uncoveredDays: 11, noDayRead: true, txnCount: 2, ...RISES });
+      const FOOD = { pct: 40 / 30, remainingCents: -1_000, uncoveredDays: 11, noDayRead: true, txnCount: 2 } as const;
+      const v = verdict({ pace: "over", ...FOOD, ...RISES });
       expect(v.headline).toBe("Over budget by 33%");
       expect(v.withheld).toBe(false);
       expect(v.barIsFull).toBe(true);
@@ -401,6 +404,46 @@ describe("budgetVerdict", () => {
       const over = verdict({ pace: "over", pct: 40 / 30, uncoveredDays: 11, noDayRead: true, txnCount: 2 });
       expect([over.lineMayRise, over.explanation]).toEqual([false, BUDGET_JARGON.paceOver]);
       expect(verdict({ uncoveredDays: 3 }).explanation).toBe(BUDGET_JARGON.paceWithheld);
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-11-04): where the most the line can still rise is below how far past it the
+     * spend already is, the over is one no later import can undo — its definition says so again (`paceOver`), and the
+     * row speaks the bare over, no new figure on it. 🔴 `lineMayRise` was all-or-nothing: Food, $30.00 rolling from
+     * Jul 1, July held back at $0.00 and $70.00 of August found — over by $40.00 a line that can rise $30.00 at most —
+     * read "but the line itself can still rise" (review of ca938320, L24). Latent on his ledger copy 2026-11-04.
+     */
+    test("a line that can still rise by less than the over: the definition says no later import can undo it", () => {
+      const BELOW = { pct: 70 / 30, remainingCents: -4_000, uncoveredDays: 11, noDayRead: true, txnCount: 3 } as const;
+      const v = verdict({ pace: "over", ...BELOW, ...RISES });
+      // the conditions under which it said the line can still rise — without them this test could not fail
+      expect([v.headline, v.floors, v.lineMayRise]).toEqual(["Over budget by 133%", true, true]);
+      expect(v.explanation).toBe(BUDGET_JARGON.paceOver);
+      // read whole, the same
+      expect(verdict({ pace: "over", pct: 70 / 30, remainingCents: -4_000, ...RISES }).explanation).toBe(
+        BUDGET_JARGON.paceOver,
+      );
+      // ⛔ a line that can come up to meet the spend — exactly, or past it — can undo "passed the line"
+      for (const remainingCents of [-3_000, -1_000, 0]) {
+        expect(verdict({ pace: "over", pct: 1.2, remainingCents, ...RISES }).explanation).toBe(
+          BUDGET_JARGON.paceOverLineMayRise,
+        );
+      }
+      // …whatever can still lift it: a bill a period read whole subtracted that may have stopped, or that and a period
+      const BILL = { rolloverMayAddCents: 44_000, rolloverBillMayLapse: [{ start: "2026-09-01", end: "2026-09-30" }] };
+      const BOTH = { ...BILL, rolloverHeldBackUnderPlan: [{ start: "2026-08-01", end: "2026-08-31" }] };
+      for (const lifts of [BILL, BOTH]) {
+        expect(verdict({ pace: "over", pct: 2, remainingCents: -50_000, ...lifts }).explanation).toBe(
+          BUDGET_JARGON.paceOver,
+        );
+      }
+      expect(verdict({ pace: "over", pct: 1.88, remainingCents: -44_000, ...BILL }).explanation).toBe(
+        BUDGET_JARGON.paceOverBillMayStop,
+      );
+      // a withheld row's percentage is still taken against a line that can rise: its definition stays as it was
+      expect(verdict({ uncoveredDays: 3, remainingCents: 2_000, ...RISES }).explanation).toBe(
+        BUDGET_JARGON.paceWithheldLineMayRise,
+      );
     });
 
     /*
@@ -447,6 +490,7 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
   const row = (over: Partial<Row> = {}): Row => ({
     pace: "under",
     pct: 0.4,
+    remainingCents: 0,
     uncoveredDays: 29,
     spentFromAccounts: 2,
     spentFromWallets: 0,

@@ -253,7 +253,10 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   // the clause after the count says so (`overReadInPart`, default built, not asked,
   // 2026-10-29). ⚠️ The plan, that is: on a rolling budget whose closed period can
   // still bank, the LINE can still rise past the spend (`lineMayRise`, review of
-  // 48475ec4) — the row stays counted here as over, and the clause says so.
+  // 48475ec4) — the row stays counted here as over, and the clause says so. ⚖️ A row
+  // whose line can rise by less than its over is counted with them (default built,
+  // not asked, 2026-11-04): no later import undoes its over (`riseCannotUndoOver`),
+  // but how far past the line it is stays no floor.
   const uncovered = input.rows.filter(
     (r) => r.uncoveredDays > 0 && r.pace !== "over" && !spentOnlyFromCashWallets(r),
   );

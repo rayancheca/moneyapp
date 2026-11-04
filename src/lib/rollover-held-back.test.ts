@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   lineMayRise,
   lineRiseCause,
+  riseCannotUndoOver,
   rolloverBillMayLapseSentence,
   rolloverHeldBackSentence,
   rolloverMayRiseClause,
@@ -119,6 +120,22 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
   test("his Fees' September, by its name", () => {
     expect(lineMayRise(row())).toBe(true);
     expect(rolloverMayRiseClause(row())).toBe("more can still roll over from September 2026 once it is fully imported");
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-11-04): a line that can rise by less than how far past it the spend is cannot be
+   * lifted past the spend — no later import undoes that over (`budgetVerdict` says `paceOver`'s words). Met exactly,
+   * the spend has not passed it; and a row not past its line has no over to undo.
+   */
+  test("riseCannotUndoOver: the most the line can rise, against how far past it the spend is", () => {
+    const at = (rolloverMayAddCents: number, remainingCents: number): boolean =>
+      riseCannotUndoOver({ rolloverMayAddCents, remainingCents });
+    expect(at(1_500, -1_501)).toBe(true);
+    expect(at(1_500, -1_500)).toBe(false);
+    expect(at(1_500, -100)).toBe(false);
+    // a line that cannot rise: any over stands, and none at the line or under it
+    expect([at(0, -1), at(0, 0), at(0, 2_000)]).toEqual([true, false, false]);
+    expect(at(1_500, 2_000)).toBe(false);
   });
 
   test("two named both, more counted between the first and the last, a week by its first day", () => {

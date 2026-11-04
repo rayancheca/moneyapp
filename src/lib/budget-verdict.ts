@@ -6,7 +6,13 @@ import {
   type BudgetCoverageInput,
 } from "./budget-coverage";
 import { BUDGET_JARGON } from "./jargon";
-import { lineRiseCause, rolloverMayRiseClause, type LineRiseCause, type RolloverRiseInput } from "./rollover-held-back";
+import {
+  lineRiseCause,
+  riseCannotUndoOver,
+  rolloverMayRiseClause,
+  type LineRiseCause,
+  type RolloverRiseInput,
+} from "./rollover-held-back";
 
 /**
  * What a budget row's headline says, and what that reading means.
@@ -85,6 +91,9 @@ export interface BudgetVerdict {
    * cannot undo a reading: an over row's says what can still lift it (`OVER_LINE_MAY_RISE`, by its cause), a withheld
    * row read in part's too (`WITHHELD_LINE_MAY_RISE`), and the row's line says what can still roll over
    * (`budgetCoverageLine`). 🔴 This named one cause, held back, and one definition of each (review of 753bad2d, L63).
+   * ⚖️ …save an over row whose line can rise by less than its over (`riseCannotUndoOver`, default built, not asked,
+   * 2026-11-04): its definition is `paceOver`'s, and this stays true — its over is still spoken bare, and its line and
+   * the page note still say what can roll over into it.
    */
   lineMayRise: boolean;
 }
@@ -118,6 +127,8 @@ export interface BudgetVerdictInput
   pace: BudgetPaceKind;
   /** spent ÷ available, UNCLAMPED — 1.08 is eight percent past the line */
   pct: number;
+  /** available − spent — below 0, how far past the line the spend is: the row's "Over by" (`BudgetStatus`) */
+  remainingCents: number;
   /** days of this window the ledger has not covered */
   uncoveredDays: number;
   /** not one elapsed day of this window read by the row's own day (`BudgetPaceStatus.noDayRead`) */
@@ -171,8 +182,10 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
        * verdict is never withheld — but where the line can still rise "no later import can undo that" is false, and the
        * definition says what is true of the line as it stands. 🔴 Review of 48475ec4: Food, $30.00 rolling from Jul 1,
        * read "Over budget by 33%" in August with July held back at $0.00 — and an import later, "Awaiting statements".
+       * ⚖️ default built, not asked (2026-11-04): …but where the most it can still rise is below the over, no later
+       * import can undo it, and the definition says so again (`riseCannotUndoOver`).
        */
-      explanation: cause === null ? BUDGET_JARGON.paceOver : OVER_LINE_MAY_RISE[cause],
+      explanation: cause === null || riseCannotUndoOver(input) ? BUDGET_JARGON.paceOver : OVER_LINE_MAY_RISE[cause],
       barIsFull: true,
       withheld: false,
       showsProjection: false,

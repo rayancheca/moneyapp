@@ -60,7 +60,9 @@ function paceSentence(status: BudgetPaceStatus, projectedCents: number | null, v
    * ⚖️ an over row read in part is over by at least what it shows (2026-10-29) — while its line cannot rise: where a
    * closed period it rolls over from can still bank (`lineMayRise`) the line can come up to meet the spend, and the
    * line beside this says so instead. 🔴 Review of 48475ec4: "over budget by at least $10.00" over a July still to bank
-   * $30.00. A graded row is never a floor.
+   * $30.00. A graded row is never a floor. ⚖️ …nor one whose line can rise by less than its over (default built, not
+   * asked, 2026-11-04): its definition says no later import can undo it (`riseCannotUndoOver`), and the over stays bare
+   * — no new figure on the row.
    */
   const overIsAFloor = verdict.floors && !verdict.lineMayRise;
   if (status.pace === "over") return `over budget by ${spokenFigure(-status.remainingCents, overIsAFloor)}`;

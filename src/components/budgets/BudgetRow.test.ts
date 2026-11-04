@@ -630,8 +630,15 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
    * spend is still a floor, but how far past the line is not — the row says its line can still rise instead.
    */
   describe("…on a rolling budget whose closed month can still bank", () => {
-    /** Food $30.00 a month rolling from Jul 1: a stale card read through `staleThrough`, $40.00 of August on another */
-    function rollingFoodOver(staleThrough: string, julyFoodCents = 0): { s: BudgetPaceStatus; landJuly: () => void } {
+    /**
+     * Food $30.00 a month rolling from Jul 1: a stale card read through `staleThrough`, $40.00 of August on another —
+     * and `augustMoreCents` more of it on Aug 6
+     */
+    function rollingFoodOver(
+      staleThrough: string,
+      julyFoodCents = 0,
+      augustMoreCents = 0,
+    ): { s: BudgetPaceStatus; landJuly: () => void } {
       const chase = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!;
       const stale = createAccount(bundle.db, { institutionId: chase.id, name: "Stale", type: "credit" });
       const fresh = createAccount(bundle.db, { institutionId: chase.id, name: "Fresh", type: "credit" });
@@ -649,6 +656,7 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
       if (julyFoodCents > 0) spend(stale, "2026-07-02", julyFoodCents, "Food");
       spend(fresh, "2026-08-02", 2_000, "Food");
       spend(fresh, "2026-08-04", 2_000, "Food");
+      if (augustMoreCents > 0) spend(fresh, "2026-08-06", augustMoreCents, "Food");
       spend(fresh, TODAY, 500, "Shopping");
       const id = createBudget(bundle.db, {
         categoryId: catId("Food"),
@@ -694,6 +702,34 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
       expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
       expect(spoken(html).endsWith(`. over budget by at least $10.00 — ${line}.`)).toBe(true);
       expect(html).toContain(BUDGET_JARGON.paceOver);
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-11-04): where the most the line can still rise is below how far past it the
+     * spend is, no later import can undo the over — the definition says so (`paceOver`), and the row speaks the bare
+     * over: no new figure on it. Its line still says what can still roll over, and so does the note. 🔴 All-or-nothing
+     * (`lineMayRise`), $70.00 of August over a line July can lift by $30.00 at most read "the line itself can still
+     * rise" (review of ca938320, L24). Latent on his ledger copy 2026-11-04.
+     */
+    test("a line July can lift by less than the over: no later import can undo it, and the over is spoken bare", () => {
+      const { s, landJuly } = rollingFoodOver("2026-06-30", 0, 3_000); // $70.00 of August: $40.00 past a $30.00 line
+      // the conditions under which the definition said the line can still rise — without them this could not fail
+      expect([s.pace, s.spentCents, s.remainingCents, s.rolloverMayAddCents]).toEqual(["over", 7_000, -4_000, 3_000]);
+      const line = `spending imported through Jun 30 · 11 days of this period unaccounted · ${RISES}`;
+      const html = render(s);
+      expect(html).toContain("Over budget by 133%");
+      expect(html).toContain(`<p class="mt-2 text-xs text-ink-faint">${line}</p>`);
+      expect(spoken(html)).toBe(
+        "Food: at least $70.00 of $30.00 (233% of budget). 35% of this period has passed. " +
+          `over budget by $40.00 — ${line}.`,
+      );
+      expect(html).toContain(BUDGET_JARGON.paceOver);
+      expect(html).not.toContain(BUDGET_JARGON.paceOverLineMayRise);
+
+      // …and it was right: July's statement lands, no Food is added, and the row is still over — by $10.00
+      landJuly();
+      const after = statusFor("Food");
+      expect([after.pace, after.spentCents, after.availableCents]).toEqual(["over", 7_000, 6_000]);
     });
 
     test("a withheld row read in part on the same line: its percentage is no floor, and it says why", () => {
