@@ -6,6 +6,9 @@ import {
   unattachedRowsWords,
   type UnattachedMatch,
 } from "@/lib/unattached-match";
+import { compareDates } from "./dates";
+import { formatDaysYearOnce, formatDayShortIn } from "./format-date";
+import { ACCOUNT_READ } from "./ledger-reads";
 import { formatCents } from "./money";
 
 /**
@@ -32,7 +35,7 @@ export interface UnbankedIncomeReading {
   frontier: UnbankedFrontier;
   /**
    * Of the checked paydays, those a row matches to the cent that sits unattached (`UnbankedIncomeSeries.unattached`):
-   * never "with no deposit" nor "never reaches a bank", and still unbanked. Absent: none.
+   * never "with no deposit" nor "never reaches an account the ledger reads", and still unbanked. Absent: none.
    */
   unattached?: readonly UnattachedMatch[];
 }
@@ -58,27 +61,8 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 /** What a sentence says of pay whose landing accounts are not all checked — `LAST_CHECKED_DAY`'s counterpart. */
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
-/**
- * Where pay can land that no frontier speaks for — one of the explanations of an unbanked difference, in the dashboard
- * card's caveat ("payroll can land in …"), /spending's note for a stale schedule ("paid into …") and the calendar
- * legend's "Not yet known" ("it may have been paid into …", `RECURRING_JARGON.notYetKnown`).
- *
- * ⚖️ Default built, not asked (2026-10-21): since Aug 27, 2026 his pay is payroll by ACH (decision 55), and a payroll
- * moved to an account the ledger does not read is as quiet as pay never paid. 🔴 Review of 619ceb4 (MEDIUM): the card
- * named it while /spending's note beside it, of the same silence, listed only cash and an ended schedule — and the
- * legend, of the same quiet marks, only cash (review of cc30142).
- */
-export const ACCOUNT_NOT_READ = "an account the ledger does not read";
-
-/**
- * `ACCOUNT_NOT_READ`'s counterpart: the accounts a sentence's "reached" is scoped to — /spending's note for a stale
- * schedule, "none of it reached an account the ledger reads", before its quiet's "paid into" the other.
- *
- * ⚖️ Default built, not asked (2026-10-29), the review's own wording. 🔴 Review of cc30142: "none of it reached an
- * account" beside "paid into an account the ledger does not read" — read literally, money that reached no account was
- * offered as paid into one.
- */
-export const ACCOUNT_READ = "an account the ledger reads";
+// the accounts the ledger reads, in the words every pay sentence says them in (`lib/ledger-reads`)
+export { ACCOUNT_NOT_READ, ACCOUNT_READ, NEVER_REACHED } from "./ledger-reads";
 
 /**
  * What the quiet of a payday after `LAST_CHECKED_DAY` waits for — "the ledger has not looked for its deposit", or
@@ -111,6 +95,9 @@ const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" 
  * (`DAYS_TO_POST_NOT_OVER`, the same idea for a due day) because every pay sentence's verb is "lands" — the clause it
  * runs into is `LAST_CHECKED_DAY`, "every account that pay lands in" — and "days to post" would put two verbs for one
  * deposit in one sentence. The series page's "the N-day tolerance" is the same number.
+ *
+ * ⛔ The paydays a short day each, their year said once (`formatDaysYearOnce`), as every list of days a pay sentence
+ * names (review of 87a440d0).
  */
 export function daysToLandRunPast(
   paydays: readonly string[],
@@ -121,7 +108,7 @@ export function daysToLandRunPast(
   const toLand =
     paydays.length === 1
       ? `${formatPayday(paydays[0]!)}'s days to land`
-      : `the days to land of ${AND_LIST.format(paydays.map(formatPayday))}`;
+      : `the days to land of ${AND_LIST.format(formatDaysYearOnce(paydays, formatPayday))}`;
   return `${toLand} run past ${formatDay(checkedThrough)}, ${LAST_CHECKED_DAY}`;
 }
 
@@ -155,7 +142,7 @@ export function payNotBankedYet(
 export function paidEarlyAside(paydays: readonly string[], formatPayday: (iso: string) => string): string {
   if (paydays.length === 0) return "";
   const which = paydays.length === 1 ? "which was" : "which were";
-  return ` (not counting ${AND_LIST.format(paydays.map(formatPayday))}, ${which} paid early)`;
+  return ` (not counting ${AND_LIST.format(formatDaysYearOnce(paydays, formatPayday))}, ${which} paid early)`;
 }
 
 /**
@@ -195,7 +182,8 @@ export interface NamedWindow {
  * ⚖️ §6A 68 of ANY window (2026-10-29): "not one day of Q4 2026 has been checked in the accounts that pay lands in" —
  * and of a window ONE day long "Sep 25, 2026 has not been checked …", the table's words for one day
  * (`noIncomeDayCheckedOf`) with the day named. /spending's graph hovers it of the days a running total sums
- * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …". 🔴 The hover built it from the point's axis label
+ * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …", and captions it of the whole run — a whole month
+ * by its name, "October 2026" (`calendarWindowLabel`, 2026-10-30). 🔴 The hover built it from the point's axis label
  * until 2026-10-29 ("not one day through 14 …"), which read only for a day: his ledger copy hovered "… through Sep
  * 26–30 …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, "… through Oct '26 …" over a window of years.
  */
@@ -256,6 +244,23 @@ function everyOneFalls(paydays: number): string {
 }
 
 /**
+ * The rows' own days, short — "Oct 1", or "Dec 31, 2025" in a year not the newest row's (`formatDayShortIn`), that
+ * year said once in a list (`formatDaysYearOnce`) — in the sentences here that name the checked day in full: the
+ * forecast's note, his pay's page and /budgets. 🔴 Review of 92de2b12 (LOW): in their day format four rows read "on
+ * Thu, Oct 1, 2026, Thu, Oct 8, 2026, Thu, Oct 15, 2026, and Thu, Oct 22, 2026".
+ *
+ * ⛔ A surface whose own days are short says its rows in them instead (`formatRowDay`) — Earned vs banked and the
+ * dashboard's tile, against today — so a row is dated as every other day beside it is. 🔴 Review of 87a440d0
+ * (MEDIUM): read Jan 8, 2027, the card's verdict said "…a row of $1,141.92 on Dec 31 that is not attached to it" in
+ * this spelling, one line over the difference's "…on Dec 31, 2026…" and the verdict's own "since the last deposit on
+ * Dec 24, 2026".
+ */
+function rowDaysOf(matched: readonly UnattachedMatch[]): (iso: string) => string {
+  const newest = matched.map((m) => m.row.postedOn).sort(compareDates).at(-1);
+  return (iso) => formatDayShortIn(iso, newest ?? iso);
+}
+
+/**
  * "the other one falls", "the other 3 fall" — the passed paydays after the ones a sentence has just named on checked
  * days: the clause below and Earned vs banked's stale verdict, one spelling (review of 0c9bc8d).
  */
@@ -288,6 +293,8 @@ export function theOtherFall(paydays: number): string {
 export function unbankedIncomeFrontierClause(
   r: UnbankedIncomeReading,
   formatDay: (iso: string) => string,
+  /** the rows' own days — a SHORT day; the newest row's year by default (`rowDaysOf`) */
+  formatRowDay: (iso: string) => string = rowDaysOf(r.unattached ?? []),
 ): string | null {
   const unread = r.occurrenceCount - r.checkedOccurrenceCount;
   if (unread <= 0) return null;
@@ -305,7 +312,7 @@ export function unbankedIncomeFrontierClause(
    * 22's row unattached, read Nov 2, the card's verdict "1 falls on a day already checked, with no deposit attached to
    * it; …" one line over the difference naming the row.
    */
-  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, formatDay)}`;
+  const rows = matched.length === 0 ? "" : ` — ${matchedOfWords(matched, checked, formatRowDay)}`;
   const checkedPart =
     checked === 0
       ? null
@@ -345,7 +352,7 @@ export interface PassedPaydaysReading extends UnbankedIncomeReading {
   /**
    * Of `unattached`, the rows for paydays still inside their days to land (`UnbankedIncomeSeries.inGraceUnattachedCount`)
    * — the others are past them — so the subject says of the paydays no row answers which pay is not banked yet and
-   * which never reaches a bank. Absent: none (every row answers a payday past its days to land).
+   * which never reaches an account the ledger reads. Absent: none (every row answers a payday past its days to land).
    */
   inGraceUnattachedCount?: number;
 }
@@ -359,8 +366,8 @@ export interface PassedPaydaysWords {
   /** the paydays nobody has looked for (`unbankedIncomeFrontierClause`), or null when the ledger checked them all */
   unread: string | null;
   /**
-   * Why none of it is projected: "Pay that never reaches a bank cannot be projected as arriving" — the forecast's
-   * sentence, and the pay page's when the clause has nothing to say. No full stop: the note runs on from it.
+   * Why none of it is projected: "Pay that never reaches an account the ledger reads cannot be projected as arriving" —
+   * the forecast's sentence, and the pay page's when the clause has nothing to say. No full stop: the note runs on.
    */
   notProjected: string;
   /** some payday was checked through its days to land and no deposit met it — the note's warning tone */
@@ -372,18 +379,23 @@ export interface PassedPaydaysWords {
  *
  * ⚖️ "Pay", never "Cash pay": an app label, and since Aug 27, 2026 his pay is payroll by ACH into Wells Fargo
  * (decision 55). 🔴 The forecast said "Cash pay that never reaches a bank" of every checked payday with no deposit.
- * ⚖️ …and "never reaches a bank" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
+ * ⚖️ …and "never reaches" only of a payday checked through its days to land (`pastGraceOccurrenceCount`). 🔴 A
  * Thursday checked through Friday read it, in warning colour, of a payroll that could still land on Sunday.
+ * ⚖️ …and of the accounts the ledger reads, "never reaches `ACCOUNT_READ`", as every sentence saying pay did not
+ * arrive says it (`NEVER_REACHED`) — default built, not asked (2026-10-30). 🔴 Review of 87a440d0 (MEDIUM): on his
+ * ledger copy with Oct 22's payroll superseded, read Oct 30, the note said "Pay that never reaches a bank" in warning
+ * tone over the calendar's grid, whose Oct 22 read "never reached an account the ledger reads" under the legend's "…or
+ * it may have been paid into an account the ledger does not read".
  */
 function notProjectedSubject(
   r: PassedPaydaysReading,
-  formatDay: (iso: string) => string,
+  formatRowDay: (iso: string) => string,
   rowsNamed: boolean,
 ): string {
   const unlooked = "Pay the ledger has not looked for";
   if (r.checkedOccurrenceCount === 0) return unlooked;
   /*
-   * ⛔ "Never reaches a bank" only of the paydays no row matches to the cent unattached (`unattached`): those are pay
+   * ⛔ "Never reaches" only of the paydays no row matches to the cent unattached (`unattached`): those are pay
    * "matched to the cent by rows of … that are not attached to it" — still not projected, since nothing paid them. 🔴
    * His ledger copy 2026-10-29 (before his filing): "Pay that never reaches a bank" of Oct 1, 8, 15 and 22 beside four
    * +$1,141.92 payroll rows on Wells Fargo, unattached. ⛔ …and once the frontier clause before it has named the rows
@@ -392,17 +404,17 @@ function notProjectedSubject(
   const matched = r.unattached ?? [];
   const rows = rowsNamed
     ? "pay those rows match"
-    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+    : `pay ${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatRowDay)}`;
   /*
    * ⛔ …a row answers a payday inside its days to land as well as one past them (`inGraceUnattachedCount`), and of the
-   * paydays no row answers the pay is "never reaches a bank" once one of them is past its days to land, "not banked
+   * paydays no row answers the pay is "never reaches" once one of them is past its days to land, "not banked
    * yet" while none is. 🔴 Review of 304c59a4 (MEDIUM): the rows were asked of paydays past their days to land alone,
    * so his ledger copy with Oct 22's +$1,141.92 filed Salary and attached to nothing, read Oct 24 (Wells Fargo read to
    * that day), said "Pay not banked yet cannot be projected as arriving" beside the row.
    */
   const unmatched = r.checkedOccurrenceCount - matched.length;
   const unmatchedPastGrace = r.pastGraceOccurrenceCount - (matched.length - (r.inGraceUnattachedCount ?? 0));
-  const unmatchedWords = unmatchedPastGrace > 0 ? "Pay that never reaches a bank" : "Pay not banked yet";
+  const unmatchedWords = unmatchedPastGrace > 0 ? `Pay that never reaches ${ACCOUNT_READ}` : "Pay not banked yet";
   const checked =
     unmatched <= 0 ? [`P${rows.slice(1)}`] : matched.length === 0 ? [unmatchedWords] : [unmatchedWords, rows];
   /*
@@ -424,8 +436,13 @@ function notProjectedSubject(
  * ⛔ One home for the words. 🔴 The pay series' page said nothing of Oct 1 or Oct 8 while the forecast named both (a
  * copy of his ledger, 2026-10-12); it says it now in these words, so the two cannot word the same Thursdays apart.
  */
-export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: string) => string): PassedPaydaysWords {
-  const unread = unbankedIncomeFrontierClause(r, formatDay);
+export function passedPaydaysWords(
+  r: PassedPaydaysReading,
+  formatDay: (iso: string) => string,
+  /** the rows' own days, as the clause takes them (`unbankedIncomeFrontierClause`) */
+  formatRowDay: (iso: string) => string = rowDaysOf(r.unattached ?? []),
+): PassedPaydaysWords {
+  const unread = unbankedIncomeFrontierClause(r, formatDay, formatRowDay);
   return {
     count: r.occurrenceCount === 1 ? "1 payday" : `${r.occurrenceCount} paydays`,
     passed:
@@ -436,7 +453,7 @@ export function passedPaydaysWords(r: PassedPaydaysReading, formatDay: (iso: str
           : `already passed this month with no deposit ${countedDepositWords(r.unattached ?? [], "it")}`,
     unread,
     // the clause names the rows when there is one (`unbankedIncomeFrontierClause`)
-    notProjected: `${notProjectedSubject(r, formatDay, unread !== null)} cannot be projected as arriving`,
+    notProjected: `${notProjectedSubject(r, formatRowDay, unread !== null)} cannot be projected as arriving`,
     warning: r.pastGraceOccurrenceCount > 0,
   };
 }
@@ -513,9 +530,11 @@ export function passedPaydaysLeftOut(
   formatDay: (iso: string) => string,
   /** of the rows the one rule matched to these paydays (`passed.unattached`), those the figure's posted leg counts */
   held: readonly UnattachedMatch[],
+  /** the rows' own days (`passedPaydaysWords`) — the tile's, against today, as Earned vs banked's beside it */
+  formatRowDay?: (iso: string) => string,
 ): PaydaysLeftOut | null {
   if (passed.totalCents <= 0) return null;
-  const w = passedPaydaysWords(passed, formatDay);
+  const w = passedPaydaysWords(passed, formatDay, formatRowDay);
   const left = leftOutOf(passed.totalCents, held, `not in ${figure}`);
   const notIn = left === null ? "" : ` — ${leftOutText(left)}`;
   const lead = `${w.count} worth ${formatCents(passed.totalCents)} ${w.passed}${notIn}.`;

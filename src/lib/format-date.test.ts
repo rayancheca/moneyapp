@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { formatDayLong, formatDayShort, formatDayShortIn, formatMonthYear, monthWindowLabel, formatDayFull } from "./format-date";
+import {
+  formatDayLong,
+  formatDayShort,
+  formatDayShortIn,
+  formatDaysYearOnce,
+  formatMonthYear,
+  monthWindowLabel,
+  formatDayFull,
+} from "./format-date";
 
 describe("format-date", () => {
   test("formatDayShort", () => {
@@ -43,6 +51,36 @@ describe("formatDayShortIn", () => {
   test("a day either side of new year is a different year, however close", () => {
     expect(formatDayShortIn("2025-12-31", "2026-01-01")).toBe("Dec 31, 2025");
     expect(formatDayShortIn("2026-01-01", "2025-12-31")).toBe("Jan 1, 2026");
+  });
+});
+
+/*
+ * ⛔ A list of days says each year once, after the last of its days (review of 87a440d0, MEDIUM: read Jan 8, 2027,
+ * Earned vs banked listed "Dec 17, 2026, Dec 24, 2026, and Dec 31, 2026").
+ */
+describe("formatDaysYearOnce", () => {
+  const inJanuary = (iso: string): string => formatDayShortIn(iso, "2027-01-08");
+
+  test("a year not the reference's is said once, after its last day", () => {
+    expect(formatDaysYearOnce(["2026-12-17", "2026-12-24", "2026-12-31"], inJanuary)).toEqual([
+      "Dec 17",
+      "Dec 24",
+      "Dec 31, 2026",
+    ]);
+  });
+
+  test("across new year, each year after its own last day — the reference's not at all", () => {
+    expect(formatDaysYearOnce(["2026-12-24", "2026-12-31", "2027-01-07"], inJanuary)).toEqual([
+      "Dec 24",
+      "Dec 31, 2026",
+      "Jan 7",
+    ]);
+    expect(formatDaysYearOnce(["2027-01-01", "2027-01-07"], inJanuary)).toEqual(["Jan 1", "Jan 7"]);
+  });
+
+  test("one day is the spelling's own", () => {
+    expect(formatDaysYearOnce(["2026-12-31"], inJanuary)).toEqual(["Dec 31, 2026"]);
+    expect(formatDaysYearOnce([], inJanuary)).toEqual([]);
   });
 });
 

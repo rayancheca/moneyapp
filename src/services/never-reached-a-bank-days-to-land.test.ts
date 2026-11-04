@@ -14,11 +14,13 @@ import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
 import { formatDayLong } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
-import { passedPaydaysWords } from "@/lib/unbanked-income";
+import { ACCOUNT_NOT_READ, ACCOUNT_READ, passedPaydaysWords } from "@/lib/unbanked-income";
+import { unsettledWords } from "@/components/recurring/labels";
 import { cashEarningsReadings } from "./cash-earnings";
 import { forecastCurrentMonth } from "./forecast";
 import { incomeCard } from "./income-card";
 import { paydaySettlement } from "./payday-settlement";
+import { recurringCalendar } from "./recurring-calendar";
 
 /**
  * "Never reached a bank" is said of a payday only once the ledger has checked it through its DAYS TO LAND — its
@@ -166,7 +168,7 @@ function surfaces() {
   };
 }
 
-describe("a payday checked on its day but not through its days to land never 'never reached a bank'", () => {
+describe("a payday checked on its day but not through its days to land never 'never reached'", () => {
   test("the reviewer's state: Sep 3 checked through Sep 5 — every surface says not banked yet", () => {
     paidThrough("2026-08-27");
     readThrough("2026-09-05");
@@ -177,8 +179,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
       "Pay not banked yet, and pay the ledger has not looked for, cannot be projected as arriving",
     );
     expect(s.dashboard).toBe(
-      `$1,000.00 of it is for paydays whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked ` +
-        "yet; the other $1,000.00 is for paydays after that day — so the ledger has not looked for it.",
+      `$1,000.00 of it is for a payday whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked ` +
+        "yet; the other $1,000.00 is for a payday after that day — so the ledger has not looked for it.",
     );
     expect(s.september).toEqual([
       "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it is banked yet; " +
@@ -191,7 +193,9 @@ describe("a payday checked on its day but not through its days to land never 'ne
         `${CHECKED_DAY}; 1 more payday in the window falls after Sat, Sep 5, 2026 — so the ledger has not looked ` +
         "for its deposit.",
     ]);
-    for (const words of [s.dashboard, ...s.september, ...s.year]) expect(words).not.toMatch(/reached a bank/);
+    for (const words of [s.dashboard, ...s.september, ...s.year]) {
+      expect(words).not.toMatch(/reached a bank|reached an account the ledger reads/);
+    }
   });
 
   // ⛔ A date window has two ends: Sun Sep 6, three days on, is the last of Sep 3's days to land
@@ -201,16 +205,17 @@ describe("a payday checked on its day but not through its days to land never 'ne
     const s = surfaces();
 
     expect(s.forecast).toBe(
-      "Pay that never reaches a bank, and pay the ledger has not looked for, cannot be projected as arriving",
+      "Pay that never reaches an account the ledger reads, and pay the ledger has not looked for, cannot be " +
+        "projected as arriving",
     );
     expect(s.dashboard).toBe(
-      `$1,000.00 of it never reached a bank; the other $1,000.00 is for paydays after Sep 6, ${CHECKED_DAY} — so ` +
-        "the ledger has not looked for it.",
+      "$1,000.00 of it never reached an account the ledger reads; the other $1,000.00 is for a payday after Sep 6, " +
+        `${CHECKED_DAY} — so the ledger has not looked for it.`,
     );
     expect(s.september).toEqual([
-      "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it reached a bank; 1 " +
-        `more payday in the window falls after Sun, Sep 6, 2026, ${CHECKED_DAY} — so the ledger has not looked for ` +
-        "its deposit.",
+      "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it reached an account the " +
+        `ledger reads; 1 more payday in the window falls after Sun, Sep 6, 2026, ${CHECKED_DAY} — so the ledger has ` +
+        "not looked for its deposit.",
     ]);
   });
 
@@ -219,24 +224,24 @@ describe("a payday checked on its day but not through its days to land never 'ne
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, SERIES)).run();
     paidThrough("2026-08-27");
     readThrough("2026-09-07");
-    expect(surfaces().dashboard).toMatch(/^\$1,000\.00 of it is for paydays whose days to land run past Sep 7/);
+    expect(surfaces().dashboard).toMatch(/^\$1,000\.00 of it is for a payday whose days to land run past Sep 7/);
     readThrough("2026-09-08", "2026-09-08");
-    expect(surfaces().dashboard).toMatch(/^\$1,000\.00 of it never reached a bank/);
+    expect(surfaces().dashboard).toMatch(/^\$1,000\.00 of it never reached an account the ledger reads/);
   });
 
   test("past its days to land, inside them, and after the checked day: three paydays, three parts", () => {
     paidThrough("2026-08-20");
     readThrough("2026-09-05");
     expect(surfaces().dashboard).toBe(
-      `$1,000.00 of it never reached a bank; $1,000.00 is for paydays whose days to land run past Sep 5, ` +
-        `${CHECKED_DAY} — so it is not banked yet; the other $1,000.00 is for paydays after that day — so the ` +
-        "ledger has not looked for it.",
+      "$1,000.00 of it never reached an account the ledger reads; $1,000.00 is for a payday whose days to land run " +
+        `past Sep 5, ${CHECKED_DAY} — so it is not banked yet; the other $1,000.00 is for a payday after that day — ` +
+        "so the ledger has not looked for it.",
     );
     expect(surfaces().year).toEqual([
       "It America LLC (weekly pay)'s paydays over Jun 4 – Sep 3, 2026 came to $14,000.00, of which $12,000.00 was " +
-        "banked inside the window, $1,000.00 is not banked yet, and $1,000.00 never reached a bank; Sep 3's days " +
-        `to land run past Sat, Sep 5, 2026, ${CHECKED_DAY}; 1 more payday in the window falls after Sat, Sep 5, ` +
-        "2026 — so the ledger has not looked for its deposit.",
+        "banked inside the window, $1,000.00 is not banked yet, and $1,000.00 never reached an account the ledger " +
+        `reads; Sep 3's days to land run past Sat, Sep 5, 2026, ${CHECKED_DAY}; 1 more payday in the window falls ` +
+        "after Sat, Sep 5, 2026 — so the ledger has not looked for its deposit.",
     ]);
   });
 
@@ -247,21 +252,21 @@ describe("a payday checked on its day but not through its days to land never 'ne
    * them fall on days the records already cover, through Sep 5 — so the pay did not reach a bank" ($4,000.00), while
    * the difference above it said "$3,000.00 of it never reached a bank; $1,000.00 … — so it is not banked yet" of Sep 3.
    */
-  test("the stale verdict says 'did not reach a bank' of the paydays past their days to land, as the gap does", () => {
+  test("the stale verdict says 'did not reach' of the paydays past their days to land, as the gap does", () => {
     paidThrough("2026-08-06");
     readThrough("2026-09-05");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
 
     expect(line.basis).toBe("series-stale");
     expect(line.gapLabel).toBe(
-      `$3,000.00 of it never reached a bank; $1,000.00 is for paydays whose days to land run past Sep 5, ` +
-        `${CHECKED_DAY} — so it is not banked yet; the other $1,000.00 is for paydays after that day — so the ` +
-        "ledger has not looked for it.",
+      "$3,000.00 of it never reached an account the ledger reads; $1,000.00 is for a payday whose days to land run " +
+        `past Sep 5, ${CHECKED_DAY} — so it is not banked yet; the other $1,000.00 is for a payday after that day — ` +
+        "so the ledger has not looked for it.",
     );
     // (Sep 10, after the checked day, is "not looked for" — the describe on every payday of the silence pins that)
     expect(line.verdict).toContain(
-      "3 of them, and their days to land, fall on days the records already cover, through Sep 5 — so the pay did " +
-        `not reach a bank; Sep 3's days to land run past Sep 5, ${CHECKED_DAY} — so its pay is not banked yet;`,
+      "3 of them, and their days to land, fall on days already checked — so the pay did not reach an account the " +
+        `ledger reads; Sep 3's days to land run past Sep 5, ${CHECKED_DAY} — so its pay is not banked yet;`,
     );
   });
 
@@ -279,7 +284,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
     expect(surfaces().september).toEqual([
       "It America LLC (weekly pay) implies $2,000.00 of earnings over Sep 3 – 10, 2026 and none of it reached an " +
-        `account the ledger reads through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. ` +
+        `account the ledger reads, through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. ` +
         "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
         "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
         "cash, paid into an " +
@@ -344,8 +349,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     // ⛔ …and the count says which it leaves out, as /spending's sentence below does (review of 0c9bc8d)
     expect(verdict).toBe(
       "3 paydays have passed since Aug 13 with no deposit (not counting Sep 10, which was paid early). 3 of them fall " +
-        `on days the records already cover, through Sep 5, but the days to land of Aug 20, Aug 27, and Sep 3 run ` +
-        `past Sep 5, ${CHECKED_DAY} — so their pay is not banked yet. ${NOT_ANSWERED}`,
+        `on days already checked, but the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} ` +
+        `— so their pay is not banked yet. ${NOT_ANSWERED}`,
     );
     for (const [from, to] of STALE_WINDOWS) {
       expect(staleSentence(from, to)).toContain(
@@ -377,7 +382,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
       "deposits, so they cannot tell you which.";
     for (const [from, to] of STALE_WINDOWS) expect(staleSentence(from, to)).toBe(sentence);
     expect(incomeCard(bundle.db, TODAY)!.totals.gapLabel).toContain(
-      `; $1,000.00 is for paydays whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked yet;`,
+      `; $1,000.00 is for a payday whose days to land run past Sep 5, ${CHECKED_DAY} — so it is not banked yet;`,
     );
   });
 
@@ -387,10 +392,12 @@ describe("a payday checked on its day but not through its days to land never 'ne
     readThrough("2026-09-06");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
 
-    expect(line.gapLabel).toMatch(/^\$4,000\.00 of it never reached a bank; the other \$1,000\.00 is for paydays/);
+    expect(line.gapLabel).toMatch(
+      /^\$4,000\.00 of it never reached an account the ledger reads; the other \$1,000\.00 is for a payday/,
+    );
     expect(line.verdict).toContain(
-      "4 of them fall on days the records already cover, through Sep 6 — so the pay did not reach a bank; the other " +
-        "one falls after Sep 6,",
+      "4 of them fall on days already checked — so the pay did not reach an account the ledger reads; the other one " +
+        "falls after Sep 6,",
     );
   });
 
@@ -420,8 +427,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
   test("14 days to land: Aug 13 and Aug 20 did not reach a bank; the days to land of Aug 27 and Sep 3 run past", () => {
     expect(raisedFromAug13(14)).toBe(
-      `${STALE} 2 of them, and their days to land, fall on days the records already cover, through Sep 5 — so the ` +
-        `pay did not reach a bank; the days to land of Aug 27 and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their ` +
+      `${STALE} 2 of them, and their days to land, fall on days already checked — so the pay did not reach an ` +
+        `account the ledger reads; the days to land of Aug 27 and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their ` +
         `pay is not banked yet; ${SEP_10} ${NOT_ANSWERED}`,
     );
   });
@@ -429,18 +436,17 @@ describe("a payday checked on its day but not through its days to land never 'ne
   // ⛔ "1 of them … falls", never "1 of them fall"
   test("21 days to land: Aug 13 alone did not reach a bank", () => {
     expect(raisedFromAug13(21)).toBe(
-      `${STALE} 1 of them, and its days to land, falls on days the records already cover, through Sep 5 — so the pay ` +
-        `did not reach a bank; the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} — so ` +
-        `their pay is not banked yet; ${SEP_10} ${NOT_ANSWERED}`,
+      `${STALE} 1 of them, and its days to land, falls on days already checked — so the pay did not reach an account ` +
+        `the ledger reads; the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their ` +
+        `pay is not banked yet; ${SEP_10} ${NOT_ANSWERED}`,
     );
   });
 
   // ⛔ …and with none past its days to land, no "did not reach a bank" at all
   test("28 days to land: every checked silent payday is inside them, and none did not reach a bank", () => {
     expect(raisedFromAug13(28)).toBe(
-      `${STALE} 4 of them fall on days the records already cover, through Sep 5, but the days to land of Aug 13, ` +
-        `Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their pay is not banked yet; ${SEP_10} ` +
-        NOT_ANSWERED,
+      `${STALE} 4 of them fall on days already checked, but the days to land of Aug 13, Aug 20, Aug 27, and Sep 3 ` +
+        `run past Sep 5, ${CHECKED_DAY} — so their pay is not banked yet; ${SEP_10} ${NOT_ANSWERED}`,
     );
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toContain(
       "; $4,400.00 is for paydays whose days to land run past Sep 5,",
@@ -453,8 +459,8 @@ describe("a payday checked on its day but not through its days to land never 'ne
     deposit("2026-08-14", 50_000);
     expect(raisedFromAug13(28)).toBe(
       "3 paydays have passed since Aug 14 with no deposit (not counting Sep 10, which was paid early). 3 of them fall " +
-        `on days the records already cover, through Sep 5, but the days to land of Aug 20, Aug 27, and Sep 3 run ` +
-        `past Sep 5, ${CHECKED_DAY} — so their pay is not banked yet. ${NOT_ANSWERED}`,
+        `on days already checked, but the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} ` +
+        `— so their pay is not banked yet. ${NOT_ANSWERED}`,
     );
   });
 
@@ -473,11 +479,80 @@ describe("a payday checked on its day but not through its days to land never 'ne
     const s = surfaces();
 
     expect(s.dashboard).toBe(
-      `$1,000.00 of it never reached a bank; the other $1,000.00 is for paydays after Sep 5, ${CHECKED_DAY} — so ` +
-        "the ledger has not looked for it.",
+      "$1,000.00 of it never reached an account the ledger reads; the other $1,000.00 is for a payday after Sep 5, " +
+        `${CHECKED_DAY} — so the ledger has not looked for it.`,
     );
-    expect(s.year.join(" ")).toContain("and $1,000.00 never reached a bank;");
+    expect(s.year.join(" ")).toContain("and $1,000.00 never reached an account the ledger reads;");
     expect(s.year.join(" ")).not.toMatch(/not banked yet|days to land/);
+  });
+});
+
+/*
+ * ⚖️ What never arrived is said of the accounts the ledger reads (`ACCOUNT_READ`), by every reader of the same payday —
+ * the card's difference, its stale verdict and its headline, the forecast's note (his pay's page and the tile print
+ * its words), /spending's shortfall note and the calendar's mark — as the card's caveat beside them offers pay "paid
+ * into an account the ledger does not read" (`ACCOUNT_NOT_READ`), and the calendar's legend the same. Default built,
+ * not asked (2026-10-30), the calendar's own narrowing (87a440d0) carried to its other readers. 🔴 Review of 87a440d0
+ * (MEDIUM): only the mark was narrowed — on his ledger copy read Oct 30 it drew Jun 11 – Aug 20 "never reached an
+ * account the ledger reads" while the dashboard said "$10,917.00 of it never reached a bank" and /spending "$3,141.00
+ * never reached a bank" (August) of the same paydays; with Oct 22's payroll superseded, the forecast's note over the
+ * calendar's grid said "Pay that never reaches a bank" of the Oct 22 its mark called "never reached an account the
+ * ledger reads".
+ */
+describe("a payday checked through its days to land never reached an account the ledger reads — every reader", () => {
+  const NEVER = `never reached ${ACCOUNT_READ}`;
+  /** the calendar's own mark of the payday — the one carrying no posting */
+  const markOn = (day: string) =>
+    recurringCalendar(bundle.db, day.slice(0, 7), TODAY).entriesByDay[day]!.find((e) => e.transactionId === null)!;
+
+  test("the card's difference, the forecast's subject, /spending's note and the calendar's mark: one wording", () => {
+    paidThrough("2026-08-27");
+    readThrough("2026-09-06");
+    const s = surfaces();
+
+    expect(s.dashboard).toBe(
+      `$1,000.00 of it ${NEVER}; the other $1,000.00 is for a payday after Sep 6, ${CHECKED_DAY} — so the ledger has ` +
+        "not looked for it.",
+    );
+    expect(s.forecast).toBe(
+      `Pay that never reaches ${ACCOUNT_READ}, and pay the ledger has not looked for, cannot be projected as arriving`,
+    );
+    expect(s.september).toEqual([
+      "It America LLC (weekly pay)'s payday on Sep 3, 2026 came to $1,000.00, and none of it reached " +
+        `${ACCOUNT_READ}; 1 more payday in the window falls after Sun, Sep 6, 2026, ${CHECKED_DAY} — so the ledger ` +
+        "has not looked for its deposit.",
+    ]);
+    expect(s.year.join(" ")).toContain(`of which $13,000.00 was banked inside the window and $1,000.00 ${NEVER};`);
+    expect(markOn("2026-09-03")).toMatchObject({ state: "unsettled", unsettledReason: "never_banked" });
+    expect(unsettledWords(markOn("2026-09-03"))).toBe(NEVER);
+    // …beside the caveat that offers the account the ledger does not read
+    expect(incomeCard(bundle.db, TODAY)!.caveat).toContain(`payroll can land in ${ACCOUNT_NOT_READ}`);
+    for (const words of [s.dashboard, s.forecast, ...s.september, ...s.year]) expect(words).not.toMatch(/a bank/);
+  });
+
+  test("the stale verdict: 'so the pay did not reach an account the ledger reads', under the difference", () => {
+    paidThrough("2026-08-06");
+    readThrough("2026-09-06");
+    const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
+
+    expect(line.gapLabel).toMatch(/^\$4,000\.00 of it never reached an account the ledger reads; the other \$1,000/);
+    expect(line.verdict).toContain(
+      `4 of them fall on days already checked — so the pay did not reach ${ACCOUNT_READ}; the other one falls after ` +
+        "Sep 6,",
+    );
+    expect(line.verdict).not.toMatch(/a bank/);
+  });
+
+  // ⛔ …and the headline over a window nothing banked in, and its difference when it is all checked: the card's whole
+  test("nothing banked, every payday checked: the headline and the bare difference say it of the same accounts", () => {
+    deposit("2026-02-26"); // the schedule's last deposit, before the card's window opens (Mar 1)
+    readThrough("2026-09-13", "2026-02-01");
+    const card = incomeCard(bundle.db, TODAY)!;
+
+    expect(card.summary).toMatch(/^Nothing has reached an account the ledger reads, against \$28,000\.00 the /);
+    expect(card.totals.gapLabel).toBe(NEVER);
+    expect(card.pay[0]!.verdict).toContain(`so the pay did not reach ${ACCOUNT_READ}`);
+    for (const words of [card.summary, card.totals.gapLabel, card.pay[0]!.verdict]) expect(words).not.toMatch(/a bank/);
   });
 });
 
@@ -506,7 +581,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     );
     const [ytd] = spending("2026-01-01", "2026-12-31");
     expect(ytd).toContain(
-      "implies $15,000.00 of earnings over Jun 4 – Sep 10, 2026 and none of it reached an account the ledger reads " +
+      "implies $15,000.00 of earnings over Jun 4 – Sep 10, 2026 and none of it reached an account the ledger reads, " +
         "through Sat, Sep 5, 2026; the other payday falls after that,",
     );
     expect(ytd).toContain(
@@ -549,9 +624,9 @@ describe("the silence the verdict and /spending's stale note count, and the mone
 
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toBe(
       "5 paydays have passed since Aug 5 with no deposit (not counting Aug 6, which was paid early). 4 of them, and " +
-        "their days to land, fall on days the records already cover, through Sep 12 — so the pay did not reach a " +
-        `bank; Sep 10's days to land run past Sep 12, ${CHECKED_DAY} — so its pay is not banked yet. Whether it was ` +
-        "earned is a different question, and this card cannot answer it.",
+        "their days to land, fall on days already checked — so the pay did not reach an account the ledger reads; " +
+        `Sep 10's days to land run past Sep 12, ${CHECKED_DAY} — so its pay is not banked yet. Whether it was earned ` +
+        "is a different question, and this card cannot answer it.",
     );
     for (const [from, to] of STALE_WINDOWS) {
       expect(staleSentence(from, to)).toContain(
@@ -606,7 +681,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     ] as const) {
       // ⛔ after "the other payday falls after that, …", which names the checked day — never Aug 7 (review of 337baa7)
       expect(spending(from, to).join(" ")).toContain(
-        `reached an account the ledger reads through Sat, Sep 5, 2026; the other payday falls after that, ` +
+        `reached an account the ledger reads, through Sat, Sep 5, 2026; the other payday falls after that, ` +
           `${CHECKED_DAY}; ${back}.`,
       );
     }
@@ -640,13 +715,13 @@ describe("a stale verdict names every payday of its silence — one past the che
 
     expect(line).toMatchObject({ basis: "series-stale", silentPeriods: 5, checkedSilentPeriods: 4 });
     expect(line.verdict).toBe(
-      "5 paydays have passed since the last deposit on Aug 6. 3 of them, and their days to land, fall on days the " +
-        "records already cover, through Sep 5 — so the pay did not reach a bank; Sep 3's days to land run past Sep 5, " +
-        `${CHECKED_DAY} — so its pay is not banked yet; the other one falls after Sep 5 — so the ledger has not ` +
+      "5 paydays have passed since the last deposit on Aug 6. 3 of them, and their days to land, fall on days " +
+        "already checked — so the pay did not reach an account the ledger reads; Sep 3's days to land run past Sep " +
+        `5, ${CHECKED_DAY} — so its pay is not banked yet; the other one falls after Sep 5 — so the ledger has not ` +
         `looked for its deposit. ${NOT_ANSWERED}`,
     );
     // …as the label one line above it says of the same money
-    expect(line.gapLabel).toContain("the other $1,000.00 is for paydays after that day — so the ledger has not looked");
+    expect(line.gapLabel).toContain("the other $1,000.00 is for a payday after that day — so the ledger has not");
     expect(line.verdict).not.toContain("with no deposit");
   });
 
@@ -656,9 +731,9 @@ describe("a stale verdict names every payday of its silence — one past the che
     readThrough("2026-09-06");
 
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toBe(
-      "5 paydays have passed since the last deposit on Aug 6. 4 of them fall on days the records already cover, " +
-        `through Sep 6 — so the pay did not reach a bank; the other one falls after Sep 6, ${CHECKED_DAY} — so the ` +
-        `ledger has not looked for its deposit. ${NOT_ANSWERED}`,
+      "5 paydays have passed since the last deposit on Aug 6. 4 of them fall on days already checked — so the pay " +
+        `did not reach an account the ledger reads; the other one falls after Sep 6, ${CHECKED_DAY} — so the ledger ` +
+        `has not looked for its deposit. ${NOT_ANSWERED}`,
     );
   });
 
@@ -667,9 +742,9 @@ describe("a stale verdict names every payday of its silence — one past the che
     readThrough("2026-08-30");
 
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toBe(
-      "5 paydays have passed since the last deposit on Aug 6. 3 of them fall on days the records already cover, " +
-        `through Aug 30 — so the pay did not reach a bank; the other 2 fall after Aug 30, ${CHECKED_DAY} — so the ` +
-        `ledger has not looked for their deposits. ${NOT_ANSWERED}`,
+      "5 paydays have passed since the last deposit on Aug 6. 3 of them fall on days already checked — so the pay " +
+        `did not reach an account the ledger reads; the other 2 fall after Aug 30, ${CHECKED_DAY} — so the ledger ` +
+        `has not looked for their deposits. ${NOT_ANSWERED}`,
     );
   });
 
@@ -681,8 +756,8 @@ describe("a stale verdict names every payday of its silence — one past the che
 
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toBe(
       "5 paydays have passed since the last deposit on Aug 5 (not counting Aug 6, which was paid early). 3 of them, " +
-        "and their days to land, fall on days the records already cover, through Sep 5 — so the pay did not reach a " +
-        `bank; Sep 3's days to land run past Sep 5, ${CHECKED_DAY} — so its pay is not banked yet; the other one ` +
+        "and their days to land, fall on days already checked — so the pay did not reach an account the ledger " +
+        `reads; Sep 3's days to land run past Sep 5, ${CHECKED_DAY} — so its pay is not banked yet; the other one ` +
         `falls after Sep 5 — so the ledger has not looked for its deposit. ${NOT_ANSWERED}`,
     );
   });

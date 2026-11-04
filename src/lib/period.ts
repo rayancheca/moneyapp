@@ -126,6 +126,25 @@ export function dayWindowLabel(from: string, to: string): string {
   return `${left} – ${right}, ${ty}`;
 }
 
+/**
+ * A window that IS a calendar month, quarter or year by that period's name — "October 2026", "Q4 2026", "2026", the
+ * label `resolvePeriod` titles the page of those very days with — and any other by its own two ends (`dayWindowLabel`).
+ * ⛔ Still the window measured: a name is used only for exactly its days, never for a window inside it.
+ *
+ * ⚖️ Default built, not asked (2026-10-30). 🔴 His ledger copy 2026-10-29, `/spending?period=2026-Q4&cash=graph`: the
+ * running total's hover named October "Oct 1 – 31, 2026" beside the Income card's "Q4 2026", the chart lens's "the
+ * month" and the dashboard's "October 2026".
+ */
+export function calendarWindowLabel(from: string, to: string): string {
+  const [year, month] = from.split("-").map(Number) as [number, number];
+  const named = [
+    monthPeriod(year, month, from),
+    quarterPeriod(year, quarterOfMonth(month), from),
+    yearPeriod(year, from),
+  ];
+  return named.find((p) => p.from === from && p.to === to)?.label ?? dayWindowLabel(from, to);
+}
+
 function monthPeriod(year: number, month: number, today: string): ResolvedPeriod {
   const key = `${pad(year, 4)}-${pad(month, 2)}`;
   const { start, end } = periodBounds(`${key}-01`, "monthly");

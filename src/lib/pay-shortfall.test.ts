@@ -141,6 +141,7 @@ describe("payShortfall — a window's read paydays against what it banked, and t
       wentBackOut: [],
       // August banked nothing: Sep 24's deposit is September's money
       bankedCents: 0,
+      ownDepositDays: 0,
     });
   });
 
@@ -170,6 +171,19 @@ describe("payShortfall — a window's read paydays against what it banked, and t
     expect(s.paidAcross).toEqual([{ depositOn: "2026-09-24", paydays: ["2026-08-27"], cents: PAYROLL, early: false }]);
     expect(s.paidAhead).toEqual([]);
     expect(s.towardNoPayday).toEqual([]);
+  });
+
+  /*
+   * ⛔ "A deposit" or "deposits" of the window's own money is counted by the days that hold some of it
+   * (`ownDepositDays`): a day whose money all paid another window's payday is that window's. 🔴 Review of 8aa00da4
+   * (LOW): /spending's note for a stale schedule said "in deposits attached to it" of one deposit.
+   */
+  test("the deposit days of the window's own money: Sep 24's, which paid Aug 27 whole, is August's", () => {
+    expect(his("2026-09-01", "2026-09-30").ownDepositDays).toBe(1);
+    // the Sep 23 lump paid Sep 3, 10 and 17 before the window, and its Sep 24 inside it: still a deposit of its own
+    expect(his("2026-09-21", "2026-09-27").ownDepositDays).toBe(1);
+    // June's two days: Jun 4's paid Jun 4, Jun 5's $400.00 paid no payday — both the window's
+    expect(his("2026-06-01", "2026-06-30").ownDepositDays).toBe(2);
   });
 
   test("Sep 23 – Sep 23: the lump paid Sep 24, after the window, early — and three weeks before it", () => {
@@ -533,6 +547,8 @@ describe("payShortfall — the window's LAST day is inside it", () => {
       paidUncounted: [],
       wentBackOut: [],
       bankedCents: CASH,
+      // the last day's deposit is the window's own
+      ownDepositDays: 1,
     });
   });
 

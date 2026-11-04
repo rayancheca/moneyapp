@@ -72,9 +72,9 @@ import {
  * when that payday is not before the window. 🔴 Review of f6da264: on that copy, on Wed Oct 7, October and Q4 said
  * Oct 7's $1,141.92 "went toward no payday on or before Thu, Sep 24, 2026" while the week said it paid Oct 8 early.
  *
- * ⚖️ …and "never reached a bank" only of a read payday checked through its DAYS TO LAND (`paydayLandingIsRead`): one
- * still inside them that no deposit settled is "not banked yet" (`paydaysNotBankedYet`, `unbankedSplit`), the words
- * the forecast's note and Earned vs banked say it in.
+ * ⚖️ …and "never reached" (`NEVER_REACHED`) only of a read payday checked through its DAYS TO LAND
+ * (`paydayLandingIsRead`): one still inside them that no deposit settled is "not banked yet" (`paydaysNotBankedYet`,
+ * `unbankedSplit`), the words the forecast's note and Earned vs banked say it in.
  */
 
 /** A settlement, and what it walked: the paydays it drew and the deposits that had arrived. */
@@ -163,7 +163,7 @@ export interface PayShortfall {
   noPaydayInsideCents: number;
   /**
    * What the read paydays came to beyond the window's own money — `payGap`'s read part over every deposit inside it
-   * less `paidAcross`, net of the money out it could net (`wentBackOut`): the dashboard's "never reached a bank", over
+   * less `paidAcross`, net of the money out it could net (`wentBackOut`): the dashboard's "never reached …", over
    * this window. Zero when the window banked them — and always when it reads no payday.
    */
   shortCents: number;
@@ -171,7 +171,7 @@ export interface PayShortfall {
   paidOutside: readonly PaidOutside[];
   /**
    * What no deposit, inside the window or out, made up — the shortfall less that money, never below zero — for paydays
-   * checked through their days to land: "never reached a bank".
+   * checked through their days to land: "never reached …" (`NEVER_REACHED`).
    */
   neverBankedCents: number;
   /**
@@ -231,6 +231,12 @@ export interface PayShortfall {
    * row inside the window, net.
    */
   bankedCents: number;
+  /**
+   * How many deposit days hold the window's OWN money (`windowOwnCents`): its days that banked, less any whose money
+   * all paid another window's read payday (`paidAcross`) — "a deposit" or "deposits" of the money /spending's note for
+   * a stale schedule says reached an account. 🔴 Review of 8aa00da4 (LOW): it said "in deposits attached to it" of one.
+   */
+  ownDepositDays: number;
 }
 
 // the words /spending's notes need of a window's money live apart from the settlement (`lib/pay-window-money`)
@@ -269,7 +275,7 @@ export interface NotBankedYet {
  * The window's passed paydays no deposit settled that were checked on their day (`paydayIsRead`) but not through their
  * days to land (`paydayLandingIsRead`) — a deposit can still answer them on a day the ledger has not read. The
  * forecast's checked paydays short of its warning (`pastGraceOccurrenceCount`), over any window: what Earned vs banked
- * and /spending's shortfall note call "not banked yet" (`unbankedSplit`), never "never reached a bank".
+ * and /spending's shortfall note call "not banked yet" (`unbankedSplit`), never "never reached …".
  *
  * ⛔ Settled is the settlement's answer (`settledBy`), never a date match: a deposit that paid the payday has come, and
  * its payday stays checked. Measured on his ledger copy 2026-10-21, Wells Fargo checked through Thu Sep 24, whose
@@ -294,8 +300,8 @@ export function paydaysNotBankedYet(
  * or the one that did held less than the payday (its `portions`) — oldest first, each at its own amount: the paydays a
  * sentence would call absent, which the one rule for an unattached match is asked about (`services/unattached-match`,
  * `asksForUnattachedMatch`) before any of them says so. "With no deposit", "not banked yet" inside the days to land
- * (`paydaysNotBankedYet`), "never reached a bank" past them — and of a payday paid short, what is left of it, which the
- * difference counts among the money that never reached a bank (`unbankedSplit`).
+ * (`paydaysNotBankedYet`), "never reached …" past them — and of a payday paid short, what is left of it, which the
+ * difference counts among the money that never reached an account the ledger reads (`unbankedSplit`).
  *
  * 🔴 Review of 304c59a4 (MEDIUM, both halves): asked past the days to land alone, so his ledger copy with Oct 22's
  * +$1,141.92 filed Salary and attached to nothing, read Oct 24, said "not banked yet" and "with no deposit" beside the
@@ -411,7 +417,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const { readGapCents: shortCents } = payGap(e.impliedCents, ownCents, e.impliedCents - e.read.cents);
   const outsideCents = centsOf(paidOutside);
   const unmadeUpCents = Math.max(0, shortCents - outsideCents);
-  // ⛔ the one split (`unbankedSplit`): "never reached a bank" only of paydays checked through their days to land
+  // ⛔ the one split (`unbankedSplit`): "never reached …" only of paydays checked through their days to land
   const notBankedYet = paydaysNotBankedYet(s, w);
   const { notBankedYetCents, neverCents: neverBankedCents } = unbankedSplit(unmadeUpCents, notBankedYet.cents);
   // ⛔ the sentence's split adds up to the paydays, and every deposit outside keeps the money it put in — so when
@@ -422,6 +428,11 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
   const noPaydayInsideCents = Math.min(centsOf(noPayday), Math.max(0, bankedInsideCents - paidReadCents));
   const beyondCents = Math.max(0, ownCents - bankedInsideCents);
   const noPaydayBeyondCents = Math.min(beyondCents, centsOf(noPayday) - noPaydayInsideCents);
+  // the deposit days `ownCents` is made of: every one inside the window but a day whose money all paid another's
+  const acrossCents = (day: string): number => centsOf(paidAcross.filter((p) => p.depositOn === day));
+  const ownDepositDays = s.deposits.filter(
+    (d) => d.amountCents > 0 && inWindow(d.postedOn) && d.amountCents > acrossCents(d.postedOn),
+  ).length;
 
   return {
     readPaydays: e.read.paydays,
@@ -447,6 +458,7 @@ export function payShortfall(s: SettlementWalked, w: PayShortfallWindow, e: Wind
     paidUncounted,
     wentBackOut: back.wentBackOut,
     bankedCents: back.bankedCents,
+    ownDepositDays,
   };
 }
 

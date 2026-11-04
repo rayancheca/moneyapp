@@ -1,9 +1,12 @@
 import { compareDates, diffDays } from "@/lib/dates";
+import { formatDaysYearOnce } from "@/lib/format-date";
+import { NEVER_REACHED } from "@/lib/ledger-reads";
 import { formatCents } from "@/lib/money";
 
 /**
  * A ROW THAT MATCHES A DAY TO THE CENT, SITTING THERE UNATTACHED — the one rule every surface asks before it calls a
- * payday "with no deposit", "not banked yet" or "did not reach a bank", or a due day "has not posted".
+ * payday "with no deposit", "not banked yet" or "never reached an account the ledger reads", or a due day "has not
+ * posted".
  *
  * 🔴 Measured on his ledger copy 2026-10-29, after the Wells Fargo statement of Sep 25 → Oct 26 was imported and before
  * he filed it: Earned vs banked read "4 paydays have passed since Sep 24 with no deposit. 4 of them fall on days the
@@ -143,21 +146,21 @@ export function silenceMatches(
 
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
-/** What a row is that the series does not count: never attached, or attached and filed as no income. */
-const NOT_ATTACHED = { one: "that is not attached to it", many: "that are not attached to it" };
-const NOT_FILED = {
-  one: "that is attached to it but not filed as income",
-  many: "that are attached to it but not filed as income",
-};
+/** What a row is that the series does not count, said of `it`: never attached, or attached and filed as no income. */
+const notAttached = (it: string) => ({ one: `that is not attached to ${it}`, many: `that are not attached to ${it}` });
+const notFiled = (it: string) => ({
+  one: `that is attached to ${it} but not filed as income`,
+  many: `that are attached to ${it} but not filed as income`,
+});
 
-/** One kind of row by its own day and amount (one amount named once), oldest first. */
+/** One kind of row by its own day and amount (one amount named once, each year once), oldest first. */
 function rowsOfOneKind(
   byDay: readonly UnattachedMatch[],
   formatDay: (iso: string) => string,
   kind: { one: string; many: string },
 ): string {
   const amounts = new Set(byDay.map((m) => Math.abs(m.row.amountCents)));
-  const days = byDay.map((m) => formatDay(m.row.postedOn));
+  const days = formatDaysYearOnce(byDay.map((m) => m.row.postedOn), formatDay);
   if (byDay.length === 1) {
     return `a row of ${formatCents(Math.abs(byDay[0]!.row.amountCents))} on ${days[0]} ${kind.one}`;
   }
@@ -171,20 +174,25 @@ function rowsOfOneKind(
 /**
  * "a row of $695.04 on Oct 15 that is not attached to it", "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that
  * are not attached to it" — the rows by their own day and amount (one amount named once), in the day format of the
- * sentence they finish. Every surface that would have claimed absence says this instead (`MATCHED_TO_THE_CENT_BY`).
+ * sentence they finish — a short one, each year said once (`formatDaysYearOnce`: "on Dec 17, Dec 24, and Dec 31,
+ * 2026"). Every surface that would have claimed absence says this instead (`MATCHED_TO_THE_CENT_BY`).
  * ⚖️ A row attached to the pay and filed as no income is said as that (`UnattachedRow.notFiledAsIncome`) — "that is
  * attached to it but not filed as income" — the unattached first when there are both.
+ * ⛔ "It" is what the sentence sums — one schedule or bill — and a sentence about several paydays or bills says "them",
+ * as its own "with no deposit attached to them" does (`countedDepositWords`). 🔴 Review of 92de2b12 (LOW): /budgets
+ * read "with no deposit attached to them, matched … that are not attached to it".
  */
 export function unattachedRowsWords(
   matches: readonly UnattachedMatch[],
   formatDay: (iso: string) => string,
+  it = "it",
 ): string {
   const byDay = [...matches].sort((a, b) => compareDates(a.row.postedOn, b.row.postedOn));
   const unattached = byDay.filter((m) => m.row.notFiledAsIncome !== true);
-  const notFiled = byDay.filter((m) => m.row.notFiledAsIncome === true);
+  const unfiled = byDay.filter((m) => m.row.notFiledAsIncome === true);
   return [
-    ...(unattached.length === 0 ? [] : [rowsOfOneKind(unattached, formatDay, NOT_ATTACHED)]),
-    ...(notFiled.length === 0 ? [] : [rowsOfOneKind(notFiled, formatDay, NOT_FILED)]),
+    ...(unattached.length === 0 ? [] : [rowsOfOneKind(unattached, formatDay, notAttached(it))]),
+    ...(unfiled.length === 0 ? [] : [rowsOfOneKind(unfiled, formatDay, notFiled(it))]),
   ].join(", and ");
 }
 
@@ -194,15 +202,17 @@ export const MATCHED_TO_THE_CENT_BY = "matched to the cent by";
 /**
  * Of the `of` paydays a sentence has just counted, the ones the rows answer: "it is matched to the cent by a row of …",
  * "they are matched …" when the rows answer every one, "3 of them are matched …" when they answer some — never "they
- * are" of paydays no row matches, the money that hides. Earned vs banked's verdict and the passed paydays' frontier
- * clause (`unbankedIncomeFrontierClause`) say it in these words.
+ * are" of paydays no row matches, the money that hides. Earned vs banked's verdict, the passed paydays' frontier
+ * clause (`unbankedIncomeFrontierClause`) and /budgets' passed paydays (`PassedPaydaysLine`, its rows "not attached to
+ * them" in its own pronoun, `it`) say it in these words.
  */
 export function matchedOfWords(
   matched: readonly UnattachedMatch[],
   of: number,
   formatDay: (iso: string) => string,
+  it = "it",
 ): string {
-  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay)}`;
+  const rows = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDay, it)}`;
   if (matched.length >= of) return `${of === 1 ? "it is" : "they are"} ${rows}`;
   return `${matched.length} of them ${matched.length === 1 ? "is" : "are"} ${rows}`;
 }
@@ -232,7 +242,7 @@ export function notCountedWords(matches: readonly UnattachedMatch[], it: string)
     : `not attached to ${it} or not filed as income`;
 }
 
-/** A "never reached a bank" figure, and what of it the rows the one rule matched answer. */
+/** A "never reached" figure (`NEVER_REACHED`), and what of it the rows the one rule matched answer. */
 export interface NeverSplit {
   readonly cents: number;
   /** of `cents`, the rows' money — never more than the figure (a net shortfall can be less than a payday) */
@@ -242,7 +252,7 @@ export interface NeverSplit {
 }
 
 /**
- * ⛔ ONE SPLIT of a "never reached a bank" figure by the rows the one rule matched to its paydays — Earned vs banked's
+ * ⛔ ONE SPLIT of a "never reached" figure by the rows the one rule matched to its paydays — Earned vs banked's
  * difference (`gapOf`) and /spending's shortfall note (`payShortfallNote`). The rows pay nothing: the figure is
  * unchanged, and only the claim that their money did not arrive is withdrawn. Capped at the figure, so the parts add
  * up to it: a window whose net shortfall is $941.92 holds no $1,141.92 the rows answer.
@@ -250,6 +260,27 @@ export interface NeverSplit {
 export function neverSplit(neverCents: number, matched: readonly UnattachedMatch[]): NeverSplit {
   const matchedCents = Math.max(0, Math.min(neverCents, unattachedCents(matched)));
   return { cents: neverCents, matchedCents, matched: matchedCents === 0 ? [] : matched };
+}
+
+/**
+ * What a split's matched money IS, after its amount and "is": "matched to the cent by rows of …" — or, capped, "for the
+ * paydays of Oct 1 and Oct 15, which rows of … match to the cent". ⛔ One wording for every figure the rows answer:
+ * Earned vs banked's difference and /spending's shortfall note (`neverClauses`), and its note for a stale schedule.
+ *
+ * ⛔ Capped — the rows hold more than the figure, money that paid no payday netted into it — the figure is named as
+ * their paydays', and the rows as matching THOSE: "$941.92 is for the payday of Oct 22, which a row of $1,141.92 on
+ * Oct 22 that is not attached to it matches to the cent", never "$941.92 is matched to the cent by a row of
+ * $1,141.92". Measured on a copy of his ledger with Oct 1, 8 and 15 filed and Oct 22 unattached, read Nov 2: the
+ * $200.00 of Oct 15 that went toward no payday is netted into October's figure.
+ */
+export function matchedRowsWords(never: NeverSplit, formatDay: (iso: string) => string): string {
+  const capped = never.matchedCents < unattachedCents(never.matched);
+  if (!capped) return `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(never.matched, formatDay)}`;
+  const paydays = formatDaysYearOnce([...new Set(never.matched.map((m) => m.date))].sort(compareDates), formatDay);
+  return (
+    `for the ${paydays.length === 1 ? "payday" : "paydays"} of ${AND_LIST.format(paydays)}, which ` +
+    `${unattachedRowsWords(never.matched, formatDay)} ${never.matched.length === 1 ? "matches" : "match"} to the cent`
+  );
 }
 
 /** The never split the words say beside a "not banked yet" figure, and what of that figure no row answers. */
@@ -261,7 +292,7 @@ export interface NamedTogether {
 }
 
 /**
- * ⛔ ONE SPLIT of a "never reached a bank" figure and the "not banked yet" figure beside it (`unbankedSplit`), each by
+ * ⛔ ONE SPLIT of a "never reached" figure and the "not banked yet" figure beside it (`unbankedSplit`), each by
  * the rows the one rule matched to its own paydays (`neverSplit`): every matched row is named once, in the never part's
  * clause — a row of a payday still inside its days to land too, its money said as matched, never "not banked yet" — and
  * what no row answers keeps its words. The figures are unchanged; only the words that say their money move. Earned vs
@@ -282,12 +313,12 @@ export function namedTogether(never: NeverSplit, notYet: NeverSplit): NamedToget
 }
 
 /**
- * The split said as clauses: "$X of it never reached a bank" (`ofIt`; "$X never reached a bank" in a note's list), or
- * `bare` "never reached a bank" when it is the whole difference — and of what the rows answer, "$Y is matched to the
- * cent by rows of $1,141.92 on Oct 1, … that are not attached to it", or "all of it is …" (bare) when they answer every
- * cent. Empty for no figure. 🔴 His ledger copy 2026-10-29 (before his filing): the difference read "never reached a
- * bank" over $4,567.68 of October paydays whose four payroll rows sat on Wells Fargo, unattached; and /spending's note
- * "none of it reached a bank" beside the card naming them (review of de31d22).
+ * The split said as clauses: "$X of it never reached an account the ledger reads" (`ofIt`; "$X never reached …" in a
+ * note's list), or `bare` "never reached …" when it is the whole difference (`NEVER_REACHED`) — and of what the rows
+ * answer, "$Y is matched to the cent by rows of $1,141.92 on Oct 1, … that are not attached to it", or "all of it is …"
+ * (bare) when they answer every cent. Empty for no figure. 🔴 His ledger copy 2026-10-29 (before his filing): the
+ * difference read "never reached a bank" over $4,567.68 of October paydays whose four payroll rows sat on Wells Fargo,
+ * unattached; and /spending's note "none of it reached a bank" beside the card naming them (review of de31d22).
  */
 export function neverClauses(
   never: NeverSplit,
@@ -296,27 +327,15 @@ export function neverClauses(
 ): string[] {
   if (never.cents <= 0) return [];
   const amount = (cents: number): string => (form.ofIt ? `${formatCents(cents)} of it` : formatCents(cents));
-  /*
-   * ⛔ Capped — the rows hold more than the figure, money that paid no payday netted into it — the figure is named as
-   * their paydays', and the rows as matching THOSE: "$941.92 is for the payday of Oct 22, which a row of $1,141.92 on
-   * Oct 22 that is not attached to it matches to the cent", never "$941.92 is matched to the cent by a row of
-   * $1,141.92". Measured on a copy of his ledger with Oct 1, 8 and 15 filed and Oct 22 unattached, read Nov 2: the
-   * $200.00 of Oct 15 that went toward no payday is netted into October's figure.
-   */
-  const capped = never.matchedCents < unattachedCents(never.matched);
-  const paydays = [...new Set(never.matched.map((m) => m.date))].sort(compareDates).map(formatDay);
-  const rows = capped
-    ? `for the ${paydays.length === 1 ? "payday" : "paydays"} of ${AND_LIST.format(paydays)}, which ` +
-      `${unattachedRowsWords(never.matched, formatDay)} ${never.matched.length === 1 ? "matches" : "match"} to the cent`
-    : `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(never.matched, formatDay)}`;
+  const rows = matchedRowsWords(never, formatDay);
   if (never.matchedCents === 0) {
-    return [form.bare ? "never reached a bank" : `${amount(never.cents)} never reached a bank`];
+    return [form.bare ? NEVER_REACHED : `${amount(never.cents)} ${NEVER_REACHED}`];
   }
   if (never.matchedCents === never.cents) {
     return [form.bare ? `all of it is ${rows}` : `${amount(never.cents)} is ${rows}`];
   }
   return [
-    `${amount(never.cents - never.matchedCents)} never reached a bank`,
+    `${amount(never.cents - never.matchedCents)} ${NEVER_REACHED}`,
     `${formatCents(never.matchedCents)} is ${rows}`,
   ];
 }

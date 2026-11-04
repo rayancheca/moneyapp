@@ -1,6 +1,6 @@
 import { Money } from "@/components/ui/Money";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
-import { countedDepositWords, MATCHED_TO_THE_CENT_BY, unattachedRowsWords } from "@/lib/unattached-match";
+import { countedDepositWords, matchedOfWords } from "@/lib/unattached-match";
 import { IMPORTS_NOT_EARNINGS, leftOutOf, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
 import type { IncomeExpectation } from "@/services/budgets";
 
@@ -26,7 +26,8 @@ export interface PassedPaydaysLineProps {
  * Aug 12 (measured 2026-09-15): it is said only when every passed payday fell on a day the ledger has checked, and
  * otherwise the frontier clause (`unbankedIncomeFrontierClause`) names the rest as not looked for, in /spending's
  * words. ⛔ …and only where no row matches one unattached (`lib/unattached-match`): the rows are named, "with no deposit
- * attached to them" — "…and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`).
+ * attached to them" — "…and filed as income" once one of them is attached and filed nowhere (`countedDepositWords`) —
+ * and of the paydays, the ones they answer: "…: they are matched to the cent by …", "1 of them is" (`matchedOfWords`).
  *
  * ⛔ "Counted in neither figure above" only of the paydays no row "in so far" holds answers (`leftOutOf` over
  * `IncomeExpectation.passedUnpaidInSoFar`, the rows the one rule matched that "in so far" counts): "— $1,141.92 of it
@@ -54,8 +55,11 @@ export function PassedPaydaysLine({ income }: PassedPaydaysLineProps) {
   const noDeposit =
     matched.length === 0
       ? `with no deposit against ${them}`
-      : `with no deposit ${countedDepositWords(matched, them)}, ` +
-        `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords(matched, formatDayShort)}`;
+      : // …and the rows "not attached to them" too: one pronoun for one sentence (review of 92de2b12, LOW) — of the
+        // paydays the rows answer, the ones they answer (`matchedOfWords`), as the card's verdict says them (review of
+        // 8aa00da4, LOW: "2 paydays … matched to the cent by a row of $1,141.92 on Oct 8" of Oct 8 and Oct 22)
+        `with no deposit ${countedDepositWords(matched, them)}: ` +
+        matchedOfWords(matched, income.passedUnpaidOccurrences, formatDayShort, them);
   const neither = leftOutOf(income.passedUnpaidCents, income.passedUnpaidInSoFar, "counted in neither figure above");
   return (
     <p className="mt-1 text-xs text-ink-faint">

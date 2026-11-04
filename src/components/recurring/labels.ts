@@ -20,7 +20,7 @@ import { carrierWord } from "@/lib/billed-with";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import type { PerPayday } from "@/lib/per-payday";
 import { projectedEvidence, SERIES_EVIDENCE_LABEL, seriesEvidenceTone, seriesPostingWords } from "@/lib/series-evidence";
-import { notLookedForDeposits } from "@/lib/unbanked-income";
+import { NEVER_REACHED, notLookedForDeposits } from "@/lib/unbanked-income";
 import type { Cadence, SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
@@ -634,8 +634,17 @@ const UNSETTLED_REASON_WORD: Record<UnsettledReason, string> = {
   not_looked_for: notLookedForDeposits(1),
   in_grace: DAYS_TO_POST_NOT_OVER,
   unbanked: "not banked yet",
-  // 🔴 his checked cash weeks read "not banked yet" beside the dashboard's "never reached a bank" (reading the app)
-  never_banked: "never reached a bank",
+  /*
+   * 🔴 his checked cash weeks read "not banked yet" beside the dashboard's "never reached a bank" (reading the app).
+   * ⚖️ …said of the accounts the ledger reads (`ACCOUNT_READ`), as /spending's note for a stale schedule says it beside
+   * the same "paid into" — default built, not asked (2026-10-30), the review's own direction. 🔴 Review of 0d200735
+   * (LOW): the legend's "Not yet known" (`RECURRING_JARGON.notYetKnown`) offers pay "paid into an account the
+   * ledger does not read", and this mark said "never reached a bank" under it — eleven marks on his ledger copy
+   * 2026-10-30, his cash weeks Jun 11 – Aug 20. ⛔ …in the words Earned vs banked and /spending say the same paydays in
+   * (`NEVER_REACHED`): narrowed here alone, the mark read "never reached an account the ledger reads" beside the
+   * dashboard's "$10,917.00 of it never reached a bank" (review of 87a440d0, MEDIUM).
+   */
+  never_banked: NEVER_REACHED,
   schedule_unproven: "too few charges to grade yet",
   // the lead alone: a mark carries its row, and is said by it (`unsettledWords`)
   matched_unattached: MATCHED_TO_THE_CENT_BY,

@@ -385,11 +385,13 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
    * projected: `unbankedIncomeForSeries`), and no dash, which §6A 68 keeps for a month not one day of which is checked.
    * 🔴 Review of a5ce8b15 (MEDIUM): weekly $1,000 found Jul 2, its account checked through Jul 2, read $4,920.00 on Jul
    * 8 and Jul 9 and $3,920.00 on Jul 10 — Jul 9's pay in neither leg, under only spending's partly-read line — while
-   * Earned vs banked named the same payday as not looked for. Latent on his ledger copy 2026-10-29 (the dash above,
-   * Oct 29–31). On a copy of today's trial import of his Wells Fargo statement (checked through Mon Oct 26), its rows
-   * filed as file-wells-fargo-october plans: ≈ $734.74 on Oct 29 and ≈ −$407.18 on Oct 30 and 31, Oct 29's $1,141.92
-   * in neither leg — now under "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls
-   * after Oct 26, …".
+   * Earned vs banked named the same payday as not looked for. Live on his ledger copy 2026-10-30, his Wells Fargo
+   * statement imported (checked through Mon Oct 26) and filed (file-wells-fargo-october): ≈ $734.74 on Oct 29 and
+   * ≈ −$407.18 on Oct 30 and 31, Oct 29's $1,141.92 in neither leg — under "1 payday worth $1,141.92 already passed
+   * this month — not in Free to spend. It falls after Oct 26, …". (Between the import and the filing — his pre-filing
+   * copy, read Oct 27 and Oct 29 — ≈ −$6,727.98 over "4 paydays worth $4,567.68 already passed this month with no
+   * deposit attached to it — not in Free to spend. Pay matched to the cent by rows of $1,141.92 on Oct 1, …" — the rows
+   * named, never "never reaches a bank": the one rule below, in the warning's tone, since the rows pay nothing.)
    *
    * ⛔ "Not in Free to spend" is said only of the paydays no row the posted leg holds answers: of the rows the one rule
    * matched to them (`lib/unattached-match` — the payday's series' account, its tolerance, its amount to the cent),
@@ -410,15 +412,21 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   const waitsForIncome = !withheld && cashFlow.incomeUnread;
   const figure = withheld || waitsForIncome ? null : freeToSpendCents;
   const passed = forecast.unbankedIncome;
+  // ⛔ every day the line names against today, the rows it names too — Earned vs banked's spelling, one card over.
+  // 🔴 Review of 87a440d0 (MEDIUM): its rows were the clause's, against the newest row — Fri Jan 1's payroll landed Thu
+  // Dec 31 and attached to nothing, read Jan 8, 2027, the line said "…a row of $1,000.00 on Dec 31 …" under the
+  // card's "…on Dec 31, 2026 …"
+  const tileDay = (iso: string): string => formatDayShortIn(iso, today);
   const paydaysLeftOut =
     figure === null || passed.totalCents <= 0
       ? null
       : passedPaydaysLeftOut(
           passed,
           "Free to spend",
-          (iso) => formatDayShortIn(iso, today),
+          tileDay,
           // ⚡ read only where the one rule matched a row (`postedIncomeHolds`)
           postedIncomeHolds(db, agentsCashOfRender(db), passed.unattached ?? [], period.from, period.to),
+          tileDay,
         );
   /*
    * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on

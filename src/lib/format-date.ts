@@ -45,6 +45,22 @@ export function formatDayShortIn(iso: string, reference: string): string {
 }
 
 /**
+ * Days said as a list, in date order, each year once: "Dec 17, Dec 24, and Dec 31, 2026" — a day the next one shares
+ * a year with is said bare (`formatDayShort`), the last of each year as `formatDay` says it, with its year where that
+ * spelling gives one. ⛔ For a SHORT spelling (`formatDayShort`, `formatDayShortIn`): a weekday would go missing.
+ *
+ * 🔴 Review of 87a440d0 (MEDIUM): read Jan 8, 2027, Earned vs banked spelled each row it names against today and
+ * listed "rows of $1,141.92 on Dec 17, 2026, Dec 24, 2026, and Dec 31, 2026" — the year-repeating list 5b9d9e87 had
+ * taken out of the forecast and /budgets.
+ */
+export function formatDaysYearOnce(isos: readonly string[], formatDay: (iso: string) => string): string[] {
+  return isos.map((iso, i) => {
+    const next = isos[i + 1];
+    return next !== undefined && parts(next).y === parts(iso).y ? formatDayShort(iso) : formatDay(iso);
+  });
+}
+
+/**
  * "Jul 3, 2026" — the day spelled for a SENTENCE, always with its year and
  * never with a weekday.
  *

@@ -25,7 +25,7 @@ const cashJob = { totalCents: 209_400, occurrenceCount: 2, names: ["Cash job (we
  * (measured 2026-09-15). (Its "Cash pay" is "Pay" since 2026-10-14: payroll too.)
  */
 describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looked for, not unbanked", () => {
-  test("every payday after the frontier: no 'never reaches a bank', and no warning tone", () => {
+  test("every payday after the frontier: no 'never reaches', and no warning tone", () => {
     const { html, words } = text({
       ...cashJob,
       checkedOccurrenceCount: 0,
@@ -37,7 +37,7 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
         "Both fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through — so the ledger has not looked for their deposits. " +
         "Pay the ledger has not looked for cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
     );
-    expect(words).not.toMatch(/no deposit imported|never reaches a bank/);
+    expect(words).not.toMatch(/no deposit imported|never reaches an account the ledger reads/);
     expect(html).not.toContain("text-warning");
   });
 
@@ -45,7 +45,7 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
    * ⚖️ "Pay", not "Cash pay": an app label, and since Aug 27 his pay is payroll by ACH into Wells Fargo (decision 55).
    * 🔴 The note called every checked payday with no deposit "Cash pay that never reaches a bank" — of a payroll too.
    */
-  test("every payday checked through its days to land: 'Pay that never reaches a bank', in warning tone", () => {
+  test("every payday checked through its days to land: 'Pay that never reaches …', in warning tone", () => {
     const { html, words } = text({
       ...cashJob,
       checkedOccurrenceCount: 2,
@@ -53,8 +53,9 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
       frontier: { kind: "day", through: "2026-09-14" },
     });
     expect(words).toBe(
-      "2 paydays worth $2,094.00 already passed this month with no deposit imported (Cash job (weekly pay)) — not counted above, and not in EOM cash. " +
-        "Pay that never reaches a bank cannot be projected as arriving; the month strip below counts it, because that line is the schedule.",
+      "2 paydays worth $2,094.00 already passed this month with no deposit imported (Cash job (weekly pay)) — not " +
+        "counted above, and not in EOM cash. Pay that never reaches an account the ledger reads cannot be projected " +
+        "as arriving; the month strip below counts it, because that line is the schedule.",
     );
     expect(words).not.toContain("Cash pay");
     expect(html).toContain("text-warning");
@@ -65,7 +66,7 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
    * settlement's anchor clause) is no warning: a payroll a day late answers it. 🔴 The split ignored the tolerance, and
    * a Thursday checked through Friday read "Cash pay that never reaches a bank", in warning tone, of pay due Sunday.
    */
-  test("checked on their days but inside their days to land: quiet, and never 'never reaches a bank'", () => {
+  test("checked on their days but inside their days to land: quiet, and never 'never reaches'", () => {
     const { html, words } = text({
       ...cashJob,
       checkedOccurrenceCount: 2,
@@ -89,7 +90,8 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
       frontier: { kind: "day", through: "2026-08-12" },
     });
     expect(words).toContain(
-      "1 falls on a day already checked, with no deposit; the other 2 fall after Wed, Aug 12, 2026, the last day every account that pay lands in has been checked through. Pay that never reaches a bank",
+      "1 falls on a day already checked, with no deposit; the other 2 fall after Wed, Aug 12, 2026, the last day " +
+        "every account that pay lands in has been checked through. Pay that never reaches an account the ledger reads",
     );
     expect(words).not.toContain("with no deposit imported");
     expect(html).toContain("text-warning");
@@ -109,7 +111,8 @@ describe("UnbankedIncomeNote — /recurring names unchecked paydays as not looke
       frontier: { kind: "day" as const, through: "2026-08-12" },
     };
     expect(text({ ...straddle, pastGraceOccurrenceCount: 1 }).words).toContain(
-      "Pay that never reaches a bank, and pay the ledger has not looked for, cannot be projected as arriving;",
+      "Pay that never reaches an account the ledger reads, and pay the ledger has not looked for, cannot be " +
+        "projected as arriving;",
     );
     expect(text({ ...straddle, pastGraceOccurrenceCount: 0 }).words).toContain(
       "Pay not banked yet, and pay the ledger has not looked for, cannot be projected as arriving;",
@@ -159,10 +162,10 @@ describe("UnbankedIncomeNote — 'not in EOM cash' only of the paydays no row EO
     frontier: { kind: "day" as const, through: "2026-10-26" },
     unattached: ROWS,
   };
+  // ⛔ the rows' days short, whatever the note's day format (review of 92de2b12, LOW)
   const PAY_MATCHED =
-    "Pay matched to the cent by rows of $1,141.92 on Thu, Oct 1, 2026, Thu, Oct 8, 2026, and Thu, Oct 22, 2026 that " +
-    "are not attached to it cannot be projected as arriving; the month strip below counts it, because that line is " +
-    "the schedule.";
+    "Pay matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 22 that are not attached to it cannot be " +
+    "projected as arriving; the month strip below counts it, because that line is the schedule.";
 
   // ⛔ …and "not counted above" — the forecast's lines — never read of the EOM cash that holds them
   test("rows EOM cash holds for every payday: not counted above, though EOM cash holds those rows", () => {

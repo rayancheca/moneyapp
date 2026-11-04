@@ -249,7 +249,7 @@ describe("⚖️ decision 75 — a payroll returned the same day banked nothing"
   test("Earned vs banked counts nothing for it: banked two weeks, and the silence runs from Sep 10", () => {
     const line = payLine();
     expect([line.paydays, line.impliedCents, line.bankedCents, line.gapCents]).toEqual([3, WEEK * 3, WEEK * 2, WEEK]);
-    expect(line.gapLabel).toBe("never reached a bank");
+    expect(line.gapLabel).toBe("never reached an account the ledger reads");
     expect([line.lastBankedOn, line.silentPeriods, line.checkedSilentPeriods]).toEqual(["2026-09-10", 1, 1]);
   });
 

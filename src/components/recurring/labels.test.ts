@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { DAYS_TO_POST_NOT_OVER, NO_STATEMENT_YET } from "@/lib/arrears-reading";
 import { RECURRING_JARGON } from "@/lib/jargon";
 import { projectedEvidence, seriesEvidenceTone, seriesPostingWords, type SeriesEvidence } from "@/lib/series-evidence";
-import { ACCOUNT_NOT_READ, notLookedForDeposits } from "@/lib/unbanked-income";
+import { ACCOUNT_NOT_READ, ACCOUNT_READ, notLookedForDeposits } from "@/lib/unbanked-income";
 import type { ForecastComponent } from "@/services/forecast";
 import type { SeriesOccurrence, SeriesStaleness } from "@/services/recurring";
 import {
@@ -60,11 +60,11 @@ describe("unsettledReasonWord", () => {
   /*
    * 🔴 His June–August cash weeks read "not yet known (not banked yet)" on the calendar, beside the dashboard's
    * "$11,117.00 of it never reached a bank" for the same paydays (reading the app, 2026-10-14; his ledger copy
-   * 2026-10-21): checked through their days to land, no deposit can still answer them. The dashboard's words
-   * (`unbankedSplit`).
+   * 2026-10-21): checked through their days to land, no deposit can still answer them. The dashboard's "never"
+   * (`unbankedSplit`), said of the accounts the ledger reads since 2026-10-30 (the test below).
    */
-  test("a payday checked through its days to land never reached a bank — the dashboard's words", () => {
-    expect(unsettledReasonWord("never_banked")).toBe("never reached a bank");
+  test("a payday checked through its days to land never reached an account the ledger reads", () => {
+    expect(unsettledReasonWord("never_banked")).toBe("never reached an account the ledger reads");
   });
 
   /*
@@ -126,6 +126,33 @@ describe("unsettledReasonWord", () => {
   });
 
   /*
+   * ⛔ …and the mark the payroll clause explains says "reached" of the accounts the ledger reads (`ACCOUNT_READ`), as
+   * /spending's note for a stale schedule does beside the same "paid into". 🔴 Review of 0d200735 (LOW): "Not yet known
+   * — never reached a bank" sat under a definition offering pay "paid into an account the ledger does not read" — on
+   * his ledger copy 2026-10-30, eleven of them: his cash weeks Jun 11 – Aug 20.
+   */
+  test("…the accounts the ledger reads, as the legend's 'paid into' scopes them", () => {
+    expect(unsettledReasonWord("never_banked")).toBe(`never reached ${ACCOUNT_READ}`);
+    expect(RECURRING_JARGON.notYetKnown).toContain(`it may have been paid into ${ACCOUNT_NOT_READ}`);
+  });
+
+  /*
+   * ⛔ …and true of a mark whose row IS attached — to his pay, and filed as no income (`notFiledAsIncome`). 🔴 Review of
+   * 92de2b12 (LOW): the legend opened "Nothing attached to it has turned up" and closed "the app counts nothing it has
+   * not been told is this one" over "…a row of $1,141.92 on Oct 1 that is attached to it but not filed as income".
+   */
+  test("the legend's 'Not yet known' is true of a row attached to his pay and filed as no income", () => {
+    const row = { id: "r", postedOn: "2026-10-01", amountCents: 114_192, notFiledAsIncome: true };
+    expect(unsettledWords({ unsettledReason: "matched_unattached", unattached: { date: "2026-10-01", row } })).toBe(
+      "matched to the cent by a row of $1,141.92 on Oct 1 that is attached to it but not filed as income",
+    );
+    const tip = RECURRING_JARGON.notYetKnown;
+    expect(tip.startsWith("Nothing attached to it")).toBe(false);
+    expect(tip).toContain("for pay, attached to it but not filed as income");
+    expect(tip).toContain("no pay that is not filed as income");
+  });
+
+  /*
    * ⛔ A mark the one rule matched names its row by day and amount, in every surface's words (`lib/unattached-match`):
    * the cell's aria-label and the Day Sheet both print it. 🔴 Review of de31d22 (HIGH): the calendar said "never reached
    * a bank" beside the forecast card naming the same rows.
@@ -135,7 +162,9 @@ describe("unsettledReasonWord", () => {
     expect(unsettledWords({ unsettledReason: "matched_unattached", unattached: { date: "2026-10-08", row } })).toBe(
       "matched to the cent by a row of $50.00 on Oct 10 that is not attached to it",
     );
-    expect(unsettledWords({ unsettledReason: "never_banked", unattached: null })).toBe("never reached a bank");
+    expect(unsettledWords({ unsettledReason: "never_banked", unattached: null })).toBe(
+      "never reached an account the ledger reads",
+    );
   });
 });
 

@@ -200,18 +200,20 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
 
   test("the dashboard's income card: the gap's unread part", () => {
     const pay = incomeCard(bundle.db, TODAY)!.pay[0]!;
+    // ⛔ "a payday" of Jul 3 alone (2026-10-30)
     expect(pay.gapLabel).toBe(
-      "$8,829.57 of it never reached a bank; the other $2,943.19 is for paydays after Jun 30, the last day every " +
-        "account that pay lands in has been checked through — so the ledger has not looked for it.",
+      "$8,829.57 of it never reached an account the ledger reads; the other $2,943.19 is for a payday after Jun 30, " +
+        "the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
     );
     // …and the verdict under it names Jul 3 the same way. 🔴 It read "4 paydays have passed since May 8 with no
     // deposit. 3 of them fall on days the records already cover, through Jun 30 — so the pay did not reach a bank."
-    // — Jul 3 never named, and "with no deposit" of a day nobody had read (review of 0c9bc8d)
+    // — Jul 3 never named, and "with no deposit" of a day nobody had read (review of 0c9bc8d). ⛔ Its checked paydays
+    // in the forecast's words, the tile's (2026-10-30)
     expect(pay.verdict).toBe(
-      "4 paydays have passed since the last deposit on May 8. 3 of them fall on days the records already cover, " +
-        "through Jun 30 — so the pay did not reach a bank; the other one falls after Jun 30, the last day every " +
-        "account that pay lands in has been checked through — so the ledger has not looked for its deposit. Whether " +
-        "it was earned is a different question, and this card cannot answer it.",
+      "4 paydays have passed since the last deposit on May 8. 3 of them fall on days already checked — so the pay " +
+        "did not reach an account the ledger reads; the other one falls after Jun 30, the last day every account " +
+        "that pay lands in has been checked through — so the ledger has not looked for its deposit. Whether it was " +
+        "earned is a different question, and this card cannot answer it.",
     );
   });
 
@@ -227,7 +229,7 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
     );
     expect(note("2026-01-01", "2026-12-31")).toContain(
       "Paycheck implies $41,204.66 of earnings over Jan 2 – Jul 3, 2026 and only $29,431.90 reached an account " +
-        "the ledger reads through Tue, Jun 30, 2026; the other payday falls after that, the last day every account " +
+        "the ledger reads, through Tue, Jun 30, 2026; the other payday falls after that, the last day every account " +
         "that pay lands in has been checked through.",
     );
   });
