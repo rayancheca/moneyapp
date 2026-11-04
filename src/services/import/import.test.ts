@@ -1763,6 +1763,32 @@ describe("an import links what it brought in to the series that already carry it
       .run();
     expect(named()).toEqual([]);
   });
+
+  /*
+   * A re-read retires the read before it with its rows (superseded), each still filed `confirmed_series` and
+   * linked, and /imports lists a retired read too (STATUS_META "Superseded": 176 on his ledger copy, 2026-10-30) —
+   * so only the read-back's `active` guard keeps one filing from being named under both reads.
+   * 🔴 Review of 30f412ab (2026-10-30): no test held that guard; with it deleted, every test passed.
+   */
+  test("…and a re-read names it under the read in place only, never under the read it retired", async () => {
+    const { rent } = await rentHeLinkedInJune();
+    await importStatementFiles(bundle.db, [load("chase", JULY_CHECKING)]);
+    const retired = rowOn("2026-07-01", "ACH PYMT WESTVIEW");
+
+    await withBumpedParserVersion("chase-deposit-csv", () =>
+      importStatementFiles(bundle.db, [load("chase", JULY_CHECKING)]),
+    );
+
+    const july = rowOn("2026-07-01", "ACH PYMT WESTVIEW");
+    // the retired read's row is still filed and linked as the import left it: its status alone sets it apart
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, retired.id)).get()).toMatchObject({
+      status: "superseded",
+      categorizationSource: "confirmed_series",
+      recurringSeriesId: rent,
+    });
+    const named = [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)]);
+    expect(named).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+  });
 });
 
 /**

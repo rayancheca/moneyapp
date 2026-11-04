@@ -352,6 +352,7 @@ export function importFilingsByRead(db: AppDatabase): Map<string, ImportFiling[]
     .innerJoin(recurringSeries, eq(recurringSeries.id, transactions.recurringSeriesId))
     .where(
       and(
+        // a re-read supersedes the retired read's rows, still filed and linked — the read in place names them
         eq(transactions.status, "active"),
         eq(transactions.categorizationSource, "confirmed_series"),
         isNotNull(transactions.importFileId),
