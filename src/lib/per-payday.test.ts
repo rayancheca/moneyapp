@@ -281,6 +281,118 @@ describe("paydayReadings — two deposits on one day are read as the day", () =>
   });
 });
 
+/*
+ * ⚖️ THE WEEK BESIDE AN EXTRA DEPOSIT — default built, not asked (2026-11-04): a day whose money paid ONE payday its
+ * rate, every cent of it from a deposit that is that rate to the cent, is the week paid and an extra deposit beside
+ * it — never one payday paid more. 🔴 Read as the day, his Oct 15 (the week's $1,141.92 and an off-cycle $200.00) was
+ * one payday at $1,341.92, and Worth a look read "It America LLC (weekly pay) rose by $200.00 between its usual amount
+ * and Oct 15." (his ledger copy, 2026-11-04).
+ */
+describe("paydayReadings — the week's own deposit beside an extra one the same day", () => {
+  /** Oct 15 as settlement spent it: the day's $1,341.92 paid Oct 15 its $1,141.92, and $200.00 went nowhere */
+  const OCT_15 = [{ paydayOn: "2026-10-15", depositOn: "2026-10-15", cents: WEEK }];
+
+  test("the week is its payday's pay, the amount it is; the extra paid no payday — held to none, no sample", () => {
+    const readings = paydayReadings(
+      [
+        { id: "extra", postedOn: "2026-10-15", amountCents: 20_000 },
+        { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+      ],
+      OCT_15,
+      HIS,
+    );
+    expect(readings.get("week")).toEqual(reads(true, WEEK, false, 1));
+    expect(readings.get("extra")).toEqual(reads(false, null, true, 1));
+    expect(comparableCents(WEEK, readings.get("week"))).toBe(WEEK);
+    expect(spreadSampleCents(20_000, readings.get("extra"))).toBeNull();
+  });
+
+  // ⛔ the same row on every surface: the calendar, the series page and the posted average each store them their way
+  test("two weeks to the cent on a day that paid one payday: one is the week, the same one whichever is first", () => {
+    const rows = [
+      { id: "a", postedOn: "2026-10-15", amountCents: WEEK },
+      { id: "b", postedOn: "2026-10-15", amountCents: WEEK },
+    ];
+    for (const order of [rows, [...rows].reverse()]) {
+      const readings = paydayReadings(order, OCT_15, FLAT);
+      expect(readings.get("a")).toEqual(reads(true, WEEK, false, 0));
+      expect(readings.get("b")).toEqual(reads(false, null, true, 0));
+    }
+  });
+
+  /* ⛔ Only a day whose money STOPPED at its week: the extra here finished Oct 8 too, so it paid a payday — part of one
+     another deposit paid — and the day is read as the day, its change counted against it as a lump's is. */
+  test("a day whose other money also went into another payday is still read as the day", () => {
+    const readings = paydayReadings(
+      [
+        { id: "extra", postedOn: "2026-10-15", amountCents: 20_000 },
+        { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+      ],
+      [
+        ...OCT_15,
+        { paydayOn: "2026-10-08", depositOn: "2026-10-15", cents: 4_192 },
+        { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: WEEK - 4_192 },
+      ],
+      FLAT,
+    );
+    expect(readings.get("week")?.perPayday).toEqual({ paydays: 1, cents: WEEK + 20_000, deposits: 2 });
+    expect(readings.get("extra")?.towardNoPayday).toBe(false);
+  });
+
+  /* ⛔ …and paid it the WEEK. Settlement pays a payday from the day's own money first, so a day holding the week to
+     the cent pays its one payday the week — pinned here as the reading's own contract, not left to the walk's. */
+  test("a day that paid its one payday less than the week is read as the day", () => {
+    const readings = paydayReadings(
+      [
+        { id: "extra", postedOn: "2026-10-15", amountCents: 20_000 },
+        { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+      ],
+      [{ paydayOn: "2026-10-15", depositOn: "2026-10-15", cents: 100_000 }],
+      FLAT,
+    );
+    expect(readings.get("week")?.perPayday).toEqual({ paydays: 1, cents: WEEK + 20_000, deposits: 2 });
+  });
+
+  // ⚖️ decision 75: a day with money back the same day is read at its net, whatever its deposits are
+  test("a day with money out the same day is read at its net, as decision 75 reads it", () => {
+    const readings = paydayReadings(
+      [
+        { id: "extra", postedOn: "2026-10-15", amountCents: 20_000 },
+        { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+        { id: "back", postedOn: "2026-10-15", amountCents: -20_000 },
+      ],
+      OCT_15,
+      FLAT,
+    );
+    expect(readings.get("week")?.perPayday).toEqual({ paydays: 1, cents: WEEK, deposits: 2, returns: 1 });
+    expect(readings.get("extra")?.towardNoPayday).toBe(false);
+  });
+
+  test("a day that paid its payday short, or two paydays, is read as the day", () => {
+    const short = paydayReadings(
+      [
+        { id: "a", postedOn: "2026-10-15", amountCents: 60_000 },
+        { id: "b", postedOn: "2026-10-15", amountCents: 50_000 },
+      ],
+      [{ paydayOn: "2026-10-15", depositOn: "2026-10-15", cents: 110_000 }],
+      FLAT,
+    );
+    expect(short.get("a")?.perPayday).toEqual({ paydays: 1, cents: 110_000, deposits: 2 });
+    const two = paydayReadings(
+      [
+        { id: "a", postedOn: "2026-10-15", amountCents: WEEK },
+        { id: "b", postedOn: "2026-10-15", amountCents: WEEK + 20_000 },
+      ],
+      [
+        { paydayOn: "2026-10-15", depositOn: "2026-10-15", cents: WEEK },
+        { paydayOn: "2026-10-08", depositOn: "2026-10-15", cents: WEEK },
+      ],
+      FLAT,
+    );
+    expect(two.get("a")?.perPayday).toEqual({ paydays: 2, cents: WEEK + 10_000, deposits: 2 });
+  });
+});
+
 describe("paydayReadings — what is read as the one amount it is", () => {
   /* ⚖️ §6A 55: money that paid no payday is no sample of what a payday pays — each deposit is still the amount it is,
      and reads toward no payday. 🔴 It was a sample: before the reach bound June's $400.00 was a part of Aug 27's pay,

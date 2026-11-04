@@ -379,6 +379,18 @@ describe("a recurring bill that posted at a different amount", () => {
     expect(drift?.claimId).toBe("rose_between");
     expect(drift?.text).toContain("rose by $20.00");
   });
+
+  /*
+   * ⛔ A CHANGE BETWEEN TWO AMOUNTS — its usual one and the one that posted. 🔴 The frame read "rose by $200.00 between
+   * its usual amount and Oct 15": an amount set against a day (review of batch 8, his ledger copy 2026-10-30).
+   */
+  test("the change is between its usual amount and its amount on the day — never an amount and a day", () => {
+    const seriesId = addSeries("Zzz Internet", -5_000);
+    linkToSeries(addTxn("2026-08-16", -7_000, "Utilities", null), seriesId);
+
+    const drift = noticesCard(bundle.db, TODAY)?.notices.find((n) => n.text.includes("Zzz Internet"));
+    expect(drift?.text).toBe("Zzz Internet rose by $20.00 between its usual amount and its amount on Aug 16.");
+  });
 });
 
 describe("the card as a whole", () => {
@@ -412,6 +424,17 @@ describe("the card as a whole", () => {
     const out = noticesCard(bundle.db, TODAY)!;
     expect(out.summary).toContain("a first sighting at a merchant");
     expect(out.summary).toContain("not a verdict");
+  });
+
+  /* ⛔ …and it looked at every recurring series, his pay among them — a deposit is no charge, nor a bill. 🔴 It read
+     "Charges since Aug 1 … or a recurring bill that posted at a different amount" over a notice about his pay (review
+     of batch 8, his ledger copy 2026-10-30). */
+  test("the summary names the deposits it reads beside the charges", () => {
+    addMerchant("m-1", "Zzz Insurance");
+    addTxn("2026-08-12", -35_758, "Transport", "m-1");
+    const out = noticesCard(bundle.db, TODAY)!;
+    expect(out.summary).toMatch(/^Charges and deposits since /);
+    expect(out.summary).toContain("or a recurring bill or deposit that posted at a different amount.");
   });
 });
 

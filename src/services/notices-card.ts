@@ -236,8 +236,14 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
      * it can say nothing about whether the fact matches the world.
      */
     const drift = Math.abs(entry.amountCents) - Math.abs(entry.expectedCents);
+    /*
+     * ⛔ …AND BETWEEN TWO AMOUNTS: its usual one and its own on the day. 🔴 The frame read "It America LLC (weekly
+     * pay) rose by $200.00 between its usual amount and Oct 15." — an amount set against a day (review of batch 8,
+     * his ledger copy 2026-10-30).
+     */
+    const onTheDay = `its amount on ${formatDayShort(entry.day)}`;
     candidates.push({
-      facts: [deltaFact("f1", entry.name, drift, "money", "its usual amount", formatDayShort(entry.day))],
+      facts: [deltaFact("f1", entry.name, drift, "money", "its usual amount", onTheDay)],
       candidate: { claimId: drift > 0 ? "rose_between" : "fell_between", a: "f1" },
       day: entry.day,
       // a series has no merchant id here; the DAY is what narrows it, and the
@@ -277,10 +283,15 @@ export function noticesCard(db: AppDatabase, today: string = todayIso()): Notice
   return {
     fromLabel: formatDayShort(from),
     notices,
+    /*
+     * ⛔ Every recurring series is read above, his pay among them — and a deposit is no charge, nor a bill. 🔴 It read
+     * "Charges since Aug 1 … or a recurring bill that posted at a different amount" over a notice about his weekly pay
+     * (review of batch 8, his ledger copy 2026-10-30).
+     */
     summary:
-      `Charges since ${formatDayShort(from)} that stand out from the rest of your own history — a first ` +
-      `sighting at a merchant, a charge well above what you usually pay there, or a recurring bill that ` +
-      `posted at a different amount. Each is a description, not a verdict.`,
+      `Charges and deposits since ${formatDayShort(from)} that stand out from the rest of your own history — a ` +
+      `first sighting at a merchant, a charge well above what you usually pay there, or a recurring bill or ` +
+      `deposit that posted at a different amount. Each is a description, not a verdict.`,
   };
 }
 

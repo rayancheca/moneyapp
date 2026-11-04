@@ -183,7 +183,9 @@ function readingOfDay(day: string, today: string) {
   const month = day.slice(0, 7);
   const s = paydaySettlement(bundle.db, PAY, today);
   const entries = entriesOn(day, today, month);
-  const deposit = entries.find((e) => e.transactionId !== null && e.amountCents > 0) ?? null;
+  // the day's largest deposit — the week, beside an extra one (`lib/per-payday`), whichever was stored first
+  const deposits = entries.filter((e) => e.transactionId !== null && e.amountCents > 0);
+  const deposit = deposits.sort((a, b) => b.amountCents - a.amountCents)[0] ?? null;
   const line = payLine(today);
   return {
     portions: s.portions,
@@ -525,7 +527,9 @@ describe("money out linked to his pay is held to no week", () => {
     expect(heldTo("2026-09-17", -50_000)).toBeNull();
     // the deposit is held to the week at the day's net, as it was
     expect(graded("2026-09-17", WEEK)).toEqual(["paid_different", WEEK]);
-    expect(payNotices()).toEqual(["It America LLC (weekly pay) fell by $500.00 between its usual amount and Sep 17."]);
+    expect(payNotices()).toEqual([
+      "It America LLC (weekly pay) fell by $500.00 between its usual amount and its amount on Sep 17.",
+    ]);
   });
 
   test("a payroll returned whole the same day: the return is ungraded, under a cached spread too", () => {
@@ -709,5 +713,51 @@ describe("two deposits on one day are one deposit", () => {
     ]);
     const unbanked = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-09-01", TODAY);
     expect(unbanked.series[0]?.occurrenceDates).toEqual(["2026-09-10"]);
+  });
+});
+
+/*
+ * ⚖️ THE WEEK BESIDE AN EXTRA DEPOSIT — default built, not asked (2026-11-04; `lib/per-payday`): a day whose money paid
+ * its one payday the week, every cent of it from a deposit that is the week to the cent, is the week paid and an extra
+ * deposit beside it on every surface that grades a row — settlement is untouched. 🔴 Read as the day, his Oct 15 (the
+ * week's $1,141.92 and an off-cycle $200.00) was one payday at $1,341.92: Worth a look read "It America LLC (weekly
+ * pay) rose by $200.00 between its usual amount and Oct 15.", the calendar drew both rows amber, and his popover warned
+ * "The ledger's own average of what actually posted is $1,175.25, which is not what you set." (his ledger copy,
+ * 2026-11-04).
+ */
+describe("the week's own deposit beside an extra one the same day", () => {
+  beforeEach(() => {
+    // a spread of $5.00 — a day held to the week as $1,341.92 reads changed whatever the measured spread says
+    bundle.db.update(recurringSeries).set({ amountCentsStddev: 500 }).where(eq(recurringSeries.id, PAY)).run();
+    rePost("2026-09-17", [20_000, WEEK]);
+  });
+
+  test("settlement is untouched: the day pays Sep 17 its week, and the $200.00 is left over", () => {
+    const s = paydaySettlement(bundle.db, PAY, TODAY);
+    expect(s.portions.filter((p) => p.depositOn === "2026-09-17")).toEqual([
+      { paydayOn: "2026-09-17", depositOn: "2026-09-17", cents: WEEK },
+    ]);
+    expect(s.unallocatedCents).toBe(20_000);
+  });
+
+  test("the calendar draws the week paid and the extra toward no payday — and nothing says his pay rose", () => {
+    expect(graded("2026-09-17", WEEK)).toEqual(["paid", WEEK]);
+    expect(graded("2026-09-17", 20_000)).toEqual(["paid", null]);
+    expect(entriesOn("2026-09-17").find((e) => e.amountCents === 20_000)?.towardNoPayday).toBe(true);
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("the series page holds the week to the week, and the extra to nothing", () => {
+    expect(heldTo("2026-09-17", WEEK)).toBe(WEEK);
+    expect(heldTo("2026-09-17", 20_000)).toBeNull();
+  });
+
+  test("the posted average is the week's, and the extra is the one deposit that paid no payday", () => {
+    expect(samplesOf(TODAY)).toEqual({
+      avg: WEEK,
+      samples: ["2026-09-03", "2026-09-10", "2026-09-17"].map((day) => [day, WEEK, 1, WEEK]),
+    });
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    expect(postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!.noPaydayOfTheirOwn).toBe(1);
   });
 });
