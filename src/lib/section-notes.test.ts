@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { TAXONOMY } from "@/db/seed";
 import { FORBIDDEN_NAME_CHARS } from "@/services/category-edit";
 import {
+  budgetNoteRow,
   budgetSectionNotes,
   cashEarningsSectionNotes,
   categoryCountLabel,
@@ -342,25 +343,27 @@ describe("budgetSectionNotes", () => {
 
     test("every one of them: no spend is called a lower bound", () => {
       expect(coverage([row({ ...UNREAD, categoryPath: "Car" }), row({ ...UNREAD, categoryPath: "Food" })])).toBe(
-        "2 of 2 budgets are grading days the ledger has not reached — 12 days each. Not one elapsed day of their " +
-          "periods has been imported, so neither their spend nor a verdict is shown.",
+        "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 12 days each. " +
+          "Not one elapsed day of their periods has been imported, so no spend is shown for them either.",
       );
     });
 
     test("some of them: each kind is said of the rows it is true of", () => {
       expect(coverage([row({ ...UNREAD, categoryPath: "Car" }), row({ categoryPath: "Food", uncoveredDays: 4 })])).toBe(
-        "2 of 2 budgets are grading days the ledger has not reached — up to 12 days on Car. No verdict is shown for " +
-          "any of them: 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
+        "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — up to 12 days on " +
+          "Car. Of them, 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
           "spend and percentages are lower bounds, not measurements.",
       );
       const twoUnread = [row({ ...UNREAD, categoryPath: "Car" }), row({ ...UNREAD, categoryPath: "Fees" })];
-      expect(coverage([...twoUnread, row({ uncoveredDays: 4 })])).toMatch(/: 2 have not had one elapsed day imported/);
+      expect(coverage([...twoUnread, row({ uncoveredDays: 4 })])).toMatch(
+        /\. Of them, 2 have not had one elapsed day imported/,
+      );
     });
 
     test("a row found in it, or one spent only from cash, keeps its figures and the lower-bound words", () => {
       for (const kept of [{ txnCount: 1 }, { spentFromAccounts: 0, spentFromWallets: 1 }]) {
         const body = coverage([row({ ...UNREAD, ...kept }), row({ uncoveredDays: 4 })]);
-        expect(body).toMatch(/Their spend and percentages are lower bounds, not measurements, so no verdict is shown/);
+        expect(body).toMatch(/\. Their spend and percentages are lower bounds, not measurements\.$/);
       }
     });
   });
@@ -395,13 +398,27 @@ describe("budgetSectionNotes", () => {
       row({ ...FLOOR, categoryPath: "Utilities" }),
     ];
 
-    test("his twelve: the seven withheld counted and tied as before, and the five over said to be floors", () => {
+    /*
+     * ⚖️ default built, not asked (2026-10-30): the count is of the rows that show NO VERDICT, said by what they lack.
+     * 🔴 It counted them by "grading days the ledger has not reached", which every over row read in part shares, so
+     * the clause after it corrected it: "7 of 12 budgets are grading days the ledger has not reached …" then "The 5
+     * over their plans are grading such days too" — 12 of 12 (review of ca938320, L19). Measured on his ledger copy
+     * 2026-10-30: "6 of 12 … The 6 over their plans are grading such days too", all twelve October read in part.
+     *
+     * ❓ PINNED, NOT DECIDED (2026-10-30): "3 have not had one elapsed day imported" counts the dashes (`spendUnread`:
+     * no day read AND nothing found), and every one of the seven has no elapsed day read — Food, Housing, Transport
+     * and Utilities each print "spending imported through Aug 12 · 29 days of this period unaccounted" (review of
+     * ca938320, L20; 6 of 6 on his ledger copy 2026-10-30, 2 of them dashes). His call; changing it flips this test.
+     */
+    test("his twelve: the seven withheld counted by what they lack, and the five over said to be floors", () => {
       expect(coverage(HIS)).toBe(
-        "7 of 12 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any of " +
-          "them: 3 have not had one elapsed day imported, so no spend is shown there either, and the others' spend " +
-          "and percentages are lower bounds, not measurements. The 5 over their plans are grading such days too, so " +
-          "each is over by at least what it shows.",
+        "7 of 12 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
+          "Of them, 3 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
+          "spend and percentages are lower bounds, not measurements. The 5 over their plans are grading such days " +
+          "too, so each is over by at least what it shows.",
       );
+      // ⛔ never the shared predicate as the count: the over rows grade such days too, and the note says so after it
+      expect(coverage(HIS)).not.toMatch(/budgets are grading days/);
     });
 
     test("one over row is said in the singular — the e2e fixture's Housing", () => {
@@ -413,9 +430,9 @@ describe("budgetSectionNotes", () => {
           row({ categoryPath: "Utilities", uncoveredDays: 3, txnCount: 0 }),
         ]),
       ).toBe(
-        "3 of 4 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
-          "percentages are lower bounds, not measurements, so no verdict is shown for them. The one over its plan is " +
-          "grading such days too, so it is over by at least what it shows.",
+        "3 of 4 budgets show no verdict because they are grading days the ledger has not reached — up to 4 days on " +
+          "Food. Their spend and percentages are lower bounds, not measurements. The one over its plan is grading " +
+          "such days too, so it is over by at least what it shows.",
       );
     });
 
@@ -423,8 +440,8 @@ describe("budgetSectionNotes", () => {
       for (const measured of [{ uncoveredDays: 0 }, { spentFromAccounts: 0, spentFromWallets: 1 }]) {
         const body = coverage([row({ uncoveredDays: 4 }), row({ ...OVER, ...measured })]);
         expect(body).toBe(
-          "1 of 2 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
-            "percentages are lower bounds, not measurements, so no verdict is shown for them.",
+          "1 of 2 budgets show no verdict because they are grading days the ledger has not reached — up to 4 days " +
+            "on Food. Their spend and percentages are lower bounds, not measurements.",
         );
       }
     });
@@ -450,22 +467,28 @@ describe("budgetSectionNotes", () => {
       const FEES = row({ ...OVER, categoryPath: "Fees", ...RISES });
       const FOOD = row({ categoryPath: "Food", uncoveredDays: 4 });
 
-      test("his twelve with Fees over: each has spent at least what it shows, one can have more roll over", () => {
+      /*
+       * ⚖️ default built, not asked (2026-10-30): one row whose line can still rise takes "over by at least" from that
+       * row alone. 🔴 It took it from all of them — "The 6 over their plans are grading such days too, so each has
+       * spent at least what it shows, though more can still roll over into 1 of them." — while the 5 others, their
+       * lines standing still, are over by at least what they show (review of ca938320, L24).
+       */
+      test("his twelve with Fees over: five over by at least what they show, Fees with more to roll over", () => {
         const withFees = HIS.map((r) => (r.categoryPath === "Fees" ? FEES : r));
         expect(coverage(withFees)).toBe(
-          "6 of 12 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any " +
-            "of them: 2 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
+          "6 of 12 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
+            "Of them, 2 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
             "spend and percentages are lower bounds, not measurements. The 6 over their plans are grading such days " +
-            "too, so each has spent at least what it shows, though more can still roll over into 1 of them.",
+            "too, so 5 are over by at least what they show, and the other has spent at least what it shows, though " +
+            "more can still roll over into it.",
         );
       });
 
       test("one over row whose line can still rise, and every one of several", () => {
         expect(coverage([FOOD, FEES])).toBe(
-          "1 of 2 budgets are grading days the ledger has not reached — up to 4 days on Food. Their spend and " +
-            "percentages are lower bounds, not measurements, so no verdict is shown for them. The one over its " +
-            "plan is grading such days too, so it has spent at least what it shows, though more can still roll " +
-            "over into it.",
+          "1 of 2 budgets show no verdict because they are grading days the ledger has not reached — up to 4 days on " +
+            "Food. Their spend and percentages are lower bounds, not measurements. The one over its plan is grading " +
+            "such days too, so it has spent at least what it shows, though more can still roll over into it.",
         );
         expect(coverage([FOOD, FEES, { ...FEES, categoryPath: "Cash" }])).toContain(
           ". The 2 over their plans are grading such days too, so each has spent at least what it shows, though " +
@@ -473,15 +496,28 @@ describe("budgetSectionNotes", () => {
         );
       });
 
+      test("some of several: each half is said of the rows it is true of, in the singular and the plural", () => {
+        const steady = row({ ...OVER, categoryPath: "Shopping" });
+        expect(coverage([FOOD, steady, FEES])).toContain(
+          ". The 2 over their plans are grading such days too, so one is over by at least what it shows, and the " +
+            "other has spent at least what it shows, though more can still roll over into it.",
+        );
+        const two = (r: ReturnType<typeof row>) => [r, { ...r, categoryPath: `${r.categoryPath} 2` }];
+        expect(coverage([FOOD, ...two(steady), ...two(FEES)])).toContain(
+          ". The 4 over their plans are grading such days too, so 2 are over by at least what they show, and the " +
+            "other 2 have spent at least what they show, though more can still roll over into them.",
+        );
+      });
+
       test("a withheld row whose line can still rise: its spend is a lower bound, no percentage called one", () => {
         expect(coverage([{ ...FOOD, ...RISES }, row({ categoryPath: "Fees", uncoveredDays: 4 })])).toBe(
-          "2 of 2 budgets are grading days the ledger has not reached — 4 days each. Their spend is a lower bound, " +
-            "not a measurement, so no verdict is shown for them.",
+          "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 4 days each. " +
+            "Their spend is a lower bound, not a measurement.",
         );
         const car = row({ ...DASH, categoryPath: "Car" });
         expect(coverage([car, row({ ...FLOOR, categoryPath: "Food", ...RISES })])).toBe(
-          "2 of 2 budgets are grading days the ledger has not reached — 29 days each. No verdict is shown for any " +
-            "of them: 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
+          "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
+            "Of them, 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
             "spend is a lower bound, not a measurement.",
         );
       });
@@ -492,6 +528,59 @@ describe("budgetSectionNotes", () => {
         expect(coverage(withDashes)).toBe(coverage(HIS));
       });
     });
+  });
+});
+
+/*
+ * 🔴 The page built each row of its note inline, field by field, and no test read that build: `rolloverMayAddCents`
+ * set to 0 there left every unit and e2e test green — and the note's "though more can still roll over" reads it
+ * (review of ca938320, L25). ⛔ One build, from the row's own status (`budgetNoteRow`); the page's source gate and a
+ * note from real statuses are in `app/budgets/page.test.ts`.
+ */
+describe("budgetNoteRow — what the page hands the note, from the row's own status", () => {
+  const UNATTACHED: UnattachedMatch[] = [];
+  const status = {
+    categoryPath: "Fees",
+    overdueCents: 2_500,
+    // a quarterly bill twice due, and a monthly one: three bills, two series
+    overdue: [{ occurrenceCount: 2 }, { occurrenceCount: 1 }],
+    overdueUnreadCents: 1_500,
+    overdueInGraceCents: 500,
+    overdueUnattached: UNATTACHED,
+    uncoveredDays: 29,
+    pace: "over" as const,
+    spentFromAccounts: 2,
+    spentFromWallets: 1,
+    noDayRead: true,
+    txnCount: 3,
+    rolloverMayAddCents: 1_500,
+    // a status carries more than the note reads
+    spentCents: 2_000,
+  };
+
+  test("every field the note reads, and the bills counted by their occurrences", () => {
+    expect(budgetNoteRow(status)).toEqual({
+      categoryPath: "Fees",
+      overdueCents: 2_500,
+      overdueBills: 3,
+      overdueUnreadCents: 1_500,
+      overdueInGraceCents: 500,
+      overdueUnattached: UNATTACHED,
+      uncoveredDays: 29,
+      pace: "over",
+      spentFromAccounts: 2,
+      spentFromWallets: 1,
+      noDayRead: true,
+      txnCount: 3,
+      rolloverMayAddCents: 1_500,
+    });
+  });
+
+  test("a row whose line can still rise says so in the note it is handed to", () => {
+    const rows = [row({ categoryPath: "Food", uncoveredDays: 4 }), budgetNoteRow(status)];
+    expect(budgetSectionNotes({ rows }).find((n) => n.id === "budgets-coverage")!.body).toMatch(
+      /, though more can still roll over into it\.$/,
+    );
   });
 });
 

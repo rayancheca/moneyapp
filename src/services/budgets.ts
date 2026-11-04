@@ -238,6 +238,8 @@ export interface BudgetStatus {
   rolloverCents: number;
   /** ⚖️ decision 67: the closed periods that banked nothing because a day of them is not read yet; empty when off */
   rolloverHeldBack: readonly PeriodBounds[];
+  /** …and of them, those still under their plan on what is found (`RolloverCarry.heldBackUnderPlan`); empty when off */
+  rolloverHeldBackUnderPlan: readonly PeriodBounds[];
   /**
    * The closed periods read whole that subtracted a bill their statements may still let go, where banking it back
    * changes what can still roll over (`RolloverCarry`'s `billMayLapse`), oldest first; empty when off.
@@ -288,11 +290,26 @@ export interface RolloverCarry {
   /** the closed periods that banked nothing because a day of them is not read yet, oldest first */
   heldBack: readonly PeriodBounds[];
   /**
+   * Of `heldBack`, those still under their plan on what is found in them — what more can still roll over FROM, as the
+   * row's line names it (`lib/rollover-held-back::rolloverMayRiseClause`) — oldest first. One already past its plan
+   * adds nothing whatever its statements show: a statement still to come can only add to what it holds. 🔴 Review of
+   * ca938320 (L24): every period held back was named, so on his ledger copy at 2026-11-10, nothing more imported,
+   * Food's and Transport's lines would read "…more can still roll over from September 2026 and October 2026 once they
+   * are fully imported" over Septembers $915.91 and $5.46 past their plans ($1,475.91 of $560.00, $233.41 of $227.95)
+   * — October alone now. ⚠️ Under its plan, one can still add nothing past where the carry stands — at a cap the carry
+   * reaches first, or where an older one past its plan takes back more than it banks and a later one lifts the line
+   * alone — and is named all the same; latent: no budget of his sets a cap, and his rolling budgets carry from Sep 1,
+   * 2026 (his ledger copy 2026-10-30).
+   */
+  heldBackUnderPlan: readonly PeriodBounds[];
+  /**
    * The closed periods READ WHOLE that subtracted a bill their statements may still let go (`OverdueSeries`'s
    * `mayStillLapse`), where banking it back changes what can still roll over (`billsThatCanLift`) in some way the
    * periods held back can be read, oldest first. 🔴 Review of 73d2cbc4: every one that subtracted such a bill was named
    * — an August $100.00 past its plan with its bill gone among them, which can bank nothing back. 🔴 Review of 09e481d7:
-   * asked only of the most the carry can reach, an August whose statement alone lifted the line went unnamed.
+   * asked only of the most the carry can reach, an August whose statement alone lifted the line went unnamed. ⚠️ Each
+   * read on its term or not yet — under a cap that is reached, not at every amount a statement can bring
+   * (`billsThatCanLift`; review of 753bad2d, L65).
    */
   billMayLapse: readonly PeriodBounds[];
   /**
@@ -499,7 +516,9 @@ export function carryInto(
   const mayAddCents = mayStillBank(steps, balance, budget.rolloverCapCents);
   // ⛔ …and of the periods read whole whose bill may still lapse, only those it can lift (review of 73d2cbc4)
   const billMayLapse = billsThatCanLift(steps, balance, budget.rolloverCapCents);
-  return { cents: balance, heldBack, billMayLapse, mayAddCents, readOn };
+  // ⛔ …and of the periods held back, only those still under their plan on what is found (review of ca938320, L24)
+  const heldBackUnderPlan = steps.filter((s) => s.heldIn !== null && s.term > 0).map((s) => s.period);
+  return { cents: balance, heldBack, heldBackUnderPlan, billMayLapse, mayAddCents, readOn };
 }
 
 /** A balance after a period's term: never below zero, never past the cap (`carryInto`'s first rule, and its cap). */
@@ -581,7 +600,9 @@ const WAYS_WALKED = 256;
  * ($30.00 rolled over). In that order only: what an older one past its plan takes back is gone before a newer one can
  * bank. Measured on his ledger copy 2026-10-29, at 2026-12-10 with nothing more imported: Travel — $70.00 banked from
  * September, October held back at $288.80, November at $0.00 — banked each held back on its own, whichever left more,
- * would have put $70.00 still to roll over where none can.
+ * would have put $70.00 still to roll over where none can. ⚠️ "Moves on": as the statements of its accounts land. The
+ * category's first row on an account imported short of it moves it back and holds a period read whole again, which
+ * no way here walks (`lib/rollover-held-back::lineMayRise`'s ⚠️; review of ca938320, L26).
  *
  * ⚠️ Older than those months, a period asks a window of its own, and can be read before the newer ones, after them, or
  * never: it is walked both ways, banked and passed. For the most, the way that leaves more is all that counts — every
@@ -675,7 +696,17 @@ const BILLS_ASKED_EVERY_WAY = 8;
  * one whose bill only makes good what a period held back takes back first is not named for it.
  *
  * Up to `BILLS_ASKED_EVERY_WAY` of them, a period named here has such a way among those `carryWays` walks, and every
- * one that has one is named — exactly, below `WAYS_WALKED` ways.
+ * one that has one there is named, below `WAYS_WALKED` ways. ⚠️ Not every one that can lift it: those ways read a
+ * period held back on its term or not at all, and its statement can bring more spend and bank less. Uncapped that
+ * names none more — a bill's lift only grows with what each period banks — nor where every period held back is in the
+ * window read in order: a bill that lifts the line in any reading of them lifts it before the first is read. Under a
+ * cap that is reached, beside one held back in a window of its own, a bill that lifts the line only where a period
+ * held back banks less than its most goes unnamed until the statements it waits on land, though the line still says
+ * it can rise (`mayStillBank` is exact: each held back leaves the most on its term, or passed). 🔴 Review of 753bad2d
+ * (L65): a $200.00 cap — a month in a window of its own held back with $200.00 left; the next read whole, $0.00 left
+ * owing a $100.00 bill that may lapse; the next $100.00 under; the newest held back $500.00 past — carried $100.00,
+ * $100.00 still to come, the bill's month unnamed; the old month's statement showing $100.00 more spend, the bill's
+ * lapse lifts the line from $100.00 to $200.00. Latent: no budget of his sets a cap (his ledger copy 2026-10-30).
  *
  * ⚠️ Past `BILLS_ASKED_EVERY_WAY` of them, each is asked with every other let go, with every other still owed, and let
  * go one by one, oldest first — those before it let go and those after it owed. With every other let go, that is exact
@@ -716,7 +747,7 @@ function billsThatCanLift(steps: readonly CarryStep[], balance: number, capCents
  * have written into every other's and every later load's (review of 73a743d). Built per budget, and read-only besides.
  */
 function nothingCarried(): RolloverCarry {
-  return { cents: 0, heldBack: [], billMayLapse: [], mayAddCents: 0, readOn: null };
+  return { cents: 0, heldBack: [], heldBackUnderPlan: [], billMayLapse: [], mayAddCents: 0, readOn: null };
 }
 
 /**
@@ -798,6 +829,7 @@ export function budgetStatuses(
         txnCount,
         rolloverCents,
         rolloverHeldBack: carry.heldBack,
+        rolloverHeldBackUnderPlan: carry.heldBackUnderPlan,
         rolloverBillMayLapse: carry.billMayLapse,
         rolloverMayAddCents: carry.mayAddCents,
         rolloverReadOn: carry.readOn,

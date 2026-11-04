@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { budgetCoverageLine, budgetVerdict, type BudgetVerdictInput } from "./budget-verdict";
+import {
+  budgetCoverageLine,
+  budgetVerdict,
+  floorFigure,
+  percentOfBudget,
+  type BudgetVerdictInput,
+} from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
 const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
@@ -12,7 +18,7 @@ const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
     noDayRead: false,
     txnCount: 1,
     rolloverMayAddCents: 0,
-    rolloverHeldBack: [],
+    rolloverHeldBackUnderPlan: [],
     rolloverBillMayLapse: [],
     ...over,
   });
@@ -35,6 +41,30 @@ describe("budgetVerdict", () => {
     // and exactly on the line is still an overshoot of less than one percent,
     // never "by 0%" — `computePace` turns over at spent >= available
     expect(verdict({ pace: "over", pct: 1 }).headline).toBe("Over budget by <1%");
+  });
+
+  /*
+   * 🔴 The headline rounded (pct − 1) × 100 and the bar pct × 100 — two floats, rounded apart: the e2e fixture's
+   * Housing, $2,150.00 of $2,000.00, read "Over budget by 7%" (7.4999…) beside a spoken "(108% of budget)" (review of
+   * ca938320, L23), wherever spent ÷ available lands on a half percent. ⛔ One rounding (`percentOfBudget`).
+   */
+  test("the overshoot is the bar's percentage less the line — one rounding, on every half percent", () => {
+    expect(verdict({ pace: "over", pct: 2_150_00 / 2_000_00 }).headline).toBe("Over budget by 8%");
+    expect(percentOfBudget(2_150_00 / 2_000_00)).toBe(108);
+    // every half percent from the line to three times it, as `budgetStatuses` divides cents by cents
+    for (let halves = 200; halves <= 600; halves++) {
+      const pct = (halves * 1_000) / 2_000_00;
+      const past = percentOfBudget(pct) - 100;
+      const headline = `Over budget by ${past < 1 ? "<1" : past}%`;
+      expect(verdict({ pace: "over", pct }).headline, `${halves / 2}% of the line`).toBe(headline);
+    }
+    // …and a graded headline says the same percentage the bar does
+    expect(verdict({ pct: 1_075 / 2_000 }).headline).toBe(`On track · ${percentOfBudget(1_075 / 2_000)}% used`);
+  });
+
+  test("a figure that is a floor is marked as one, and a measured one is left bare (`floorFigure`)", () => {
+    expect(floorFigure("$343.82", true)).toBe("at least $343.82");
+    expect(floorFigure("$343.82", false)).toBe("$343.82");
   });
 
   test("an over row is exempt from the coverage gate — spent money is a fact", () => {
@@ -395,11 +425,11 @@ describe("budgetVerdict", () => {
       ]);
       expect(withheld.explanation).not.toContain("not fully imported");
       // both at once: each named
-      const BOTH = { ...BILL, rolloverHeldBack: [AUGUST] };
+      const BOTH = { ...BILL, rolloverHeldBackUnderPlan: [AUGUST] };
       expect(verdict({ pace: "over", pct: 1.4, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceOverHeldBackAndBill);
       expect(verdict({ uncoveredDays: 3, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceWithheldHeldBackAndBill);
       // …and a period held back alone keeps the words it had
-      const HELD = { rolloverMayAddCents: 1_500, rolloverHeldBack: [SEPTEMBER] };
+      const HELD = { rolloverMayAddCents: 1_500, rolloverHeldBackUnderPlan: [SEPTEMBER] };
       expect(verdict({ pace: "over", pct: 1.4, ...HELD }).explanation).toBe(BUDGET_JARGON.paceOverLineMayRise);
       expect(verdict({ uncoveredDays: 3, ...HELD }).explanation).toBe(BUDGET_JARGON.paceWithheldLineMayRise);
     });
@@ -426,7 +456,7 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
     spentFromSince: "2026-04-01",
     bounds: { start: "2026-10-01" },
     rolloverMayAddCents: 0,
-    rolloverHeldBack: [],
+    rolloverHeldBackUnderPlan: [],
     rolloverBillMayLapse: [],
     budget: { period: "monthly" },
     ...over,
@@ -457,7 +487,8 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
    * the next statement lifted past the spend.
    */
   test("⚖️ a line that can still rise is said beside an over verdict and beside floors — and nowhere else", () => {
-    const rises = { rolloverMayAddCents: 1_500, rolloverHeldBack: [{ start: "2026-09-01", end: "2026-09-30" }] };
+    const september = { start: "2026-09-01", end: "2026-09-30" };
+    const rises = { rolloverMayAddCents: 1_500, rolloverHeldBackUnderPlan: [september] };
     const RISES = "more can still roll over from September 2026 once it is fully imported";
     expect(budgetCoverageLine(row({ pace: "over", pct: 20 / 15, ...rises }))).toBe(`${LINE} · ${RISES}`);
     expect(budgetCoverageLine(row(rises))).toBe(`${LINE} · ${RISES}`);

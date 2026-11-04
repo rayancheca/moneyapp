@@ -1,6 +1,7 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import type { UnattachedMatch } from "@/lib/unattached-match";
 import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
+import { floorFigure } from "@/lib/budget-verdict";
 
 /**
  * What the owner is switching off when he deactivates a budget, in his units.
@@ -55,6 +56,14 @@ export interface BudgetDeactivateInput {
    * read "$0.00" there on his ledger copy 2026-10-12, over an October nobody had imported a day of.
    */
   spentCents: number | null;
+  /**
+   * ⚖️ The spend is a floor — days of the period are unread and a statement still to come can only add to it
+   * (`BudgetVerdict.floors`) — and is printed as one, "at least $343.82", as the bar behind the dialog speaks it
+   * (`floorFigure`; default built, not asked, 2026-10-30). 🔴 On his ledger copy 2026-10-30 Shopping's read "Spent so
+   * far this period $343.82" over an October read through Aug 12, and the dialog prints no line saying so (review of
+   * ca938320, L21).
+   */
+  spentIsAFloor: boolean;
   /** bills due on or before today — late, or due today and not yet posted */
   overdueCents: number;
   /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
@@ -73,7 +82,10 @@ export function budgetDeactivateLines(
 ): BlastRadiusLine[] {
   return [
     { label: "Budget stopped", value: input.budgetPhrase, irreversible: true },
-    { label: "Spent so far this period", value: input.spentCents === null ? "—" : formatCents(input.spentCents) },
+    {
+      label: "Spent so far this period",
+      value: input.spentCents === null ? "—" : floorFigure(formatCents(input.spentCents), input.spentIsAFloor),
+    },
     ...(input.overdueCents > 0
       ? [
           // ⛔ both ends: the figure is `budgetOverdue` from the period start to

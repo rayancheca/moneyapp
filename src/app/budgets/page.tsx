@@ -29,7 +29,7 @@ import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
 import { SectionNotes } from "@/components/insights/SectionNotes";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { BUDGET_JARGON } from "@/lib/jargon";
-import { budgetSectionNotes } from "@/lib/section-notes";
+import { budgetNoteRow, budgetSectionNotes } from "@/lib/section-notes";
 
 export const metadata: Metadata = { title: "Budgets" };
 export const dynamic = "force-dynamic";
@@ -95,30 +95,9 @@ export default async function BudgetsPage({
     income.passedUnpaidCents > 0 ||
     income.paidByAnotherMonthCents > 0;
 
-  // measured guidance: what the page as a whole knows and no single row states
-  const notes = budgetSectionNotes({
-    rows: statuses.map((s) => ({
-      categoryPath: s.categoryPath,
-      overdueCents: s.overdueCents,
-      // occurrences, not series — the same rows `overdueCents` was summed from,
-      // so the count and the money it describes cannot drift apart
-      overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
-      // …and how far the ledger has read it, so the note says "not posted" only where the row does
-      overdueUnreadCents: s.overdueUnreadCents,
-      overdueInGraceCents: s.overdueInGraceCents,
-      overdueUnattached: s.overdueUnattached,
-      uncoveredDays: s.uncoveredDays,
-      pace: s.pace,
-      // so a row spent only from cash wallets is left out on the row's own rule
-      spentFromAccounts: s.spentFromAccounts,
-      spentFromWallets: s.spentFromWallets,
-      // ⚖️ §6A 64: …and a row that prints "—" for its spend is not called a lower bound
-      noDayRead: s.noDayRead,
-      txnCount: s.txnCount,
-      // ⚖️ …nor a row whose line can still rise called over by at least what it shows (2026-10-29, `lineMayRise`)
-      rolloverMayAddCents: s.rolloverMayAddCents,
-    })),
-  });
+  // measured guidance: what the page as a whole knows and no single row states — each row's own status, built for
+  // the note by one rule (`budgetNoteRow`)
+  const notes = budgetSectionNotes({ rows: statuses.map(budgetNoteRow) });
 
   /**
    * "Prove it" per budget — the same figure kind as a category total, over the

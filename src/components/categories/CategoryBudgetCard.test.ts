@@ -22,7 +22,7 @@ const ROW = {
   noDayRead: false,
   txnCount: 1,
   rolloverMayAddCents: 0,
-  rolloverHeldBack: [],
+  rolloverHeldBackUnderPlan: [],
   rolloverBillMayLapse: [],
 };
 
@@ -117,7 +117,7 @@ describe("CategoryBudgetCard — /budgets' reading of the same row and window", 
         pct: 0,
         uncoveredDays: 12,
         rolloverMayAddCents: 0,
-        rolloverHeldBack: [],
+        rolloverHeldBackUnderPlan: [],
         rolloverBillMayLapse: [],
       }),
       coverageSentence: "spent only from a cash wallet since Apr 1 — no statement will ever cover it",

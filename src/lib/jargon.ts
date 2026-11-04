@@ -236,6 +236,11 @@ export const BUDGET_JARGON = {
    */
   paceUnder: `Spending is inside the line and, at this rate, would finish inside it — the reading is about where this is heading, not only where it stands. ${BAR_ANATOMY}`,
   paceAtRisk: `Spending is still inside the line today, but at this rate it lands on or past the line before the period ends — the reading is about where this is heading, not where it stands. ${BAR_ANATOMY}`,
+  /*
+   * ⚠️ "No later import can undo that" holds while each closed period's day moves on; the category's first row on an
+   * account imported short of it moves it back and can lift the line (`rollover-held-back::lineMayRise`'s ⚠️, review
+   * of ca938320, L26). Latent on his ledger copy 2026-10-30.
+   */
   paceOver:
     "Spending has already passed the line, and no later import can undo that — this reading is measured rather than a forecast. The bar is full and no longer to scale, and the period mark is left off because there is nothing left for it to divide.",
   /*

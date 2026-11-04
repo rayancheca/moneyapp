@@ -579,6 +579,8 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
       "Food: at least $40.00 of $30.00 (133% of budget). 35% of this period has passed. " +
         `over budget by at least $10.00 — ${LINE}.`,
     );
+    // ⚖️ …and so does the Deactivate confirmation, which prints no line beside it (2026-10-30, review of ca938320 L21)
+    expect(html).toContain("Spent so far this period: at least $40.00.");
   });
 
   test("the control: read through today, the over row prints no line and speaks a measurement", () => {
@@ -590,6 +592,19 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
     expect(spoken(html)).toBe(
       "Food: $40.00 of $30.00 (133% of budget). 35% of this period has passed. over budget by $10.00.",
     );
+    expect(html).toContain("Spent so far this period: $40.00.");
+  });
+
+  /*
+   * 🔴 The headline rounded (pct − 1) × 100 and the bar pct × 100, apart: on the e2e fixture Housing's $2,150.00 of
+   * $2,000.00 read "Over budget by 7%" beside a spoken "(108% of budget)" (review of ca938320, L23).
+   */
+  test("on a half percent, the headline's overshoot and the bar's percentage are one rounding", () => {
+    const s = foodOverReadThrough("2026-08-11");
+    // $32.25 of $30.00 is 107.5% of the line, as $2,150.00 of $2,000.00 is
+    const html = render({ ...s, spentCents: 3_225, remainingCents: -225, pct: 3_225 / 3_000 });
+    expect(html).toContain("Over budget by 8%");
+    expect(spoken(html)).toContain("Food: $32.25 of $30.00 (108% of budget).");
   });
 
   /*
@@ -781,6 +796,28 @@ describe("BudgetRow — ⚖️ an over row read in part", () => {
       const after = statusFor("Food");
       expect([after.spentCents, after.rolloverCents, after.availableCents]).toEqual([70_000, 44_000, 94_000]);
       expect([after.rolloverMayAddCents, after.rolloverBillMayLapse]).toEqual([0, []]);
+    });
+
+    /*
+     * ⚖️ default built, not asked (2026-10-30): decision 67's panel names what the carry waits on beside the figure it
+     * explains — this wait too, in the row's line's words (`rolloverBillMayLapseSentence`). 🔴 Only the row named it:
+     * the panel read "Banked $0.00 from closed periods." and the rules, nothing of July (review of 753bad2d, L62).
+     */
+    test("…and its panel names the same wait beside what it banked, in the line's words", () => {
+      const { s, checkJuly } = rollingFoodWithAQuietKit();
+      const panelText = (status: BudgetPaceStatus): string =>
+        renderToStaticMarkup(createElement(BudgetDetails, { status, rolloverEnabled: true }))
+          .replace(/<[^>]+>/g, "")
+          .replace(/\s+/g, " ");
+      expect(panelText(s)).toContain(
+        "Banked $0.00 from closed periods. More can still roll over from July 2026 once its statements land, if a " +
+          "bill subtracted from it has stopped. A period that came in under plan adds its leftover",
+      );
+      // …and once July's statements show the kit let go, it has banked and waits on nothing more
+      checkJuly();
+      const after = panelText(statusFor("Food"));
+      expect(after).toContain("Banked $440.00 from closed periods. A period that came in under plan");
+      expect(after).not.toContain("More can still roll over");
     });
   });
 });

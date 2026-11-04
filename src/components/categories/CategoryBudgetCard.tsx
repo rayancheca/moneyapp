@@ -35,7 +35,8 @@ function leftTone(budget: CategoryBudgetRef): string | undefined {
  * "Cash only") and the row's coverage sentence under it — and calls nothing healthy. A measured window keeps the
  * figures and colours it always had. ⚖️ An over row read in part keeps them too, with the row's line under the window
  * (`budgetCoverageLine`, default built, not asked, 2026-10-29): its "over" is a floor, as /budgets says — unless its
- * line can still rise (a closed month it rolls over from can still bank), which that line then says.
+ * line can still rise (a closed month it rolls over from is held back under its plan, or subtracted a bill that may
+ * have stopped: `lineRiseCause`), which that line then says. 🔴 This named the first alone (review of 753bad2d, L63).
  *
  * ⛔ Not the definition /budgets puts beside that headline: every one of them ends on the bar's anatomy ("the dark mark
  * is how far through the period you are"), and this card draws no bar — a definition of a mark the reader cannot see
