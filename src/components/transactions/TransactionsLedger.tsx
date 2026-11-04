@@ -207,7 +207,7 @@ export function TransactionsLedger({
     // remember the neighbor to catch focus if this row leaves a filtered view
     const i = rows.findIndex((r) => r.id === row.id);
     focusNeighborRef.current = rows[i + 1]?.id ?? rows[i - 1]?.id ?? null;
-    runCategoryCorrection({
+    void runCategoryCorrection({
       transactionId: row.id,
       categoryId,
       categoryName: option?.name ?? "category",

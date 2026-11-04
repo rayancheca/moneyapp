@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { seedDatabase } from "@/db/seed";
+import { categories } from "@/db/schema/categories";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { institutions } from "@/db/schema/institutions";
 import { importFiles, statementPeriods } from "@/db/schema/imports";
@@ -21,6 +22,7 @@ import {
   resolveDuplicate,
   undoDuplicateResolution,
 } from "./duplicate-resolution";
+import { importFilingLine } from "./recurring-import-links";
 import { attachTransactions } from "./recurring-links";
 
 let dir: string;
@@ -524,6 +526,42 @@ describe("a hard delete must not take the money with it", () => {
     const restored = bundle.db.select().from(transactions).where(eq(transactions.id, b)).get()!;
     expect(restored.recurringSeriesId).toBe(seriesId);
     expect(restored.seriesLinkSource).toBe("detected");
+  });
+
+  /*
+   * 🔴 Review of 304c59a4 (2026-10-30): an import's filing was said by the two scripts only — the copy an un-import
+   * puts back is filed under the series he confirmed (`fileImportedLinks`), and the un-import discarded what it filed.
+   */
+  test("…filed there under the series he confirmed, and the un-import says what it filed — the report's words", () => {
+    const { b, candidateId } = flaggedPair();
+    resolveDuplicate(bundle.db, { candidateId, decision: "confirmed_duplicate", retiredTransactionId: b });
+    const seriesId = bundle.db
+      .insert(recurringSeries)
+      .values({ name: "CPI canteen", kind: "bill", cadence: "monthly", status: "confirmed" })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    const food = bundle.db.select().from(categories).all().find((c) => c.parentId === null && c.name === "Food")!;
+    const dining = bundle.db.select().from(categories).all().find((c) => c.parentId === food.id && c.name === "Dining")!.id;
+    // the series' month before, linked and filed by his hand: what names the series' category
+    const sibling = insertTxn({ importFileId: fileB, postedOn: "2026-06-09", description: "CPI CANTEEN VENDING MIAMI 800-628-" });
+    bundle.db
+      .update(transactions)
+      .set({ recurringSeriesId: seriesId, seriesLinkSource: "user", categoryId: dining, categorizationSource: "user" })
+      .where(eq(transactions.id, sibling))
+      .run();
+
+    const filed = unimportFile(bundle.db, fileA);
+
+    const restored = bundle.db.select().from(transactions).where(eq(transactions.id, b)).get()!;
+    expect([restored.recurringSeriesId, restored.categoryId, restored.categorizationSource]).toEqual([
+      seriesId,
+      dining,
+      "confirmed_series",
+    ]);
+    expect(filed.map(importFilingLine)).toEqual(["CPI canteen: 1 row filed under Food > Dining"]);
+    expect(filed[0]!.transactionIds).toEqual([b]);
+    // …and a file no longer there files and says nothing
+    expect(unimportFile(bundle.db, fileA)).toEqual([]);
   });
 
   test("un-importing the survivor's file puts the retired copy back, end to end", () => {

@@ -1,6 +1,7 @@
 import { toast } from "@/components/ui/Toast";
 import { correctCategory, createRuleAction, retroApplyRuleAction } from "@/app/transactions/actions";
-import type { RulePromptTarget } from "@/app/transactions/action-types";
+import type { ActionResult, RulePromptTarget } from "@/app/transactions/action-types";
+import { settleAction } from "@/hooks/useAction";
 import { offerUndoToast } from "./undo-toast";
 
 /**
@@ -13,6 +14,9 @@ import { offerUndoToast } from "./undo-toast";
  * it (the past); Undo reverts both the categorize AND the rule. Shared by the
  * transaction sheet, the inline ledger-row chip picker, and the spending page
  * so the surfaces never drift.
+ *
+ * Settled (`settleAction`): a correction that never reached the server says so in a toast, and what this returns
+ * never rejects.
  */
 export function runCategoryCorrection(params: {
   transactionId: string;
@@ -20,9 +24,9 @@ export function runCategoryCorrection(params: {
   categoryName: string;
   /** re-fetch after a mutation (router.refresh) */
   onChanged: () => void;
-}): void {
+}): Promise<void> {
   const { transactionId, categoryId, categoryName, onChanged } = params;
-  void correctCategory({ transactionId, categoryId }).then((r) => {
+  return settleAction(() => correctCategory({ transactionId, categoryId })).then((r) => {
     if (!r.ok) {
       toast({ title: r.error, tone: "negative" });
       return;
@@ -36,7 +40,7 @@ export function runCategoryCorrection(params: {
         description: `Also apply to ${n} other ${n === 1 ? "transaction" : "transactions"} named “${rulePrompt.subjectLabel}” — past & future?`,
         action: {
           label: `Apply to ${n}`,
-          onAction: () => applyToAll(rulePrompt.target, categoryId, onChanged),
+          onAction: applyToAll(rulePrompt.target, categoryId, onChanged),
         },
       });
     } else {
@@ -45,30 +49,40 @@ export function runCategoryCorrection(params: {
   });
 }
 
-/** Create the merchant/name rule and retro-apply it; Undo reverts both. */
-function applyToAll(target: RulePromptTarget, categoryId: string, onChanged: () => void): void {
+/**
+ * "Apply to N": create the merchant/name rule and retro-apply it; Undo reverts both. The action RETURNS what it did
+ * (`offerUndoToast` is the model): a refused or failed step keeps the card, saying why on it, to be pressed again —
+ * and a rule a press made is never made twice: pressed again, the card applies that rule to the past.
+ *
+ * 🔴 Review of 43a66c99 (batch 8): the sweep that made every Undo card settle missed this card. Its action was
+ * `() => applyToAll(…)` over `void createRuleAction(…).then(…)`, which returns nothing, so Toast's
+ * `settleToastAction` dismissed the card on the press — a refused rule raised a toast beside a card already gone, and
+ * a call that never reached the server rejected with no catch: nothing reached him (re-read on b86f4e88, 2026-10-30).
+ */
+function applyToAll(
+  target: RulePromptTarget,
+  categoryId: string,
+  onChanged: () => void,
+): () => Promise<ActionResult<unknown>> {
   const ruleInput =
     target.kind === "merchant"
       ? { merchantId: target.merchantId, categoryId }
       : { descriptionKey: target.descriptionKey, categoryId };
-  void createRuleAction(ruleInput).then((rr) => {
-    if (!rr.ok) {
-      toast({ title: rr.error, tone: "negative" });
-      return;
+  // the rule a press made — a retry of what failed after it applies this one rather than making a second
+  let made: string | null = null;
+  return async () => {
+    if (made === null) {
+      const rule = await settleAction(() => createRuleAction(ruleInput));
+      if (!rule.ok) return rule;
+      made = rule.data.ruleId;
     }
-    void retroApplyRuleAction(rr.data.ruleId).then((applied) => {
-      if (!applied.ok) {
-        toast({ title: applied.error, tone: "negative" });
-        return;
-      }
-      onChanged();
-      const affected = applied.data.affected;
-      offerUndoToast(
-        `${affected} recategorized · rule created`,
-        applied.data.undo,
-        onChanged,
-        { deleteRuleId: rr.data.ruleId },
-      );
+    const ruleId = made;
+    const applied = await settleAction(() => retroApplyRuleAction(ruleId));
+    if (!applied.ok) return applied;
+    onChanged();
+    offerUndoToast(`${applied.data.affected} recategorized · rule created`, applied.data.undo, onChanged, {
+      deleteRuleId: ruleId,
     });
-  });
+    return applied;
+  };
 }

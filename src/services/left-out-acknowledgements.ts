@@ -1,4 +1,3 @@
-import { asc } from "drizzle-orm";
 import type { AppDatabase } from "@/db/client";
 import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import {
@@ -6,15 +5,10 @@ import {
   reasonCarriesControl,
   reasonSaysNothing,
   tokenOfKey,
-  type LeftOutAcknowledgement,
   type LeftOutAcknowledgementWrite,
 } from "@/lib/left-out-acknowledgement";
+// ⛔ one way only: the lines left out read the table themselves (`readLeftOutAcknowledgements`, beside `linesLeftOut`)
 import { linesLeftOut } from "@/services/import/lines-left-out";
-
-/** The acknowledgements this ledger holds, the oldest first. */
-export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledgement[] {
-  return db.select().from(leftOutAcknowledgements).orderBy(asc(leftOutAcknowledgements.createdAt), asc(leftOutAcknowledgements.id)).all();
-}
 
 /**
  * Records each acknowledgement given — one row each, two lines alike two rows (`acknowledgementWrites`).

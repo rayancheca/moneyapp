@@ -10,6 +10,7 @@ import type { InlineSaveResult } from "./useInlineEdit";
 vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()), toast: vi.fn() }));
 
 const { persistInlineEdit } = await import("./useInlineEdit");
+const { UNDO_FAILED } = await import("./useAction");
 const { settleToastAction, toast } = await import("@/components/ui/Toast");
 type ToastActionResult = import("@/components/ui/Toast").ToastActionResult;
 
@@ -85,18 +86,41 @@ describe("an inline field's save, and the Undo on its card", () => {
     expect(toast).toHaveBeenCalledOnce();
   });
 
+  /*
+   * 🔴 Review of 43a66c99 (batch 8): this card said the SAVE's sentence, "Couldn’t save that — try again" — the catch
+   * dropped a thrown save's message — where the two Undo cards fixed beside it say what the call threw ("Failed to
+   * fetch") and, with nothing readable, the Undo's own sentence. This test's title said more than it asserted. Words
+   * only: the field rolled back to what is saved either way (re-read on b86f4e88, 2026-10-30).
+   */
   test("an Undo that never reached the server says so on its card, and can be pressed again", async () => {
     const { io, display } = fieldAnswering(saved, () => Promise.reject(new Error("Failed to fetch")), saved);
     const undoIt = await undoOfRename(io);
 
-    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: "Couldn’t save that — try again" });
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: "Failed to fetch" });
     expect(display()).toBe("Bills");
     expect(await undoIt()).toMatchObject({ ok: true });
     expect(display()).toBe("Checking");
   });
 
+  test("…and with nothing readable, it says what every Undo card says: the change still stands", async () => {
+    const { io, display } = fieldAnswering(saved, () => Promise.reject("nope"));
+    const undoIt = await undoOfRename(io);
+
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: UNDO_FAILED });
+    expect(display()).toBe("Bills");
+  });
+
   test("a save that fails has no card to say it on — it says so in a toast of its own", async () => {
     const { io, display } = fieldAnswering(() => Promise.reject(new Error("Failed to fetch")));
+
+    await persistInlineEdit(io, "Bills", "Checking", true);
+
+    expect(display()).toBe("Checking");
+    expect(toast).toHaveBeenCalledExactlyOnceWith({ title: "Failed to fetch", tone: "negative" });
+  });
+
+  test("…and a save refused with nothing readable says it couldn’t save", async () => {
+    const { io, display } = fieldAnswering(() => Promise.resolve({ ok: false }));
 
     await persistInlineEdit(io, "Bills", "Checking", true);
 

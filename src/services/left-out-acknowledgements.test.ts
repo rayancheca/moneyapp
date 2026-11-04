@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { preMutationSnapshot } from "@/db/backup";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
-import { readLeftOutAcknowledgements, writeLeftOutAcknowledgements } from "./left-out-acknowledgements";
+import { readLeftOutAcknowledgements } from "./import/lines-left-out";
+import { writeLeftOutAcknowledgements } from "./left-out-acknowledgements";
 
 let dir: string;
 let bundle: DbBundle;
@@ -276,5 +277,20 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
     const copy = createDatabase(snap.path!);
     opened.push(copy);
     expect(readLeftOutAcknowledgements(copy.db)).toEqual(readLeftOutAcknowledgements(bundle.db));
+  });
+});
+
+/*
+ * 🔴 Review of 43a66c99 (2026-10-30): the writer reads the lines left out (`linesLeftOut`), and the lines left out
+ * read the table through the writer's module — each imported the other. Harmless while neither touched the other at
+ * module scope; an uninitialised binding the day one did. A source gate, as /imports' page.test.ts is: the reader is
+ * where the lines are asked of it, and the edge runs one way.
+ */
+describe("the table's reader and its one writer import one way only", () => {
+  const source = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), "utf8");
+
+  test("the lines left out read the table themselves — never through the writer's module", () => {
+    expect(source("src/services/import/lines-left-out.ts")).not.toMatch(/from "@\/services\/left-out-acknowledgements"/);
+    expect(source("src/services/left-out-acknowledgements.ts")).toMatch(/from "@\/services\/import\/lines-left-out"/);
   });
 });

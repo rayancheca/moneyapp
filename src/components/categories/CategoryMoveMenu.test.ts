@@ -8,6 +8,7 @@ vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()
 const { pressMoveCategory } = await import("./CategoryMoveMenu");
 const { moveCategoryAction } = await import("@/app/categories/actions");
 const { settleToastAction, toast } = await import("@/components/ui/Toast");
+const { UNDO_FAILED } = await import("@/hooks/useAction");
 type ToastActionResult = import("@/components/ui/Toast").ToastActionResult;
 
 const refresh = vi.fn();
@@ -92,10 +93,12 @@ describe("a category's Move, as CategoryMoveMenu makes it", () => {
     expect(moveCategoryAction).toHaveBeenNthCalledWith(3, { categoryId: "c-coffee", newParentId: "c-dining" });
   });
 
-  test("…and with nothing readable, it says it couldn’t move it back", async () => {
+  // one sentence for every Undo card's failure with nothing readable (`UNDO_FAILED`): it said its own once, "Couldn’t
+  // move it back — try again", and the inline edit's said the save's (the review of 43a66c99, 2026-10-30)
+  test("…and with nothing readable, it says what every Undo card says: the change still stands", async () => {
     const undoIt = await undoOfMove();
     vi.mocked(moveCategoryAction).mockRejectedValueOnce("nope");
 
-    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: "Couldn’t move it back — try again" });
+    expect(cardAfter(await undoIt())).toEqual({ dismiss: false, error: UNDO_FAILED });
   });
 });

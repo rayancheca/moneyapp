@@ -133,7 +133,7 @@ export function TransactionSheet({
 
   function pickCategory(categoryId: string): void {
     const option = categories.find((c) => c.id === categoryId);
-    runCategoryCorrection({
+    void runCategoryCorrection({
       transactionId: txn.id,
       categoryId,
       categoryName: option?.name ?? "category",

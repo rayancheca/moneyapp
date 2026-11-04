@@ -25,6 +25,8 @@ import { balancesRemovedByFile } from "@/services/import/printed-anchors";
 import { printerHandOvers } from "@/services/import/printed-lines";
 import { linesLeftOut } from "@/services/import/lines-left-out";
 import { copyHandOvers } from "@/services/import/statement-copies";
+import { importFilingLine } from "@/services/recurring-import-links";
+import { importFilingsByRead } from "@/services/recurring-links";
 import { importRowQualifiers, importRowSubject, leftOutNoticesByRead, withheldNoticeOf } from "@/lib/import-file-label";
 import { dayWindowLabel } from "@/lib/period";
 import { balanceLessNotes } from "@/lib/statement-evidence-notes";
@@ -101,6 +103,11 @@ export default async function ImportsPage({
      ledger, and is named under that read — the upload's outcome, read from the ledger by the rule `pnpm ledger-check`
      reads (`linesLeftOut`), so the row says it for as long as it is true and not a day longer. */
   const leftOutByRead = leftOutNoticesByRead(linesLeftOut(db));
+  /* ⚖️ default built, not asked (2026-10-30): what an import filed under a series he confirmed — an upload, an
+     un-import's restore, a gap accepted — named under the read whose rows they are, in the report's words
+     (`importFilingLine`): read from the ledger, since a form action hands the page nothing, for as long as it is
+     true (`importFilingsByRead`). 🔴 Review of 304c59a4 (2026-10-30): only the two scripts said it. */
+  const filedByRead = importFilingsByRead(db);
 
   // the rest of what un-importing takes with it — counted per file rather than
   // joined into the query above, where they would fan out against the rows.
@@ -398,6 +405,15 @@ export default async function ImportsPage({
                           // whole, like a withheld section: which money and which file still prints it are the point
                           <div key={`${f.id}-left-out-${i}`} className="text-[11px] text-warning">
                             {notice}
+                          </div>
+                        ))}
+                        {filedByRead.get(f.id)?.map((filing) => (
+                          // muted: nothing is wrong — it says where the import put money nobody filed by hand
+                          <div
+                            key={`${f.id}-filed-${filing.seriesId}-${filing.categoryId}`}
+                            className="text-[11px] text-ink-muted"
+                          >
+                            {importFilingLine(filing)}
                           </div>
                         ))}
                       </td>

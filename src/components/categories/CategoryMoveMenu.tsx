@@ -5,7 +5,7 @@ import { useTransition } from "react";
 import { moveCategoryAction } from "@/app/categories/actions";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
 import { toast } from "@/components/ui/Toast";
-import { settleAction } from "@/hooks/useAction";
+import { settleAction, UNDO_FAILED } from "@/hooks/useAction";
 
 export interface MoveDestination {
   id: string | null;
@@ -36,7 +36,7 @@ export async function pressMoveCategory(
       onAction: async () => {
         const back = await settleAction(
           () => moveCategoryAction({ categoryId, newParentId: currentParentId }),
-          "Couldn’t move it back — try again",
+          UNDO_FAILED, // with nothing readable, what every Undo card says
         );
         refresh(); // re-render to server truth either way
         return back;

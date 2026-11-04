@@ -5,12 +5,13 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/db/client";
 import {
   acceptGap,
-  importStatementFiles,
+  importStatementFilesWithReport,
   originalOfArchivedCopy,
   unimportFile,
-  type FileOutcome,
   type ImportInput,
+  type ImportReport,
 } from "@/services/import/service";
+import type { ImportFiling } from "@/services/recurring-links";
 import { actionErrorMessage, type ActionResult } from "@/app/transactions/action-types";
 
 const REVALIDATE = ["/", "/imports", "/accounts", "/transactions", "/spending", "/budgets", "/recurring"];
@@ -45,10 +46,12 @@ function archivedCopyRefusal(inputs: readonly ImportInput[]): string | null {
  * cannot be returned from one without breaking its call site. The validating
  * `*ResultAction` twin carries the real message, and the void adapter routes a
  * failure to `?error=` (the /budgets pattern) instead of throwing.
+ *
+ * Each twin also carries back what its import filed under a series he confirmed (`filed`, `fileImportedLinks`) — the
+ * import's report, as the scripts print it; /imports names it under the read from the ledger (`importFilingsByRead`),
+ * since a form action hands the page nothing. 🔴 Review of 304c59a4 (2026-10-30): all three dropped it.
  */
-export async function uploadStatementsResultAction(
-  formData: FormData,
-): Promise<ActionResult<{ outcomes: FileOutcome[] }>> {
+export async function uploadStatementsResultAction(formData: FormData): Promise<ActionResult<ImportReport>> {
   const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
   if (files.length === 0) return { ok: false, error: "Pick at least one statement file" };
   try {
@@ -58,9 +61,9 @@ export async function uploadStatementsResultAction(
     const refused = archivedCopyRefusal(inputs);
     if (refused !== null) return { ok: false, error: refused };
     // per-file failures come back as outcomes; only an unexpected fault throws
-    const outcomes = await importStatementFiles(getDb(), inputs);
+    const report = await importStatementFilesWithReport(getDb(), inputs);
     revalidateAll();
-    return { ok: true, data: { outcomes } };
+    return { ok: true, data: report };
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, {}, "Import failed") };
   }
@@ -75,16 +78,17 @@ export async function uploadStatementsAction(formData: FormData): Promise<void> 
 
 export async function unimportFileResultAction(
   formData: FormData,
-): Promise<ActionResult<{ importFileId: string }>> {
+): Promise<ActionResult<{ importFileId: string; filed: ImportFiling[] }>> {
   const id = formData.get("importFileId");
   if (typeof id !== "string" || id === "") return { ok: false, error: "Pick a file to un-import" };
+  let filed: ImportFiling[];
   try {
-    unimportFile(getDb(), id);
+    filed = unimportFile(getDb(), id);
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, {}, "Could not un-import the file") };
   }
   revalidateAll();
-  return { ok: true, data: { importFileId: id } };
+  return { ok: true, data: { importFileId: id, filed } };
 }
 
 export async function unimportFileAction(formData: FormData): Promise<void> {
@@ -95,16 +99,17 @@ export async function unimportFileAction(formData: FormData): Promise<void> {
 
 export async function acceptGapResultAction(
   formData: FormData,
-): Promise<ActionResult<{ statementPeriodId: string }>> {
+): Promise<ActionResult<{ statementPeriodId: string; filed: ImportFiling[] }>> {
   const id = formData.get("statementPeriodId");
   if (typeof id !== "string" || id === "") return { ok: false, error: "Pick a statement period" };
+  let filed: ImportFiling[];
   try {
-    acceptGap(getDb(), id);
+    filed = acceptGap(getDb(), id);
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, {}, "Could not accept the gap") };
   }
   revalidateAll();
-  return { ok: true, data: { statementPeriodId: id } };
+  return { ok: true, data: { statementPeriodId: id, filed } };
 }
 
 export async function acceptGapAction(formData: FormData): Promise<void> {

@@ -3,12 +3,12 @@ import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { duplicateCandidates } from "@/db/schema/duplicate-candidates";
 import { LIVE_FILE, importFiles, type ImportStatus } from "@/db/schema/imports";
+import { leftOutAcknowledgements } from "@/db/schema/ledger-check";
 import { transactions } from "@/db/schema/transactions";
 import { diffDays } from "@/lib/dates";
 import { descriptionScore } from "@/lib/description-score";
 import type { LineLeftOutFacts } from "@/lib/import-file-label";
 import { acknowledgedOf, acknowledgementsOf, type LeftOutAcknowledgement, type Printing } from "@/lib/left-out-acknowledgement";
-import { readLeftOutAcknowledgements } from "@/services/left-out-acknowledgements";
 import {
   augment,
   heirsOn,
@@ -269,6 +269,16 @@ function rawWords(db: AppDatabase, rowIds: readonly string[]): Map<string, { raw
 
 /** A line left out before anyone asked whether it was acknowledged. */
 type Unasked = Omit<LineLeftOut, "acknowledged">;
+
+/**
+ * The acknowledgements this ledger holds, the oldest first — read HERE, where the lines left out are asked of them,
+ * and written by the table's one writer (`writeLeftOutAcknowledgements`), which reads the lines from this module.
+ * 🔴 Review of 43a66c99 (2026-10-30): the reader lived beside the writer, so each module imported the other — a
+ * cycle, harmless while neither touched the other at module scope, and an uninitialised binding the day one did.
+ */
+export function readLeftOutAcknowledgements(db: AppDatabase): LeftOutAcknowledgement[] {
+  return db.select().from(leftOutAcknowledgements).orderBy(asc(leftOutAcknowledgements.createdAt), asc(leftOutAcknowledgements.id)).all();
+}
 
 /**
  * Every line left out of the ledger (`LineLeftOut`) — by every retired read, or by `fromFileIds`, the reads one re-read
