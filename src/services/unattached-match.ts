@@ -14,7 +14,7 @@ import { loadCategoryIndex, payDayRows, type CategoryIndex } from "./analytics";
 
 /**
  * Per series, the rows that match the days a surface is about to call missed — paydays it would say passed "with no
- * deposit", "not banked yet" or "did not reach a bank" (every checked one no deposit paid in full), due days it would
+ * deposit", "not banked yet" or "never reached …" (every checked one no deposit paid in full), due days it would
  * say "has not posted" — to the cent, within the series' own tolerance, sitting unattached (`lib/unattached-match`, the
  * rule and its 🔴; the days asked, `asksForUnattachedMatch`). ⛔ ONE predicate, every caller: the arrears
  * (`arrearsInWindow`), the income mirror (`unbankedIncomeForSeries`), the pay readings (`cashEarningsReadings`) and the

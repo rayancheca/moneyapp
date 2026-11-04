@@ -17,6 +17,7 @@ import { seedDatabase } from "@/db/seed";
 import { alreadyDueWords, unsettledWords } from "@/components/recurring/labels";
 import { arrearsClause, NOT_POSTED, overdueReading } from "@/lib/arrears-reading";
 import { arrearsSentence } from "@/lib/committed";
+import { addDays } from "@/lib/dates";
 import { formatDayLong, formatDayShort } from "@/lib/format-date";
 import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { ACCOUNT_READ, passedPaydaysWords, unbankedIncomeFrontierClause } from "@/lib/unbanked-income";
@@ -286,10 +287,10 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     expect(line.verdict).toContain(
       "4 paydays have passed since Sep 24 with no deposit. 4 of them fall on days already checked",
     );
-    expect(line.verdict).toContain("so the pay did not reach a bank");
+    expect(line.verdict).toContain("so the pay did not reach an account the ledger reads");
     expect(spendingNote()).toContain(`and none of it reached ${ACCOUNT_READ}.`);
     expect(passedPaydaysWords(forecastCurrentMonth(bundle.db, TODAY).unbankedIncome, formatDayShort).notProjected).toBe(
-      "Pay that never reaches a bank cannot be projected as arriving",
+      "Pay that never reaches an account the ledger reads cannot be projected as arriving",
     );
   });
 
@@ -306,7 +307,7 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     expect(line.bankedCents).toBe(4 * 114_192);
     expect(line.unattachedCents).toBe(4 * 114_192);
     expect(line.gapLabel).toContain(`is matched to the cent by ${rows}`);
-    expect(line.gapLabel).not.toContain("never reached a bank");
+    expect(line.gapLabel).not.toContain("never reached an account the ledger reads");
     expect(card.postedNote).toContain("though the rows the lines above name match its paydays to the cent");
     const note = spendingNote();
     // ⛔ in the accounts the ledger reads (`ACCOUNT_READ`), the deposit set off by a comma after it (the merge of 8b)
@@ -375,7 +376,7 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     importUnattached(PAYDAYS.slice(0, 3), false);
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toContain(
       "— 3 of them are matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 15 that are not attached to " +
-        "it, and for the other 1 the pay did not reach a bank",
+        "it, and for the other 1 the pay did not reach an account the ledger reads",
     );
   });
 });
@@ -387,7 +388,7 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
  * and, with Breezeline's Oct 10 −$50.00 unlinked, a red ✕ on Oct 8 beside /recurring's "Oct 8 — matched to the cent by
  * a row of $50.00 on Oct 10 that is not attached to it".
  */
-describe("the calendar: no ✕ and no 'never reached a bank' beside a row matching the day to the cent — and none paid", () => {
+describe("the calendar: no ✕ and no 'never reached' beside a row matching the day to the cent — and none paid", () => {
   const october = () => recurringCalendar(bundle.db, "2026-10", TODAY);
   /** the series' expected mark on the day — the one carrying no posting of its own */
   const markOn = (day: string, seriesId: string) =>
@@ -482,7 +483,7 @@ describe("an import's link that files nothing: his payroll rows attached and unf
     );
     expect(line.bankedCents).toBe(4 * 114_192);
     expect(line.gapLabel).toContain(`is matched to the cent by ${rows}`);
-    expect(line.gapLabel).not.toContain("never reached a bank");
+    expect(line.gapLabel).not.toContain("never reached an account the ledger reads");
     expect(card.postedNote).toBe(
       "No income at all has been recorded in Oct 2026, though the rows the lines above name match its paydays to the " +
         "cent — they are not filed as income, so none of them is counted.",
@@ -672,16 +673,16 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
       formatDay: formatDayLong,
     }).map((n) => n.body);
 
-  test("a live schedule's October, Oct 1 and Oct 8 matched: all of it is the rows' — never 'none of it reached a bank'", () => {
+  test("a live schedule's October, Oct 1 and Oct 8 matched: all of it the rows' — never 'none of it reached'", () => {
     const today = "2026-10-13";
-    expect(notes(today).join(" ")).toContain("came to $2,283.84, and none of it reached a bank.");
+    expect(notes(today).join(" ")).toContain("came to $2,283.84, and none of it reached an account the ledger reads.");
     importUnattached(PAYDAYS.slice(0, 2), false);
     const note = notes(today).join(" ");
     expect(note).toContain(
       "It America LLC (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, and all of it is matched to the " +
         "cent by rows of $1,141.92 on Oct 1 and Oct 8 that are not attached to it.",
     );
-    expect(note).not.toContain("reached a bank");
+    expect(note).not.toContain(`reached ${ACCOUNT_READ}`);
   });
 
   test("three filed, Oct 22 unattached: the banked part, and the row for the rest — the card's frontier clause too", () => {
@@ -689,7 +690,7 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
     const salary = categoryId("Salary", "Income");
     for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
     expect(notes(today).join(" ")).toContain(
-      "of which $3,425.76 was banked inside the window and $1,141.92 never reached a bank",
+      "of which $3,425.76 was banked inside the window and $1,141.92 never reached an account the ledger reads",
     );
     importUnattached(PAYDAYS.slice(3), false);
     const note = notes(today).join(" ");
@@ -697,7 +698,7 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
       "of which $3,425.76 was banked inside the window and $1,141.92 is matched to the cent by a row of $1,141.92 on " +
         "Oct 22 that is not attached to it",
     );
-    expect(note).not.toContain("never reached a bank");
+    expect(note).not.toContain("never reached an account the ledger reads");
     // ⛔ …and the verdict below the stale bar names the row, as the difference under it does (review of e6ad55a)
     expect(incomeCard(bundle.db, today)!.pay[0]!.verdict).toBe(
       "2 paydays have passed since the last deposit on Oct 15. 1 falls on a day already checked, with no deposit " +
@@ -712,14 +713,14 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
     const salary = categoryId("Salary", "Income");
     for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
     row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
-    expect(notes(today).join(" ")).toContain("and $941.92 never reached a bank");
+    expect(notes(today).join(" ")).toContain("and $941.92 never reached an account the ledger reads");
     importUnattached(PAYDAYS.slice(3), false);
     const note = notes(today).join(" ");
     expect(note).toContain(
       "and $941.92 is for the payday of Oct 22, which a row of $1,141.92 on Oct 22 that is not attached to it matches " +
         "to the cent",
     );
-    expect(note).not.toContain("never reached a bank");
+    expect(note).not.toContain("never reached an account the ledger reads");
   });
 
   /*
@@ -729,7 +730,7 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
    * reached a bank.", read "…$6,092.16 never reached a bank, and $2,283.84 is matched to the cent by rows of $1,141.92 on
    * Oct 1 and Oct 8 that are not attached to it" of paydays running Jul 2 – Sep 24.
    */
-  test("a window before the rows' paydays never names them: Q3, read Oct 13, keeps its 'never reached a bank'", () => {
+  test("a window before the rows' paydays never names them: Q3, read Oct 13, keeps its 'never reached'", () => {
     const today = "2026-10-13";
     // Sep 17's pay never banked: Q3 is short a week, a live schedule's shortfall note
     bundle.db
@@ -745,7 +746,7 @@ describe("/spending's shortfall note names the rows the one rule matched, as the
       .join(" ");
     expect(q3).toContain(
       "It America LLC (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
-        "inside the window and $1,141.92 never reached a bank.",
+        "inside the window and $1,141.92 never reached an account the ledger reads.",
     );
     expect(q3).not.toContain(MATCHED);
     // …while October's own note names them
@@ -919,6 +920,50 @@ describe("Earned vs banked names each row only in the sentence about its own pay
   });
 });
 
+/*
+ * ⛔ Earned vs banked spells every day it names against today (`DayWord`) — the rows it names too, in the verdict's
+ * frontier clause as in the difference under it — and a list of them says each year once (`formatDaysYearOnce`). 🔴
+ * Review of 87a440d0 (MEDIUM): read Jan 8, 2027, Dec 31's +$1,141.92 attached to nothing and Wells Fargo checked
+ * through Jan 4, the verdict said "…by a row of $1,141.92 on Dec 31 that is not attached to it" (the clause's own
+ * spelling, against the newest row) one line over the difference's "…on Dec 31, 2026…"; with Dec 17, 24 and 31
+ * unattached, the stale verdict listed "rows of $1,141.92 on Dec 17, 2026, Dec 24, 2026, and Dec 31, 2026".
+ */
+describe("a new year: Earned vs banked dates the rows it names as it dates its other days, each year once", () => {
+  const READ = "2027-01-08";
+  /** his pay attached each Thursday from Oct 1 through `last`; a +$1,141.92 row attached to nothing on each `rows` */
+  function paidThrough(last: string, rows: readonly string[]): void {
+    const salary = categoryId("Salary", "Income");
+    for (let day = "2026-10-01"; day <= last; day = addDays(day, 7)) {
+      row(day, 114_192, { seriesId: PAY, categoryId: salary });
+    }
+    for (const day of rows) row(day, 114_192);
+    checkedThrough(bundle.db, WF, "2027-01-04", "2026-10-27");
+  }
+
+  test("one row, Dec 31: the verdict names it as the difference under it does", () => {
+    paidThrough("2026-12-24", ["2026-12-31"]);
+    const line = incomeCard(bundle.db, READ)!.pay[0]!;
+    const named = "a row of $1,141.92 on Dec 31, 2026 that is not attached to it";
+
+    expect(line.verdict).toBe(
+      "2 paydays have passed since the last deposit on Dec 24, 2026. 1 falls on a day already checked, with no " +
+        `deposit attached to it — it is matched to the cent by ${named}; the other one falls after Jan 4, the last ` +
+        "day every account that pay lands in has been checked through.",
+    );
+    expect(line.gapLabel).toContain(`$1,141.92 of it is matched to the cent by ${named}; the other $1,141.92 is for`);
+  });
+
+  test("three rows, Dec 17 – 31: one list with its year said once, in the stale verdict and the difference", () => {
+    paidThrough("2026-12-10", ["2026-12-17", "2026-12-24", "2026-12-31"]);
+    const line = incomeCard(bundle.db, READ)!.pay[0]!;
+    const named = "rows of $1,141.92 on Dec 17, Dec 24, and Dec 31, 2026 that are not attached to it";
+
+    expect(line.basis).toBe("series-stale");
+    expect(line.verdict).toContain(`3 of them fall on days already checked — they are matched to the cent by ${named}`);
+    expect(line.gapLabel).toContain(`$3,425.76 of it is matched to the cent by ${named}; the other $1,141.92`);
+  });
+});
+
 /** A rendered sentence as a reader reads it: its words, the markup gone. */
 const textOf = (element: ReactElement): string =>
   renderToStaticMarkup(element)
@@ -1039,11 +1084,15 @@ describe("a checked payday still inside its days to land: its row is named, and 
     const words = passedPaydaysWords(forecastCurrentMonth(bundle.db, IN_GRACE).unbankedIncome, formatDayShort);
     expect(words).toMatchObject({
       passed: "already passed this month with no deposit attached to it",
-      notProjected: `Pay that never reaches a bank, and pay matched to the cent by ${ROW}, cannot be projected as arriving`,
+      notProjected:
+        `Pay that never reaches an account the ledger reads, and pay matched to the cent by ${ROW}, cannot be ` +
+        "projected as arriving",
       warning: true,
     });
     const line = incomeCard(bundle.db, IN_GRACE)!.pay[0]!;
-    expect(line.gapLabel).toBe(`$1,141.92 of it never reached a bank; $1,141.92 is matched to the cent by ${ROW}.`);
+    expect(line.gapLabel).toBe(
+      `$1,141.92 of it never reached an account the ledger reads; $1,141.92 is matched to the cent by ${ROW}.`,
+    );
   });
 
   /*
@@ -1199,9 +1248,9 @@ describe("a payday a smaller deposit paid on its own day: the row matching it to
     row("2026-10-15", 20_000, { seriesId: PAY, categoryId: salary });
     expect(octoberNotes(TODAY)).toBe(
       "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,625.76 was banked " +
-        "inside the window and $941.92 never reached a bank.",
+        "inside the window and $941.92 never reached an account the ledger reads.",
     );
-    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached a bank");
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached an account the ledger reads");
     const id = row("2026-10-15", 114_192, { categoryId: salary });
     const named = "a row of $1,141.92 on Oct 15 that is not attached to it matches to the cent";
     expect(octoberNotes(TODAY)).toBe(
@@ -1223,10 +1272,10 @@ describe("a payday a smaller deposit paid on its own day: the row matching it to
     for (const day of PAYDAYS.slice(0, 3)) row(day, 114_192, { seriesId: PAY, categoryId: salary });
     row("2026-10-15", 114_192, { categoryId: salary });
     // Oct 22 never banked, and nothing near it
-    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached a bank");
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.gapLabel).toBe("never reached an account the ledger reads");
     expect(octoberNotes(TODAY)).toBe(
       "It America LLC (weekly pay)'s paydays over Oct 1 – 22, 2026 came to $4,567.68, of which $3,425.76 was banked " +
-        "inside the window and $1,141.92 never reached a bank.",
+        "inside the window and $1,141.92 never reached an account the ledger reads.",
     );
   });
 });

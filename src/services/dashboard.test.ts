@@ -787,6 +787,55 @@ describe("dashboardData: spending pace", () => {
       expect(line.gapLabel).toContain("after Dec 31, 2026, the last day every account");
     });
 
+    /*
+     * ⛔ …and a row the tile names in another year, as the card names it: the rows in the tile's own day, against
+     * today (`passedPaydaysLeftOut`'s `formatRowDay`). Fri Jan 1's payroll landed a day early, on Thu Dec 31, attached
+     * to nothing. 🔴 Review of 87a440d0 (MEDIUM): the card names its rows against today and the tile its against the
+     * newest row — read Jan 8, 2027 the tile said "…by a row of $1,000.00 on Dec 31 that is not attached to it" under
+     * the card's "…on Dec 31, 2026…".
+     */
+    test("a row in another year is named with its year — on the tile and the card alike", () => {
+      const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "weekly", nextExpectedOn: "2027-01-01", amountCents: 1000_00, lastMatchedOn: "2026-12-25", intervalDaysAvg: 7 });
+      const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
+      const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
+      bundle.db.update(recurringSeries).set({ accountId: wells }).where(eq(recurringSeries.id, pay)).run();
+      const salary = bundle.db.select().from(categories).where(eq(categories.name, "Salary")).get()!.id;
+      const payroll = (postedOn: string, seriesId: string | null) =>
+        bundle.db
+          .insert(transactions)
+          .values({
+            accountId: wells,
+            postedOn,
+            amountCents: 1000_00,
+            rawDescription: "Payroll",
+            normalizedDescription: "Payroll",
+            dedupeHash: `Payroll-${postedOn}`,
+            categoryId: seriesId === null ? null : salary,
+            recurringSeriesId: seriesId,
+          })
+          .run();
+      payroll("2026-12-25", pay);
+      payroll("2026-12-31", null);
+      checkedThroughFixture(bundle.db, wells, "2027-01-04");
+      const interest = bundle.db.select().from(categories).where(eq(categories.name, "Interest")).get()!.id;
+      bundle.db
+        .insert(transactions)
+        .values({
+          accountId: checking,
+          postedOn: "2027-01-02",
+          amountCents: 5_00,
+          rawDescription: "Interest",
+          normalizedDescription: "Interest",
+          dedupeHash: "Interest-2027-01-02",
+          categoryId: interest,
+        })
+        .run();
+      spend("Groceries", "2027-01-02", -80_00);
+      const named = "a row of $1,000.00 on Dec 31, 2026 that is not attached to it";
+      expect(dashboardData(bundle.db, "2027-01-08").pace!.paydaysLeftOut?.text).toContain(named);
+      expect(incomeCard(bundle.db, "2027-01-08")!.pay[0]!.verdict).toContain(named);
+    });
+
     // …and a payday the ledger DID look for and found no deposit for is in neither leg too: named, in the warning
     test("a checked payday with no deposit is named as the forecast names it", () => {
       weeklyPayFoundJul2("2026-07-13"); // Jul 9 and its three days to land are checked
@@ -795,7 +844,7 @@ describe("dashboardData: spending pace", () => {
       expect(pace.paydaysLeftOut).toEqual({
         text:
           "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
-          "that never reaches a bank cannot be projected as arriving.",
+          "that never reaches an account the ledger reads cannot be projected as arriving.",
         warning: true,
       });
     });
@@ -848,7 +897,7 @@ describe("dashboardData: spending pace", () => {
       expect(pace.freeToSpendCents).toBe(1000_00 + amountCents + 3 * 1000_00 - 80_00);
       expect(pace.paydaysLeftOut?.text).toBe(
         "1 payday worth $1,000.00 already passed this month with no deposit imported — not in Free to spend. Pay " +
-          "that never reaches a bank cannot be projected as arriving.",
+          "that never reaches an account the ledger reads cannot be projected as arriving.",
       );
     });
 
@@ -903,9 +952,9 @@ describe("dashboardData: spending pace", () => {
       expect(pace.freeToSpendCents).toBe(2 * 1000_00 + 2 * 1000_00 - 80_00);
       expect(pace.paydaysLeftOut).toEqual({
         text:
-          "2 paydays worth $2,000.00 already passed this month with no deposit attached to it — $1,000.00 of it not in " +
-          "Free to spend. Pay that never reaches a bank, and pay matched to the cent by a row of $1,000.00 on Jul 9 " +
-          "that is not attached to it, cannot be projected as arriving.",
+          "2 paydays worth $2,000.00 already passed this month with no deposit attached to it — $1,000.00 of it not " +
+          "in Free to spend. Pay that never reaches an account the ledger reads, and pay matched to the cent by a " +
+          "row of $1,000.00 on Jul 9 that is not attached to it, cannot be projected as arriving.",
         warning: true,
       });
     });

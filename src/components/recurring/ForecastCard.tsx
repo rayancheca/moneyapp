@@ -25,7 +25,7 @@ interface ForecastCardProps {
  * them.
  *
  * ⛔ In `passedPaydaysWords`, the words the pay series' own page heads its list of the same paydays with — the
- * warning (a payday checked through its days to land) and "Pay that never reaches a bank" too, never "Cash pay".
+ * warning (a payday checked through its days to land) and "Pay that never reaches …" too, never "Cash pay".
  *
  * ⛔ "Not in EOM cash" only of the paydays no row EOM cash holds answers (`leftOutOf` over `inEomCash`): its balance
  * replays a row the one rule matched to a payday whether or not it is attached — "and $1,141.92 of it not in EOM cash"

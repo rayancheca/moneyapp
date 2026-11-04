@@ -341,7 +341,7 @@ describe("settledVerdict, with a row matching the day to the cent unattached", (
   const payRow: UnattachedMatch = { date: "2026-10-01", row: { id: "r1", postedOn: "2026-10-01", amountCents: 114192 } };
   const billRow: UnattachedMatch = { date: "2026-10-08", row: { id: "r2", postedOn: "2026-10-10", amountCents: -5000 } };
 
-  test("a payday checked through its days to land is named by the row — never 'never reached a bank', never paid", () => {
+  test("a payday checked through its days to land is named by the row — never 'never reached', never paid", () => {
     expect(settledVerdict("income", "2026-10-01", pay("2026-10-26"), true, payRow)).toEqual({
       state: "unsettled",
       reason: "matched_unattached",

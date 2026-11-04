@@ -173,7 +173,8 @@ describe("incomeCard", () => {
     // Aug 13 and Aug 20 fall after Aug 12, the day the records are checked through
     expect(line.unreadGapCents).toBe(200_000);
     expect(line.gapLabel).toBe(
-      "$8,600.00 of it never reached a bank; the other $2,000.00 is for paydays after Aug 12, the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
+      "$8,600.00 of it never reached an account the ledger reads; the other $2,000.00 is for paydays after Aug 12, " +
+        "the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
     );
     expect(card.totals.bankedCents).toBe(140_000);
     expect(card.bankedSharePct).toBe(12);
@@ -261,7 +262,7 @@ describe("incomeCard", () => {
       const card = incomeCard(bundle.db, TODAY)!;
       expect(card.totals.gapMagnitudeCents).toBe(1_100_000);
       expect(card.totals.unreadGapCents).toBe(0);
-      expect(card.totals.gapLabel).toBe("never reached a bank");
+      expect(card.totals.gapLabel).toBe("never reached an account the ledger reads");
     });
 
     test("the money figures are unchanged; only the label splits", () => {
@@ -274,7 +275,7 @@ describe("incomeCard", () => {
       expect(card.totals.gapCents).toBe(1_060_000);
       expect(card.totals.gapMagnitudeCents).toBe(1_060_000);
       expect(card.totals.unreadGapCents).toBe(200_000);
-      expect(card.totals.gapLabel).toContain("$8,600.00 of it never reached a bank");
+      expect(card.totals.gapLabel).toContain("$8,600.00 of it never reached an account the ledger reads");
       expect(card.totals.gapLabel).toContain("the other $2,000.00 is for paydays after Aug 12");
     });
 
@@ -360,9 +361,9 @@ describe("incomeCard", () => {
     // days the records already cover, through Aug 12 — so the pay did not reach a bank." (review of 0c9bc8d)
     expect(line.verdict).toBe(
       "11 paydays have passed since the last deposit on Jun 4. 9 of them fall on days already checked — so the pay " +
-        "did not reach a bank; the other 2 fall after Aug 12, the last day every account that pay lands in has been " +
-        "checked through — so the ledger has not looked for their deposits. Whether it was earned is a different " +
-        "question, and this card cannot answer it.",
+        "did not reach an account the ledger reads; the other 2 fall after Aug 12, the last day every account that " +
+        "pay lands in has been checked through — so the ledger has not looked for their deposits. Whether it was " +
+        "earned is a different question, and this card cannot answer it.",
     );
   });
 
@@ -383,7 +384,9 @@ describe("incomeCard", () => {
     );
     expect(forecast).toContain("9 fall on days already checked");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
-    expect(line.verdict).toContain("9 of them fall on days already checked — so the pay did not reach a bank;");
+    expect(line.verdict).toContain(
+      "9 of them fall on days already checked — so the pay did not reach an account the ledger reads;",
+    );
     expect(line.verdict).not.toContain("records already cover");
   });
 
@@ -400,7 +403,7 @@ describe("incomeCard", () => {
     expect(line.unreadDays).toBe(48);
     expect(line.silentPeriods).toBe(7);
     expect(line.checkedSilentPeriods).toBe(1);
-    expect(line.verdict).not.toContain("did not reach a bank");
+    expect(line.verdict).not.toContain("did not reach an account the ledger reads");
     // 🔴 Jul 9 is the day the records are CHECKED through, not the last day
     // imported — "that nothing has imported yet" said the second of the first
     // ⚖️ …in the live schedule's words, /budgets' and the forecast's (`unbankedIncomeFrontierClause`): "with no
@@ -451,12 +454,12 @@ describe("incomeCard", () => {
 
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
     expect(line.checkedSilentPeriods).toBe(3);
-    expect(line.verdict).toContain("the pay did not reach a bank");
+    expect(line.verdict).toContain("the pay did not reach an account the ledger reads");
     // ⚖️ the bar counts paydays checked on their day; of those, only the ones checked through their days to land are
     // said not to have reached a bank — Jul 23's run past the checked Jul 23 (review of 4b98f77)
     expect(line.verdict).toContain(
-      "2 of them, and their days to land, fall on days already checked — so the pay did not reach a bank; Jul 23's " +
-        "days to land run past Jul 23,",
+      "2 of them, and their days to land, fall on days already checked — so the pay did not reach an account the " +
+        "ledger reads; Jul 23's days to land run past Jul 23,",
     );
   });
 

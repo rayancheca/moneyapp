@@ -71,12 +71,12 @@ describe("PassedPaydaysCard — the pay page names what the forecast names, in i
     const r = render(passed);
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month with no deposit imported");
     expect(r.headingClass).toContain("text-warning");
-    expect(r.body).toBe("Pay that never reaches a bank cannot be projected as arriving.");
+    expect(r.body).toBe("Pay that never reaches an account the ledger reads cannot be projected as arriving.");
     expect(r.body).toBe(`${passedPaydaysWords(passed, formatDayLong).notProjected}.`);
     expect(r.body).not.toBe(IMPORTS_NOT_EARNINGS);
   });
 
-  test("checked on their days, inside their days to land: quiet, and no 'never reaches a bank'", () => {
+  test("checked on their days, inside their days to land: quiet, and no 'never reaches'", () => {
     const r = render({ ...october, checkedOccurrenceCount: 2, frontier: { kind: "day", through: "2026-10-09" } });
     expect(r.heading).toBe("2 paydays worth $2,283.84 already passed this month with no deposit imported");
     expect(r.headingClass).not.toContain("text-warning");

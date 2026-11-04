@@ -15,8 +15,9 @@ import { longDate } from "./labels";
  *
  * ⛔ No words of its own: the heading and body are the forecast's (`passedPaydaysWords`), its warning tone too — the
  * clause naming the paydays nobody has looked for, or where the ledger has checked every one the forecast's "Pay that
- * never reaches a bank cannot be projected as arriving" (`notProjected`). 🔴 It printed /budgets' closing sentence
- * there (`IMPORTS_NOT_EARNINGS`) under this same claim, because the forecast's said "Cash pay" of his payroll.
+ * never reaches an account the ledger reads cannot be projected as arriving" (`notProjected`). 🔴 It printed /budgets'
+ * closing sentence there (`IMPORTS_NOT_EARNINGS`) under this same claim, because the forecast's said "Cash pay" of his
+ * payroll.
  */
 export function PassedPaydaysCard({ passed }: { passed: NonNullable<SeriesDetail["unbankedPaydays"]> }) {
   const words = passedPaydaysWords(passed, formatDayLong);

@@ -131,8 +131,8 @@ describe("/spending — a window whose read paydays were not banked inside it", 
         id: "cash-earnings-shortfall-Cash job (weekly pay)",
         body:
           "Cash job (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,000.00, and none of it was banked inside " +
-          "the window: $1,000.00 (Aug 27) was paid by the deposit of Thu, Sep 3, 2026 and $3,000.00 never reached a " +
-          "bank.",
+          "the window: $1,000.00 (Aug 27) was paid by the deposit of Thu, Sep 3, 2026 and $3,000.00 never reached an " +
+          "account the ledger reads.",
       },
     ]);
   });
@@ -143,14 +143,15 @@ describe("/spending — a window whose read paydays were not banked inside it", 
     coverThrough("2026-09-12");
     expect(notesFor("2026-08-01", "2026-09-03").map((n) => n.body)).toEqual([
       "Cash job (weekly pay)'s paydays over Aug 6 – Sep 3, 2026 came to $5,000.00, of which $2,000.00 was banked " +
-        "inside the window and $3,000.00 never reached a bank.",
+        "inside the window and $3,000.00 never reached an account the ledger reads.",
     ]);
   });
 
   test("a shortfall no deposit ever paid", () => {
     coverThrough("2026-09-12");
     expect(notesFor("2026-08-01", "2026-08-21").map((n) => n.body)).toEqual([
-      "Cash job (weekly pay)'s paydays over Aug 6 – 20, 2026 came to $3,000.00, and none of it reached a bank.",
+      "Cash job (weekly pay)'s paydays over Aug 6 – 20, 2026 came to $3,000.00, and none of it reached an account " +
+        "the ledger reads.",
     ]);
   });
 
@@ -158,9 +159,9 @@ describe("/spending — a window whose read paydays were not banked inside it", 
     coverThrough("2026-09-05");
     expect(notesFor("2026-08-01", "2026-09-30").map((n) => n.body)).toEqual([
       "Cash job (weekly pay)'s paydays over Aug 6 – Sep 3, 2026 came to $5,000.00, of which $2,000.00 was banked " +
-        "inside the window and $3,000.00 never reached a bank; 1 more payday in the window falls after Sat, Sep 5, " +
-        "2026, the last day every account that pay lands in has been checked through — so the ledger has not looked " +
-        "for its deposit.",
+        "inside the window and $3,000.00 never reached an account the ledger reads; 1 more payday in the window " +
+        "falls after Sat, Sep 5, 2026, the last day every account that pay lands in has been checked through — so " +
+        "the ledger has not looked for its deposit.",
     ]);
   });
 
@@ -214,14 +215,14 @@ describe("/spending — what no deposit made up is Earned vs banked's figure, sp
     const card = incomeCard(bundle.db, TODAY)!;
     expect(card.totals.gapMagnitudeCents).toBe(360_000);
     expect(card.totals.gapLabel).toBe(
-      "$2,600.00 of it never reached a bank; $1,000.00 is for a payday whose days to land run past Sep 12, the " +
-        "last day every account that pay lands in has been checked through — so it is not banked yet.",
+      "$2,600.00 of it never reached an account the ledger reads; $1,000.00 is for a payday whose days to land run " +
+        "past Sep 12, the last day every account that pay lands in has been checked through — so it is not banked yet.",
     );
     expect(notesFor("2026-01-01", TODAY).map((n) => n.body)).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 30 – Sep 10, 2026 came to $7,000.00, of which $3,400.00 was banked " +
         "inside the window ($400.00 of it, from the deposit of Fri, Jul 31, 2026, went toward no payday), $1,000.00 " +
-        "is not banked yet, and $2,600.00 never reached a bank; Sep 10's days to land run past Sat, Sep 12, 2026, " +
-        "the last day every account that pay lands in has been checked through.",
+        "is not banked yet, and $2,600.00 never reached an account the ledger reads; Sep 10's days to land run past " +
+        "Sat, Sep 12, 2026, the last day every account that pay lands in has been checked through.",
     ]);
   });
 });
@@ -307,9 +308,9 @@ describe("/spending — money that crossed the window line is counted once", () 
   test("(A) Wed Sep 30 paid Thu Oct 1 early and Sep 17 was never banked: September says so, October agrees", () => {
     onlyDeposits(["2026-09-02", "2026-09-09", "2026-09-23", "2026-09-30", "2026-10-07"].map((d) => [d, 114_192]));
     expect(bodies("2026-09-01", "2026-09-30")).toEqual([
-      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
-        "inside the window and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the " +
-        "deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
+      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked inside " +
+        "the window and $1,141.92 never reached an account the ledger reads; another $1,141.92 banked inside the " +
+        "window, from the deposit of Wed, Sep 30, 2026, paid Oct 1's payday early.",
     ]);
     expect(bodies("2026-10-01", "2026-10-31")).toEqual([
       "Cash job (weekly pay)'s paydays over Oct 1 – 8, 2026 came to $2,283.84, of which $1,141.92 was banked inside " +
@@ -318,10 +319,13 @@ describe("/spending — money that crossed the window line is counted once", () 
     // the window over both, and the dashboard: the same $1,141.92 — once
     expect(bodies("2026-09-01", OCT_13)).toEqual([
       "Cash job (weekly pay)'s paydays over Sep 3 – Oct 8, 2026 came to $6,851.52, of which $5,709.60 was banked " +
-        "inside the window and $1,141.92 never reached a bank.",
+        "inside the window and $1,141.92 never reached an account the ledger reads.",
     ]);
     const card = incomeCard(bundle.db, OCT_13)!;
-    expect([card.totals.gapMagnitudeCents, card.totals.gapLabel]).toEqual([114_192, "never reached a bank"]);
+    expect([card.totals.gapMagnitudeCents, card.totals.gapLabel]).toEqual([
+      114_192,
+      "never reached an account the ledger reads",
+    ]);
   });
 
   /*
@@ -410,26 +414,29 @@ describe("/spending — the frontier between a Wednesday deposit and the Thursda
     onlyDeposits(wednesdays.map((d) => [d, 114_192]));
     coverThrough("2026-09-24");
     const card = incomeCard(bundle.db, OCT_13)!;
-    expect(card.totals.gapLabel).toMatch(/^\$7,993\.44 of it never reached a bank; the other \$2,283\.84 /);
+    expect(card.totals.gapLabel).toMatch(
+      /^\$7,993\.44 of it never reached an account the ledger reads; the other \$2,283\.84 /,
+    );
     // 🔴 Q3 read "$5,709.60 … and $9,135.36 never reached a bank; another $1,141.92 …, from the deposit of Wed, Sep
     // 30, 2026, paid Oct 1's payday early" — and the year, which nets that deposit as the dashboard does, $7,993.44
     expect(bodies("2026-07-01", "2026-09-30")).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 2 – Sep 24, 2026 came to $14,844.96, of which $6,851.52 was banked " +
-        "inside the window and $7,993.44 never reached a bank.",
+        "inside the window and $7,993.44 never reached an account the ledger reads.",
     ]);
     expect(bodies("2026-01-01", OCT_13)).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 2 – Sep 24, 2026 came to $14,844.96, of which $6,851.52 was banked " +
-        "inside the window and $7,993.44 never reached a bank; 1 more payday in the window falls after Thu, Sep 24, " +
-        "2026, the last day every account that pay lands in has been checked through — so the ledger has not looked " +
-        "for its deposit.",
+        "inside the window and $7,993.44 never reached an account the ledger reads; 1 more payday in the window " +
+        "falls after Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through — so " +
+        "the ledger has not looked for its deposit.",
     ]);
     // the months: July's and August's weeks, and September's money for Oct 1 — the $1,141.92 the quarter nets
     expect(bodies("2026-07-01", "2026-07-31")).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 2 – 30, 2026 came to $5,709.60, of which $1,141.92 was banked inside " +
-        "the window and $4,567.68 never reached a bank.",
+        "the window and $4,567.68 never reached an account the ledger reads.",
     ]);
     expect(bodies("2026-08-01", "2026-08-31")).toEqual([
-      "Cash job (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,567.68, and none of it reached a bank.",
+      "Cash job (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,567.68, and none of it reached an account " +
+        "the ledger reads.",
     ]);
     expect(bodies("2026-09-01", "2026-09-30")).toEqual([
       "Cash job (weekly pay) banked $1,141.92 more than its paydays over Sep 3 – 24, 2026 came to. $1,141.92 of it, " +
@@ -516,14 +523,14 @@ describe("/spending — money out on a day of its own, and a window whose payday
     // Q3 nets Sep 30's money against Sep 17, a payday it read; the year nets the return against Sep 30 — the dashboard
     expect(bodies("2026-07-01", "2026-09-30")).toEqual([]);
     expect(bodies("2026-01-01", OCT_13)).toEqual([
-      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked " +
-        "inside the window and $1,141.92 never reached a bank; 1 more payday in the window falls after Thu, Sep 24, " +
-        "2026, the last day every account that pay lands in has been checked through — so the ledger has not looked " +
-        "for its deposit.",
+      "Cash job (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,425.76 was banked inside " +
+        "the window and $1,141.92 never reached an account the ledger reads; 1 more payday in the window falls after " +
+        "Thu, Sep 24, 2026, the last day every account that pay lands in has been checked through — so the ledger " +
+        "has not looked for its deposit.",
     ]);
     // ⛔ …and the dashboard reads the one rule (`moneyOutOfWindow`): the year nets it, so the card names no day either
     const card = incomeCard(bundle.db, OCT_13)!;
-    expect(card.totals.gapLabel).toMatch(/^\$1,141\.92 of it never reached a bank; /);
+    expect(card.totals.gapLabel).toMatch(/^\$1,141\.92 of it never reached an account the ledger reads; /);
     expect(card.pay.map((l) => l.wentBackOut)).toEqual([[]]);
   });
 
@@ -580,13 +587,15 @@ describe("/spending — money out on a day of its own, and a window whose payday
     // Q3's $7,993.44, less the $1,141.92 Q4 banked, is the year's $6,851.52 — and the dashboard's
     expect(bodies("2026-07-01", "2026-09-30")).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 2 – Sep 24, 2026 came to $14,844.96, of which $6,851.52 was banked " +
-        "inside the window and $7,993.44 never reached a bank.",
+        "inside the window and $7,993.44 never reached an account the ledger reads.",
     ]);
     expect(bodies("2026-01-01", OCT_13)).toEqual([
       "Cash job (weekly pay)'s paydays over Jul 2 – Sep 24, 2026 came to $14,844.96, of which $7,993.44 was banked " +
-        "inside the window and $6,851.52 never reached a bank.",
+        "inside the window and $6,851.52 never reached an account the ledger reads.",
     ]);
-    expect(incomeCard(bundle.db, OCT_13)!.totals.gapLabel).toMatch(/^\$6,851\.52 of it never reached a bank; /);
+    expect(incomeCard(bundle.db, OCT_13)!.totals.gapLabel).toMatch(
+      /^\$6,851\.52 of it never reached an account the ledger reads; /,
+    );
   });
 });
 

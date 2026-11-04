@@ -62,7 +62,7 @@ export interface CashEarningsReading extends CashEarnings {
   seriesName: string;
   /**
    * The series' days to land (`toleranceDays`): a payday checked on its day but not through these, that no deposit
-   * settled, is "not banked yet" — never "never reached a bank" (`paydaysNotBankedYet`, `unbankedSplit`).
+   * settled, is "not banked yet" — never "never reached …" (`paydaysNotBankedYet`, `unbankedSplit`).
    */
   toleranceDays: number;
   /**

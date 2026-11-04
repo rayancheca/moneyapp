@@ -194,7 +194,7 @@ describe("the plan", () => {
    * (`unbankedSplit`). 🔴 It was the difference less only the unread part, so a payday inside its days to land was
    * counted in it — the script reported a figure the card does not print (review of c02a4b0; latent on his copy).
    */
-  test("its 'never reached a bank' is the card's: a checked payday inside its days to land is not in it", () => {
+  test("its 'never reached' is the card's: a checked payday inside its days to land is not in it", () => {
     // Wells Fargo read through Fri Oct 2: Thu Oct 1 is checked on its day, and its days to land run to Sun Oct 4
     for (let day = "2026-09-25"; day <= "2026-10-02"; day = addDays(day, 1)) {
       bundle.db.insert(dailyBalances).values({ accountId: WELLS, day, balanceCents: 100_000, basis: "derived" }).run();

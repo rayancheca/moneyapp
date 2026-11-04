@@ -202,8 +202,8 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
     const pay = incomeCard(bundle.db, TODAY)!.pay[0]!;
     // ⛔ "a payday" of Jul 3 alone (2026-10-30)
     expect(pay.gapLabel).toBe(
-      "$8,829.57 of it never reached a bank; the other $2,943.19 is for a payday after Jun 30, the last day every " +
-        "account that pay lands in has been checked through — so the ledger has not looked for it.",
+      "$8,829.57 of it never reached an account the ledger reads; the other $2,943.19 is for a payday after Jun 30, " +
+        "the last day every account that pay lands in has been checked through — so the ledger has not looked for it.",
     );
     // …and the verdict under it names Jul 3 the same way. 🔴 It read "4 paydays have passed since May 8 with no
     // deposit. 3 of them fall on days the records already cover, through Jun 30 — so the pay did not reach a bank."
@@ -211,9 +211,9 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
     // in the forecast's words, the tile's (2026-10-30)
     expect(pay.verdict).toBe(
       "4 paydays have passed since the last deposit on May 8. 3 of them fall on days already checked — so the pay " +
-        "did not reach a bank; the other one falls after Jun 30, the last day every account that pay lands in has " +
-        "been checked through — so the ledger has not looked for its deposit. Whether it was earned is a different " +
-        "question, and this card cannot answer it.",
+        "did not reach an account the ledger reads; the other one falls after Jun 30, the last day every account " +
+        "that pay lands in has been checked through — so the ledger has not looked for its deposit. Whether it was " +
+        "earned is a different question, and this card cannot answer it.",
     );
   });
 

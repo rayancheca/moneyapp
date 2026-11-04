@@ -954,7 +954,7 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
             r.checkedThrough,
             input.formatDay,
             surplusSpeaks,
-            // ⛔ the paydays the one rule matched (`unattachedPaydays`): named, never "never reached a bank"
+            // ⛔ the paydays the one rule matched (`unattachedPaydays`): named, never "never reached …"
             r.unattachedPaydays ?? [],
           );
 
@@ -1000,9 +1000,9 @@ const paydaysOf = (parts: readonly { paydays: readonly string[] }[]): string[] =
 /**
  * The shortfall note: what a period's paydays on READ days came to, what was banked inside the period, what deposits
  * outside it paid of the rest — named by day, "paid early" when before it (§6A 29) — and what no deposit made up, in
- * Earned vs banked's words ("never reached a bank"). Null when the period banked what its read paydays came to and has
- * nothing a period over it nets left to name — no money out on a day of its own, and none beyond its read paydays
- * that the surplus note is silent about.
+ * Earned vs banked's words ("never reached …", `NEVER_REACHED`). Null when the period banked what its read paydays
+ * came to and has nothing a period over it nets left to name — no money out on a day of its own, and none beyond its
+ * read paydays that the surplus note is silent about.
  *
  * ⚖️ THE SHORTFALL IS THE DASHBOARD'S (`payShortfall`'s `shortCents`, `payGap`, decision 55): the read paydays less
  * EVERY deposit banked inside the period, so the sentence's figures — banked, paid from outside, never — add up to
@@ -1128,11 +1128,16 @@ function payShortfallNote(
 
 /**
  * A shortfall with nothing banked inside the window, nothing from outside it and nothing still inside its days to land:
- * "and none of it reached a bank" — or, where rows the one rule matched answer it (`neverSplit`), "and all of it is
- * matched to the cent by rows of …", or both parts, each named.
+ * "and none of it reached an account the ledger reads" — or, where rows the one rule matched answer it (`neverSplit`),
+ * "and all of it is matched to the cent by rows of …", or both parts, each named.
+ *
+ * ⚖️ Of the accounts the ledger reads (`ACCOUNT_READ`), as the note for a stale schedule says it and the card's
+ * difference says the same paydays (`NEVER_REACHED`) — default built, not asked (2026-10-30). 🔴 Review of 87a440d0
+ * (MEDIUM): on his ledger copy read Oct 30, July read "…came to $5,235.00, and none of it reached a bank" while the
+ * calendar drew each of its paydays "never reached an account the ledger reads".
  */
 function noneBankedSplit(never: NeverSplit, rest: readonly string[], payday: (iso: string) => string): string {
-  if (never.matchedCents === 0) return ", and none of it reached a bank";
+  if (never.matchedCents === 0) return `, and none of it reached ${ACCOUNT_READ}`;
   if (never.matchedCents === never.cents) return `, and ${neverClauses(never, payday, { ofIt: false, bare: true })[0]}`;
   return `, and none of it was banked inside the window: ${AND_LIST.format(rest)}`;
 }

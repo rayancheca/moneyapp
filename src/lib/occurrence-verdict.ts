@@ -58,8 +58,11 @@ export type UnsettledReason =
    */
   | "unbanked"
   /**
-   * money IN, checked through its days to land: no deposit can still answer it — it "never reached a bank", the
-   * dashboard's words for the same payday (`unbankedSplit`). Still not `missed`: cash he was handed is no bank's to see.
+   * money IN, checked through its days to land: no deposit can still answer it — it "never reached an account the
+   * ledger reads" (`NEVER_REACHED`), the dashboard's and /spending's words for the same payday (`unbankedSplit`,
+   * `neverClauses`). Still not `missed`: cash he was handed is no bank's to see, and payroll paid into an account the
+   * ledger does not read is no statement's it reads. 🔴 Review of 87a440d0 (MEDIUM): this said the mark spoke "never
+   * reached a bank", the dashboard's words, after the mark alone had been narrowed.
    */
   | "never_banked"
   /** too few postings to know when this is due — the date itself is a guess */

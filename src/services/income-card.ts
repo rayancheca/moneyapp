@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/money";
 import { paydaysNotBankedYet, wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
 import {
   ACCOUNT_NOT_READ,
+  ACCOUNT_READ,
   LAST_CHECKED_DAY,
   NOT_CHECKED,
   noIncomeDayCheckedNote,
@@ -129,7 +130,7 @@ import { paydaySettlement } from "./payday-settlement";
 
 /** What a gap means, chosen by the same branch that measures it. */
 interface Gap {
-  /** implied − banked. POSITIVE means pay never reached a bank. */
+  /** implied − banked. POSITIVE means pay that has not banked. */
   gapCents: number;
   /**
    * The same difference as a magnitude, so the component never flips a sign.
@@ -143,7 +144,7 @@ interface Gap {
   /**
    * Of a POSITIVE difference, the part that is pay for paydays after the day
    * every account it lands in is checked through — money the ledger has not
-   * looked for, so it cannot be said to have "never reached a bank". Zero when
+   * looked for, so it cannot be said to have "never reached" one. Zero when
    * the difference is not positive. Part of `gapMagnitudeCents`, never added
    * to it.
    */
@@ -152,14 +153,14 @@ interface Gap {
   unreadPaydays: number;
   /**
    * Of a POSITIVE difference, the part for checked paydays no deposit settled whose days to land are not all checked
-   * yet (`paydaysNotBankedYet`, `unbankedSplit`) — "not banked yet", the forecast's words, never "never reached a
-   * bank". Zero when the difference is not positive. Part of `gapMagnitudeCents`, never added to it.
+   * yet (`paydaysNotBankedYet`, `unbankedSplit`) — "not banked yet", the forecast's words, never "never reached"
+   * (`NEVER_REACHED`). Zero when the difference is not positive. Part of `gapMagnitudeCents`, never added to it.
    */
   notBankedYetCents: number;
   /** how many paydays `notBankedYetCents` is for, rows the one rule matched to them included */
   notBankedYetPaydays: number;
   /**
-   * …and the rest of the checked part: what "never reached a bank" says of — the difference less `unreadGapCents`
+   * …and the rest of the checked part: what "never reached" says of — the difference less `unreadGapCents`
    * and `notBankedYetCents` (`unbankedSplit`). Zero when the difference is not positive. ⛔ The card's own figure, for
    * every reader that reports it (the rate-history write's guard): 🔴 re-derived as the difference less the unread part
    * alone, a payday inside its days to land was counted in it (review of c02a4b0).
@@ -168,7 +169,7 @@ interface Gap {
   /**
    * Of `neverCents`, the part for paydays a row matches to the cent that sits unattached (`unattachedPaydays`) — still
    * in `neverCents` and in the difference (linking is his act or the import's), and named by the rows' day and amount
-   * in `gapLabel`, never "never reached a bank".
+   * in `gapLabel`, never "never reached".
    */
   unattachedCents: number;
   /** the rows `unattachedCents` is — each matching a payday of the window to the cent, unattached — oldest first */
@@ -179,8 +180,8 @@ interface Gap {
    */
   notBankedYetUnattached: readonly UnattachedMatch[];
   /**
-   * the clause that follows the magnitude, e.g. "never reached a bank" — and after it, the money that went back out on
-   * a day of its own, in /spending's words (`withMoneyOut`)
+   * the clause that follows the magnitude, e.g. "never reached an account the ledger reads" (`NEVER_REACHED`) — and
+   * after it, the money that went back out on a day of its own, in /spending's words (`withMoneyOut`)
    */
   gapLabel: string;
 }
@@ -207,6 +208,11 @@ interface Unread {
  * tile's spelling of the same day, one card over (`SpendingPace.paydaysLeftOut`). 🔴 Review of 082a0ef5 (LOW): read Jan
  * 8, 2027, Wells Fargo checked through Dec 31, the tile said "It falls after Dec 31, 2026, the last day …" and this
  * card "It falls after Dec 31, the last day …" — and a bare "Dec 31" in January is a day eleven months away.
+ *
+ * ⛔ …every day, the rows the card names too — the verdict's frontier clause takes it for them (`formatRowDay`), as the
+ * tile's line does — and a list of days says each year once (`formatDaysYearOnce`): "on Dec 17, Dec 24, and Dec 31,
+ * 2026". 🔴 Review of 87a440d0 (MEDIUM): two rules for a row's day, the clause's against the newest row and this one
+ * against today, met on one card in January.
  */
 type DayWord = (iso: string) => string;
 
@@ -265,7 +271,7 @@ function gapOf(
   };
 }
 
-/** The difference's never part as the card says it: "$X of it never reached a bank", or bare (`neverClauses`). */
+/** The difference's never part as the card says it: "$X of it never reached …", or bare (`neverClauses`). */
 const cardNeverClauses = (never: NeverSplit, bare: boolean, day: DayWord): string[] =>
   neverClauses(never, day, { ofIt: true, bare });
 
@@ -393,13 +399,13 @@ export interface IncomePayLine extends Gap {
   checkedSilentPeriods: number;
   /**
    * Of those, the paydays no deposit settled whose days to land run past `checkedThrough`
-   * (`silentPaydaysNotBankedYet`), oldest first: "not banked yet", never counted among the pay that "did not reach a
-   * bank" — the paydays /spending's note for a stale schedule names (`CashEarningsReading.checkedSilentNotBankedYet`).
+   * (`silentPaydaysNotBankedYet`), oldest first: "not banked yet", never counted among the pay that "did not reach"
+   * one — the paydays /spending's note for a stale schedule names (`CashEarningsReading.checkedSilentNotBankedYet`).
    */
   checkedSilentNotBankedYet: readonly string[];
   /**
    * Of the silence's checked paydays — inside their days to land too — those a row matches to the cent that sits
-   * unattached (`CashEarningsReading.unattachedPaydays`), oldest first — never "the pay did not reach a bank", never
+   * unattached (`CashEarningsReading.unattachedPaydays`), oldest first — never "the pay did not reach …", never
    * "with no deposit" nor "not banked yet", and still counted in the silence.
    */
   silenceUnattached: readonly UnattachedMatch[];
@@ -558,6 +564,11 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">, day: DayWord): string 
    * payday a row answers. 🔴 Found sweeping the rule's readers (2026-10-29): on a copy of his ledger with Oct 1, 8 and 15
    * filed, Oct 22's row unattached and today Nov 2, the verdict read "1 falls on a day already checked, with no deposit"
    * one line over the difference naming the row.
+   *
+   * ⛔ …and its rows in the card's day (`DayWord`), as the difference under it names them — never the clause's own
+   * spelling, against the newest row. 🔴 Review of 87a440d0 (MEDIUM): read Jan 8, 2027, Dec 31's +$1,141.92 attached
+   * to nothing and Wells Fargo checked through Jan 4, it said "…by a row of $1,141.92 on Dec 31 that is not attached to
+   * it" after "since the last deposit on Dec 24, 2026", over the difference's "…on Dec 31, 2026…".
    */
   const unread = unbankedIncomeFrontierClause(
     {
@@ -566,6 +577,7 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">, day: DayWord): string 
       frontier: checkedThrough === null ? { kind: "unchecked" } : { kind: "day", through: checkedThrough },
       unattached: matched,
     },
+    day,
     day,
   );
   // "with no deposit" is the clause's to say, and only of the days it checked
@@ -619,11 +631,12 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">, day: DayWord): string 
 }
 
 /**
- * What a stale schedule's checked silence says: "did not reach a bank" of the paydays checked through their days to
- * land, and "not banked yet" of those still inside them (`checkedSilentNotBankedYet`) — the difference line's split
- * (`unbankedSplit`), in the words /spending's note for a stale schedule says it in (`payNotBankedYet`).
+ * What a stale schedule's checked silence says: "did not reach an account the ledger reads" of the paydays checked
+ * through their days to land, and "not banked yet" of those still inside them (`checkedSilentNotBankedYet`) — the
+ * difference line's split (`unbankedSplit`), in the words /spending's note for a stale schedule says it in
+ * (`payNotBankedYet`).
  *
- * ⚖️ "Did not reach a bank" only of a payday checked through its days to land (`paydayLandingIsRead`). 🔴 Review of
+ * ⚖️ "Did not reach" only of a payday checked through its days to land (`paydayLandingIsRead`). 🔴 Review of
  * 4b98f77: weekly pay through Aug 6, Chase read through Sat Sep 5, today Sep 15 — this said "4 of them fall on days the
  * records already cover, through Sep 5 — so the pay did not reach a bank" one line under "$3,000.00 of it never
  * reached a bank; $1,000.00 is for paydays whose days to land run past Sep 5 … — so it is not banked yet" of Thu Sep 3.
@@ -642,6 +655,10 @@ function verdictFor(line: Omit<IncomePayLine, "verdict">, day: DayWord): string 
  * the records already cover, through Oct 26 — so the pay did not reach a bank; the other one falls after Oct 26, …" of
  * Oct 1, 8, 15 and 22. The checked day is named where the breakdown names it in full: after it, or where the days to
  * land run past it.
+ *
+ * ⚖️ …and of the accounts the ledger reads (`ACCOUNT_READ`), as the difference above it says the same paydays
+ * (`NEVER_REACHED`) — default built, not asked (2026-10-30). 🔴 Review of 87a440d0 (MEDIUM): "so the pay did not reach
+ * a bank" beside the card's own caveat, "payroll can land in an account the ledger does not read".
  */
 function staleChecked(
   checked: number,
@@ -659,15 +676,15 @@ function staleChecked(
    */
   const matchedInGrace = matched.filter((m) => notBankedYet.includes(m.date));
   const notYet = notBankedYet.filter((d) => !matchedInGrace.some((m) => m.date === d));
-  // ⛔ "did not reach a bank" only of the paydays no row matches unattached (`silenceUnattached`): those are named
+  // ⛔ "did not reach" only of the paydays no row matches unattached (`silenceUnattached`): those are named
   const pastCount = checked - notYet.length;
   const didNot =
     matched.length === 0
-      ? "so the pay did not reach a bank"
+      ? `so the pay did not reach ${ACCOUNT_READ}`
       : matchedOfWords(matched, pastCount, day) +
         (matched.length >= pastCount
           ? ""
-          : `, and for the other ${pastCount - matched.length} the pay did not reach a bank`);
+          : `, and for the other ${pastCount - matched.length} the pay did not reach ${ACCOUNT_READ}`);
   const after = (dayNamed: boolean): string =>
     unlooked <= 0
       ? ""
@@ -892,6 +909,10 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
  * 99.6% of the implied pay rounds to 100 and is still not "everything"; reading
  * the branch off the display figure is how a card says the opposite of what it
  * measured.
+ *
+ * ⚖️ "Nothing has reached `ACCOUNT_READ`": an absence, said of where the ledger looks, as the difference under it says
+ * it (`NEVER_REACHED`) beside the caveat's account the ledger does not read — default built, not asked (2026-10-30,
+ * review of 87a440d0). What did reach one "reached a bank": the ledger read it there.
  */
 function summaryFor(
   bankedSharePct: number | null,
@@ -916,7 +937,7 @@ function summaryFor(
     return `No payday from a confirmed schedule falls inside this window, ${deposits}, so there is nothing to reconcile yet. ${measured}`;
   }
   if (bankedCents === 0) {
-    return `Nothing has reached a bank, against ${formatCents(impliedCents)} the confirmed schedule implies you earned. ${measured}`;
+    return `Nothing has reached ${ACCOUNT_READ}, against ${formatCents(impliedCents)} the confirmed schedule implies you earned. ${measured}`;
   }
   if (bankedCents === impliedCents) {
     return `${formatCents(bankedCents)} has reached a bank — exactly what the confirmed schedule implies you earned. ${measured}`;

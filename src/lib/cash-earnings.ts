@@ -426,7 +426,7 @@ export function silenceFrom(lastBankedOn: string | null, startedOn: string): str
 
 /** Earned vs banked's difference, and the part of it the ledger has looked for. */
 export interface PayGap {
-  /** implied − banked. POSITIVE means pay that did not reach a bank inside the window; negative, a surplus */
+  /** implied − banked. POSITIVE means pay that did not bank inside the window; negative, a surplus */
   gapCents: number;
   /**
    * Of a POSITIVE gap, the part that is pay for paydays after the day every account it lands in is checked through —
@@ -438,8 +438,9 @@ export interface PayGap {
 }
 
 /**
- * ⛔ THE ONE SUBTRACTION behind "never reached a bank" — the dashboard's Earned vs banked (`income-card`) and
- * /spending's shortfall note (`payShortfall`) both read it here, so the two cannot drift.
+ * ⛔ THE ONE SUBTRACTION behind "never reached …" (`NEVER_REACHED`, of the accounts the ledger reads since 2026-10-30)
+ * — the dashboard's Earned vs banked (`income-card`) and /spending's shortfall note (`payShortfall`) both read it here,
+ * so the two cannot drift.
  *
  * ⚖️ Decision 55 (approved with its measured figures): the dashboard's "$11,117.00 of it never reached a bank" is what
  * the paydays imply less EVERY attributed deposit inside the window — net, so money banked inside it that paid no
@@ -462,7 +463,7 @@ export function payGap(impliedCents: number, bankedCents: number, unreadImpliedC
 export interface UnbankedSplit {
   /** for paydays no deposit settled whose days to land are not all checked yet (`paydayLandingIsRead`) */
   notBankedYetCents: number;
-  /** the rest — checked through their days to land: "never reached a bank" */
+  /** the rest — checked through their days to land: "never reached …" (`NEVER_REACHED`) */
   neverCents: number;
 }
 
@@ -470,16 +471,16 @@ export interface UnbankedSplit {
  * ⛔ THE ONE SPLIT of checked pay no deposit made up — the dashboard's Earned vs banked (`income-card`, over `payGap`'s
  * read part) and /spending's shortfall note (`payShortfall`, over what no deposit inside the window or out made up).
  *
- * ⚖️ "Never reached a bank" only of a payday the ledger has checked through its days to land; one still inside them
+ * ⚖️ "Never reached" only of a payday the ledger has checked through its days to land; one still inside them
  * that no deposit settled is "not banked yet", the forecast's words (`notProjectedSubject`). `inGraceCents` is what
  * those paydays come to, capped at the money no deposit made up — which is theirs first, as `payGap` gives the unread
  * part first: no deposit settled them, so none of the netted money (decision 55) can be said to have paid them.
  * 🔴 Review of 878c3d5: Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast and "$1,000.00
  * of it never reached a bank" on the dashboard.
  *
- * ⚖️ …past its days to land, "never reached a bank" of a PAYROLL-era payday too, though a later deposit can still pay
- * it (settlement walks back, as Sep 23's $4,567.68 paid Sep 3, 10 and 17) — default built, not asked (2026-10-21; he
- * said "no more questions"): decision 55's words, said as of the checked records and re-read on every load, so the
+ * ⚖️ …past its days to land, "never reached" of a PAYROLL-era payday too, though a later deposit can still pay it
+ * (settlement walks back, as Sep 23's $4,567.68 paid Sep 3, 10 and 17) — default built, not asked (2026-10-21; he
+ * said "no more questions"): decision 55's figure, said as of the checked records and re-read on every load, so the
  * deposit that pays one moves it out of the figure the day it is imported. "Not banked yet" for every payday of an era
  * still paid would never say "never" of a payroll week months unpaid. Measured on his ledger copy 2026-10-21: no
  * payroll-era payday is unpaid through the checked Thu Sep 24 — the $11,117.00 is eleven cash weeks less June's $400.00.

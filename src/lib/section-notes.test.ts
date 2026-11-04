@@ -1662,8 +1662,8 @@ describe("cashEarningsSectionNotes", () => {
       expect(out[0]!.id).toBe("cash-earnings-shortfall-It America LLC (weekly pay)");
       expect(out[0]!.body).toBe(
         "It America LLC (weekly pay)'s paydays over Aug 6 – 27, 2026 came to $4,282.92, and none of it was banked " +
-          "inside the window: $1,141.92 (Aug 27) was paid by the deposit of 2026-09-24 and $3,141.00 never reached a " +
-          "bank.",
+          "inside the window: $1,141.92 (Aug 27) was paid by the deposit of 2026-09-24 and $3,141.00 never reached " +
+          "an account the ledger reads.",
       );
     });
 
@@ -1696,7 +1696,7 @@ describe("cashEarningsSectionNotes", () => {
       expect(note!.body).toBe(
         "It America LLC (weekly pay)'s paydays over Jun 4 – 25, 2026 came to $4,188.00, of which $1,447.00 was " +
           "banked inside the window ($400.00 of it, from the deposit of 2026-06-05, went toward no payday) and " +
-          "$2,741.00 never reached a bank.",
+          "$2,741.00 never reached an account the ledger reads.",
       );
     });
 
@@ -1711,15 +1711,17 @@ describe("cashEarningsSectionNotes", () => {
         neverBankedCents: 523_500,
       });
       expect(note!.body).toBe(
-        "It America LLC (weekly pay)'s paydays over Jul 2 – 30, 2026 came to $5,235.00, and none of it reached a bank.",
+        "It America LLC (weekly pay)'s paydays over Jul 2 – 30, 2026 came to $5,235.00, and none of it reached an " +
+          "account the ledger reads.",
       );
     });
 
     test("paydays after the checked day are named as not looked for (decision 65), never as unbanked", () => {
       const [note] = august({ unlookedPaydays: 2 });
       expect(note!.body).toContain(
-        " never reached a bank; 2 more paydays in the window fall after 2026-09-24, the last day every account that " +
-          "pay lands in has been checked through — so the ledger has not looked for their deposits.",
+        " never reached an account the ledger reads; 2 more paydays in the window fall after 2026-09-24, the last " +
+          "day every account that pay lands in has been checked through — so the ledger has not looked for their " +
+          "deposits.",
       );
       const [one] = august({ unlookedPaydays: 1 });
       expect(one!.body).toContain(
@@ -1740,7 +1742,7 @@ describe("cashEarningsSectionNotes", () => {
       });
       expect(note!.body).toContain(
         "none of it was banked inside the window: $1,141.92 (Oct 1) was paid early, by the deposit of 2026-09-30 and " +
-          "$1,141.92 never reached a bank.",
+          "$1,141.92 never reached an account the ledger reads.",
       );
     });
 
@@ -1754,7 +1756,7 @@ describe("cashEarningsSectionNotes", () => {
       });
       expect(note!.body).toContain(
         ": $1,047.00 (Aug 6) was paid early, by the deposit of 2026-07-30, $2,188.92 (Aug 20 and Aug 27) was paid by " +
-          "the deposit of 2026-09-24, and $1,047.00 never reached a bank.",
+          "the deposit of 2026-09-24, and $1,047.00 never reached an account the ledger reads.",
       );
     });
 
@@ -1903,8 +1905,8 @@ describe("cashEarningsSectionNotes", () => {
           ],
         })[0]!.body;
       expect(across(false)).toContain(
-        "and $1,141.92 never reached a bank; another $1,141.92 banked inside the window, from the deposit of " +
-          "2026-09-03, paid Aug 27's payday.",
+        "and $1,141.92 never reached an account the ledger reads; another $1,141.92 banked inside the window, from " +
+          "the deposit of 2026-09-03, paid Aug 27's payday.",
       );
       // "none of them" of the lead's four paydays — of one, "that payday" (the test of Sep 21 – 27 below)
       expect(across(true)).toContain(
@@ -2227,8 +2229,8 @@ describe("cashEarningsSectionNotes", () => {
       });
       expect(out).toEqual([
         "It America LLC (weekly pay)'s paydays over Sep 3 – 24, 2026 came to $4,567.68, of which $3,925.76 was " +
-          "banked inside the window and $641.92 never reached a bank; another $1,141.92 banked inside the window, " +
-          "from the deposit of 2026-09-30, paid Oct 1's payday early.",
+          "banked inside the window and $641.92 never reached an account the ledger reads; another $1,141.92 banked " +
+          "inside the window, from the deposit of 2026-09-30, paid Oct 1's payday early.",
       ]);
     });
 

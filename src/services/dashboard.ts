@@ -410,15 +410,21 @@ function spendingPace(db: AppDatabase, today: string): SpendingPace | null {
   const waitsForIncome = !withheld && cashFlow.incomeUnread;
   const figure = withheld || waitsForIncome ? null : freeToSpendCents;
   const passed = forecast.unbankedIncome;
+  // ⛔ every day the line names against today, the rows it names too — Earned vs banked's spelling, one card over.
+  // 🔴 Review of 87a440d0 (MEDIUM): its rows were the clause's, against the newest row — Fri Jan 1's payroll landed Thu
+  // Dec 31 and attached to nothing, read Jan 8, 2027, the line said "…a row of $1,000.00 on Dec 31 …" under the
+  // card's "…on Dec 31, 2026 …"
+  const tileDay = (iso: string): string => formatDayShortIn(iso, today);
   const paydaysLeftOut =
     figure === null || passed.totalCents <= 0
       ? null
       : passedPaydaysLeftOut(
           passed,
           "Free to spend",
-          (iso) => formatDayShortIn(iso, today),
+          tileDay,
           // ⚡ read only where the one rule matched a row (`postedIncomeHolds`)
           postedIncomeHolds(db, agentsCashOfRender(db), passed.unattached ?? [], period.from, period.to),
+          tileDay,
         );
   /*
    * ⛔ The proof proves a rendered figure, so it is built only beside one (`SpendingPace.provenance`). 🔴 It was built on

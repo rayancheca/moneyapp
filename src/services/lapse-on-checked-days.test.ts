@@ -678,8 +678,8 @@ describe("an account no statement will ever come for does not hold the lapse bac
     // the dashboard's income card: four paydays since Sep 24, none of them on a day a statement covered
     const line = incomeCard(bundle.db, OCT_29)!.pay.find((l) => l.seriesId === PAY)!;
     expect(line).toMatchObject({ checkedThrough: "2026-09-24", silentPeriods: 4, checkedSilentPeriods: 0 });
-    expect(line.gapLabel).not.toBe("never reached a bank");
-    expect(line.verdict).not.toContain("did not reach a bank");
+    expect(line.gapLabel).not.toBe("never reached an account the ledger reads");
+    expect(line.verdict).not.toContain("did not reach an account the ledger reads");
     expect(line.verdict).toContain("so the ledger has not looked");
     // /budgets' and /recurring's passed paydays, and /spending's note, read the same day
     const unbanked = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-10-01", OCT_29);

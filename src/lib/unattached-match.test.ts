@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDayShort } from "@/lib/format-date";
+import { formatDayShort, formatDayShortIn } from "@/lib/format-date";
 import {
   countedDepositWords,
   namedTogether,
@@ -284,18 +284,37 @@ describe("neverSplit and neverClauses — the never figure, less what the rows a
     ]);
   });
 
+  // ⛔ …each of its lists in the sentence's own short day, its year said once (`formatDaysYearOnce`): read Jan 8, 2027
+  // Earned vs banked spells December against today (review of 87a440d0, MEDIUM: "Dec 17, 2026, Dec 24, 2026, and …")
+  it("lists its paydays and its rows each with their year said once", () => {
+    const december: UnattachedMatch[] = ["2026-12-17", "2026-12-24"].map((d, i) => ({
+      date: d,
+      row: row(`d${i}`, d, 114192),
+    }));
+    const inJanuary = (iso: string): string => formatDayShortIn(iso, "2027-01-08");
+    expect(neverClauses(neverSplit(200000, december), inJanuary, { ofIt: true, bare: true })).toEqual([
+      "all of it is for the paydays of Dec 17 and Dec 24, 2026, which rows of $1,141.92 on Dec 17 and Dec 24, 2026 " +
+        "that are not attached to it match to the cent",
+    ]);
+    expect(unattachedRowsWords(december, inJanuary)).toBe(
+      "rows of $1,141.92 on Dec 17 and Dec 24, 2026 that are not attached to it",
+    );
+  });
+
   it("says the figure as the card says it, of it, and as the note says it, plain", () => {
     const rows = "rows of $1,141.92 on Oct 1, Oct 8, Oct 15, and Oct 22 that are not attached to it";
-    expect(neverClauses(neverSplit(1111700, []), fmt, { ofIt: true, bare: true })).toEqual(["never reached a bank"]);
+    expect(neverClauses(neverSplit(1111700, []), fmt, { ofIt: true, bare: true })).toEqual([
+      "never reached an account the ledger reads",
+    ]);
     expect(neverClauses(neverSplit(456768, four), fmt, { ofIt: true, bare: true })).toEqual([
       `all of it is matched to the cent by ${rows}`,
     ]);
     expect(neverClauses(neverSplit(1568468, four), fmt, { ofIt: true, bare: false })).toEqual([
-      "$11,117.00 of it never reached a bank",
+      "$11,117.00 of it never reached an account the ledger reads",
       `$4,567.68 is matched to the cent by ${rows}`,
     ]);
     expect(neverClauses(neverSplit(228384, four.slice(0, 1)), fmt, { ofIt: false, bare: false })).toEqual([
-      "$1,141.92 never reached a bank",
+      "$1,141.92 never reached an account the ledger reads",
       "$1,141.92 is matched to the cent by a row of $1,141.92 on Oct 1 that is not attached to it",
     ]);
     expect(neverClauses(neverSplit(114192, four.slice(0, 1)), fmt, { ofIt: false, bare: false })).toEqual([
