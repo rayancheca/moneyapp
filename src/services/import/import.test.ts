@@ -28,6 +28,7 @@ import { dedupeHash, fileSha256 } from "@/lib/hash";
 import { normalizeDescription } from "@/lib/normalize";
 import { attachTransactions, importFilingsByRead } from "@/services/recurring-links";
 import { importFilingLine } from "@/services/recurring-import-links";
+import { setTransactionFlags } from "@/services/bulk-edit";
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "synthetic");
 
@@ -1767,7 +1768,7 @@ describe("an import links what it brought in to the series that already carry it
   /*
    * A re-read retires the read before it with its rows (superseded), each still filed `confirmed_series` and
    * linked, and /imports lists a retired read too (STATUS_META "Superseded": 176 on his ledger copy, 2026-10-30) —
-   * so only the read-back's `active` guard keeps one filing from being named under both reads.
+   * so only the read-back's live-row guard (`LIVE_ROW`) keeps one filing from being named under both reads.
    * 🔴 Review of 30f412ab (2026-10-30): no test held that guard; with it deleted, every test passed.
    */
   test("…and a re-read names it under the read in place only, never under the read it retired", async () => {
@@ -1788,6 +1789,81 @@ describe("an import links what it brought in to the series that already carry it
     });
     const named = [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)]);
     expect(named).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+  });
+
+  /** what /imports names under each read, in the report's words */
+  const namedByRead = () =>
+    [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)] as const);
+
+  /*
+   * ⚖️ default built, not asked (2026-10-30): a row still in the ledger (`LIVE_ROW`) keeps its line. The sheet's
+   * "Exclude from analytics" box sets the row's status alone (`setTransactionFlags`): it files nothing again and
+   * detaches nothing, so the filing stands — and is named.
+   * 🔴 Review of d2180a48 (2026-10-30): the read-back asked `status = 'active'`, so excluding one of his five payroll
+   * rows would have said "It America LLC (weekly pay): 4 rows filed under Income > Salary", all five still filed.
+   */
+  test("…and a row he excludes from analytics is still named: excluding neither files it again nor detaches it", async () => {
+    const { june, rent } = await rentHeLinkedInJune();
+    await importStatementFiles(bundle.db, [load("chase", JULY_CHECKING)]);
+    const july = rowOn("2026-07-01", "ACH PYMT WESTVIEW");
+
+    setTransactionFlags(bundle.db, july.id, { exclude: true });
+
+    // out of analytics, and filed and linked as the import left it: its status alone has changed
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, july.id)).get()).toMatchObject({
+      status: "excluded",
+      categoryId: june.categoryId,
+      categorizationSource: "confirmed_series",
+      recurringSeriesId: rent,
+    });
+    expect(namedByRead()).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+  });
+
+  /*
+   * …and one a later gap holds. A statement prints its balances (the checking CSV prints none, so its rows are never
+   * held): the card's next import reconciles every month of it again (`reconcileAccounts`), and a month whose rows no
+   * longer add up holds its own — the one its import filed with them, still filed and linked, waiting on the gap.
+   * Measured on this fixture: a $9.00 row recorded by hand on Oct 20 opens a $9.00 gap in Oct 15 → Nov 14.
+   */
+  test("…and one a later gap holds is still named, under its own read", async () => {
+    await importStatementFiles(bundle.db, [load("discover", "statements", "discover-card-2024-09-15_2024-10-14.pdf")]);
+    const october = rowOn("2024-10-07", "SPOTIFY");
+    const spotify = registerSeries("Spotify");
+    setLink(october.id, spotify, "user");
+    // the merchant map names Spotify no more: November's charge lands unfiled, and its import files it
+    bundle.db.update(merchants).set({ defaultCategoryId: null }).where(eq(merchants.id, october.merchantId!)).run();
+    await importStatementFiles(bundle.db, [load("discover", "statements", "discover-card-2024-10-15_2024-11-14.pdf")]);
+    const november = rowOn("2024-11-07", "SPOTIFY");
+    const [raw, day, accountId] = ["PARKING — recorded by hand", "2024-10-20", november.accountId];
+    bundle.db
+      .insert(transactions)
+      .values({
+        accountId,
+        postedOn: day,
+        amountCents: -900,
+        rawDescription: raw,
+        normalizedDescription: normalizeDescription(raw),
+        dedupeHash: dedupeHash({ accountId, postedOn: day, amountCents: -900, rawDescription: raw, occurrenceIndex: 0 }),
+      })
+      .run();
+
+    await importStatementFiles(bundle.db, [load("discover", "statements", "discover-card-2024-11-15_2024-12-14.pdf")]);
+
+    expect(bundle.db.select().from(statementPeriods).all().filter((p) => p.reconciliation === "gap")).toMatchObject([
+      { periodStart: "2024-10-15", gapCents: 900, importFileId: november.importFileId },
+    ]);
+    // held with its month's rows, and filed and linked as its import left it
+    expect(bundle.db.select().from(transactions).where(eq(transactions.id, november.id)).get()).toMatchObject({
+      status: "quarantined",
+      categoryId: october.categoryId,
+      categorizationSource: "confirmed_series",
+      recurringSeriesId: spotify,
+    });
+    const december = rowOn("2024-12-07", "SPOTIFY");
+    expect(namedByRead()).toEqual([
+      [november.importFileId, ["Spotify: 1 row filed under Subscriptions > Streaming"]],
+      [december.importFileId, ["Spotify: 1 row filed under Subscriptions > Streaming"]],
+    ]);
   });
 });
 

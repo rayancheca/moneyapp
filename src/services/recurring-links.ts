@@ -3,7 +3,7 @@ import { withPreMutationTransaction } from "@/db/backup";
 import type { AppDatabase } from "@/db/client";
 import type { CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
-import { transactions, type CategorizationSource } from "@/db/schema/transactions";
+import { LIVE_ROW, transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
 import { formatCategoryPath } from "@/lib/category-path";
@@ -331,12 +331,17 @@ export function fileImportedLinks(
  * ledger by the read whose rows they are, one per series and category in the series' name order — /imports names it
  * under that read in the report's words (`importFilingLine`), whichever path filed it: an upload, an un-import's
  * restore, a gap accepted, the scripts. For as long as it is true: a row he or a rule has filed since is no longer the
- * import's (`notUserOwned` lets a rule file it again), and a row no longer linked names no series.
+ * import's (`notUserOwned` lets a rule file it again), and a row no longer linked names no series. ⚖️ default built,
+ * not asked (2026-10-30): it names every row still in the ledger (`LIVE_ROW`) — one he excludes from analytics, or one
+ * a later gap holds, is filed as it was; only a re-read's retired rows (superseded) are not the ledger's, and the read
+ * in place names them.
  *
  * 🔴 Review of 304c59a4 (2026-10-30): an import's filing was said by the two scripts only — the /imports upload dropped
  * its report, and an un-import's restore and a gap acceptance discarded theirs. None stands on his ledger (0 rows
  * filed as `confirmed_series`, his copy of 2026-10-30): the payroll the Wells Fargo import of 2026-10-29 left unfiled
  * was filed on his answer by a guarded script, as his own (scripts/file-wells-fargo-october-2026-10-29.ts).
+ * 🔴 Review of d2180a48 (2026-10-30): it asked `status = 'active'`, so excluding one of his five payroll rows would
+ * have said "4 rows filed under Income > Salary", all five still filed, and a filing a later gap held went unsaid.
  */
 export function importFilingsByRead(db: AppDatabase): Map<string, ImportFiling[]> {
   const idx = loadCategoryIndex(db);
@@ -352,8 +357,8 @@ export function importFilingsByRead(db: AppDatabase): Map<string, ImportFiling[]
     .innerJoin(recurringSeries, eq(recurringSeries.id, transactions.recurringSeriesId))
     .where(
       and(
-        // a re-read supersedes the retired read's rows, still filed and linked — the read in place names them
-        eq(transactions.status, "active"),
+        // a row he excludes, or a gap holds, is still the ledger's; a re-read's retired rows (superseded) are not
+        inArray(transactions.status, [...LIVE_ROW]),
         eq(transactions.categorizationSource, "confirmed_series"),
         isNotNull(transactions.importFileId),
       ),
