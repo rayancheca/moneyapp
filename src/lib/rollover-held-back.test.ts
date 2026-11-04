@@ -293,9 +293,22 @@ describe("rolloverWaitsSentence — whose day the carry waits on, as it asked it
    * set it — and now unwritable: a cash-only day carries its row's facts, or does not compile.
    */
   test("⛔ a cash-only day carries the facts it is worded from — none is made up for it", () => {
+    // ⚠️ the typecheck gate's guard (`pnpm typecheck`: TS2578 here once `cash` turns optional) — vitest never reads it
     // @ts-expect-error — a cash-only day with no wallet count and no first day of its own
     const bare: RolloverReadOn = { whose: "cash-only", ancestor: null };
-    expect(bare).not.toHaveProperty("cash");
+    /*
+     * …and the run's: handed one anyway, the panel makes neither up — it cannot word a day it was not given, and
+     * throws. 🔴 Review of efdf2de0 (L33): this asked whether `bare` has a `cash`, true of the literal whatever the
+     * panel does, so with `?? { spentFromSince: reference, spentFromWallets: 1 }` put back it stayed green over
+     * "…spent only from a cash wallet since Oct 1, …" — one wallet, and the graded window's first day.
+     */
+    let said = "";
+    try {
+      said = rolloverWaitsSentence(bare, REF);
+    } catch {
+      // nothing said: no wallet and no day of its own to say
+    }
+    expect(said).not.toMatch(/a cash wallet|since Oct 1/);
     // …and one that carries them is worded from them, never from the graded window's first day
     const cash = { spentFromSince: "2026-04-01", spentFromWallets: 2 };
     const sentence = rolloverWaitsSentence({ whose: "cash-only", ancestor: null, cash }, REF);

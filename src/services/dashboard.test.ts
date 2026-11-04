@@ -884,8 +884,8 @@ describe("dashboardData: spending pace", () => {
       });
     });
 
-    // ⛔ …and only of the rows its own window holds: Tue Jun 30's $1,000 answers Thu Jul 2 from June's posted leg
-    test("a row of the month before that matches a payday of this one is in that month's figure: the claim stands", () => {
+    /** weekly $1,000 into Wells Fargo — Jun 25's found and attached, Thu Jul 2 July's first payday, checked Jul 6 */
+    function weeklyPayFoundJun25(): { wells: string } {
       const pay = seedSeries({ name: "Payroll", kind: "income", cadence: "weekly", nextExpectedOn: "2026-07-02", amountCents: 1000_00, lastMatchedOn: "2026-06-25", intervalDaysAvg: 7 });
       const instId = bundle.db.select().from(institutions).where(eq(institutions.name, "Chase")).get()!.id;
       const wells = createAccount(bundle.db, { institutionId: instId, name: "Wells Fargo", type: "checking" });
@@ -906,6 +906,12 @@ describe("dashboardData: spending pace", () => {
         .run();
       checkedThroughFixture(bundle.db, wells, "2026-07-06");
       spend("Groceries", "2026-07-02", -80_00);
+      return { wells };
+    }
+
+    // ⛔ …and only of the rows its own window holds: Tue Jun 30's $1,000 answers Thu Jul 2 from June's posted leg
+    test("a row of the month before that matches a payday of this one is in that month's figure: the claim stands", () => {
+      const { wells } = weeklyPayFoundJun25();
       filedFromTheReviewQueue(wells, "2026-06-30", 1000_00, "Salary");
       const pace = dashboardData(bundle.db, "2026-07-07").pace!;
       // July's posted leg holds no pay: Jul 9, 16, 23 and 30 to come − $80
@@ -913,6 +919,23 @@ describe("dashboardData: spending pace", () => {
       expect(pace.paydaysLeftOut?.text).toBe(
         "1 payday worth $1,000.00 already passed this month with no deposit attached to it — not in Free to spend. Pay " +
           "matched to the cent by a row of $1,000.00 on Jun 30 that is not attached to it cannot be projected as arriving.",
+      );
+    });
+
+    /*
+     * ⛔ …while one ON its first day is this month's: Wed Jul 1's $1,000 answers Thu Jul 2 from July's posted leg, as
+     * his Thu Oct 1 payroll is October's. 🔴 Review of 082a0ef5 (L7): read from the day after the month's first, every
+     * test here stayed green.
+     */
+    test("a row on the month's first day that matches a payday of it is in its figure: the claim is taken back", () => {
+      const { wells } = weeklyPayFoundJun25();
+      filedFromTheReviewQueue(wells, "2026-07-01", 1000_00, "Salary");
+      const pace = dashboardData(bundle.db, "2026-07-07").pace!;
+      // July's posted leg holds Jul 1's $1,000, beside Jul 9, 16, 23 and 30 to come − $80
+      expect(pace.freeToSpendCents).toBe(1000_00 + 4 * 1000_00 - 80_00);
+      expect(pace.paydaysLeftOut?.text).toBe(
+        "1 payday worth $1,000.00 already passed this month with no deposit attached to it. Pay matched to the cent " +
+          "by a row of $1,000.00 on Jul 1 that is not attached to it cannot be projected as arriving.",
       );
     });
 

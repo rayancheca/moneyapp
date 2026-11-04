@@ -1603,6 +1603,32 @@ describe("incomeExpectation — the passed paydays' rows that 'in so far' holds"
     expect(heldOn(july)).toEqual([]);
   });
 
+  /*
+   * ⛔ …while a row ON the window's first day is the window's own — his Thu Oct 1 payroll falls there — and so is one
+   * dated today, the last day "in so far" speaks for: the reader asks the days `postedCents` sums, both ends. 🔴 Review
+   * of 082a0ef5 (L7): no test put a row on either, and the reader read from the day after the first, or through the
+   * day before today, under every test here, the dashboard's and e2e-paycheck-unread's. ⚠️ Read through the window's
+   * last day instead of today, it holds the same rows: the one rule matches no row past today
+   * (`services/unattached-match`), so that one is no mutant a test can tell apart.
+   */
+  test("a row on the window's first day matching its payday to the cent is held by that window", () => {
+    checkedThrough(bundle.db, checkingId, "2026-10-05");
+    const oct1 = credit(checkingId, "2026-10-01", 114_192, "Income > Salary");
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-06");
+    expect([october.passedUnpaidOccurrences, october.postedCents]).toEqual([1, 114_192]);
+    expect(heldOn(october)).toEqual([["2026-10-01", oct1]]);
+  });
+
+  test("a row dated today matching a passed payday to the cent is held, as 'in so far' counts it", () => {
+    checkedThrough(bundle.db, checkingId, "2026-10-09");
+    credit(checkingId, "2026-10-01", 114_192, "Income > Salary", pay);
+    // Thu Oct 8's pay, landed Fri Oct 9 — today
+    const oct9 = credit(checkingId, "2026-10-09", 114_192, "Income > Salary");
+    const october = incomeExpectation(bundle.db, "2026-10-01", "2026-10-31", "2026-10-09");
+    expect([october.passedUnpaidOccurrences, october.postedCents]).toEqual([1, 2 * 114_192]);
+    expect(heldOn(october)).toEqual([["2026-10-08", oct9]]);
+  });
+
   test("Income attached to the pay is the pay's, and no payday passed unpaid", () => {
     credit(checkingId, "2026-06-11", 114_192, "Income > Salary", pay);
     expect(month()).toMatchObject({ postedCents: 2 * 114_192, passedUnpaidCents: 0, passedUnpaidInSoFar: [] });
@@ -3396,6 +3422,36 @@ describe("⚖️ decision 67 — a closed period with a day not yet read banks n
       spend("2026-06-30", -1, "Shopping"); // read through Jun 30: May and June read whole, and banked
       expect(carried("Food")).toEqual({ cents: 1_000_00, availableCents: 1_500_00, heldBack: [] });
       expect(mayAdd("Food")).toBe(0);
+    });
+
+    /*
+     * ⚠️ …and nothing more as the statements of the accounts each period is read through land — not after every
+     * import: the category's first row on an account imported short of a period's day moves that day back, and the
+     * period, read whole, is held back again (`lineMayRise`'s ⚠️). 🔴 Review of ca938320 (L26), pinned as that gap: Food
+     * $500.00 rolling from Jul 1 — July $100.00 under, August at its plan, September $300.00 past it — read "Over
+     * budget by 10%" in October with no rise to come; a new card's first statement, through Aug 31, brought one $1.00
+     * July Food row, and September, held back again, passed on what it had taken back: $550.00 of $599.00.
+     */
+    test("⚠️ a first row on an account imported short of its day holds a period read whole back again", () => {
+      const OCT_15 = "2026-10-15";
+      ledgerOpensJan2();
+      rollingBudget("Food", "2026-07-01");
+      spend("2026-07-10", -400_00, "Food");
+      spend("2026-08-10", -500_00, "Food");
+      spend("2026-09-10", -800_00, "Food");
+      spend("2026-10-05", -550_00, "Food");
+      spend("2026-10-10", -1, "Shopping"); // the card read through Oct 10: 5 days of October unaccounted
+      expect(carried("Food", OCT_15)).toEqual({ cents: 0, availableCents: 500_00, heldBack: [] });
+      expect([mayAdd("Food", OCT_15), verdictOf("Food", OCT_15)]).toMatchObject([
+        0,
+        { headline: "Over budget by 10%", explanation: BUDGET_JARGON.paceOver, lineMayRise: false },
+      ]);
+
+      const fresh = card("New"); // its first statement, through Aug 31
+      spend("2026-07-20", -1_00, "Food", fresh);
+      spend("2026-08-31", -1, "Shopping", fresh);
+      expect(carried("Food", OCT_15)).toEqual({ cents: 99_00, availableCents: 599_00, heldBack: [SEPTEMBER] });
+      expect(verdictOf("Food", OCT_15).headline).toBe("Awaiting statements");
     });
 
     /*

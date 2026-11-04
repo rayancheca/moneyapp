@@ -256,6 +256,19 @@ export interface RolloverRiseInput {
  * 🔴 Review of ca938320 (round 2): …and a period READ WHOLE lifts it too where a bill subtracted from it may still lapse
  * (`BudgetStatus.rolloverBillMayLapse`) — its rows imported through its last day, the accounts that bill posts to
  * checked short of it.
+ *
+ * ⚠️ False says the line cannot rise as the statements of the accounts each closed period is read through land — the
+ * day it is read through moves on with them — not that no import can lift it. A statement that brings the category's
+ * first row in a period's accounts window on an account imported short of that day moves the day back
+ * (`categoryCoverage`'s documented gap: a first charge on an account the category was never spent from is not waited
+ * for), and a period read whole is held back again until that account's statements reach its last day — passing on
+ * what it took back. So the readings above stand on false only while no such row arrives. 🔴 Review of ca938320
+ * (L26): Food, $500.00 rolling from Jul 1 — July $100.00 under its plan, August at it, September $300.00 past it —
+ * read "Over budget by 10%" in October, $550.00 found, under "no later import can undo that"; a new card's first
+ * statement, through Aug 31, brought one $1.00 July Food row, September was held back again, and the row read
+ * "Awaiting statements" at $550.00 of $599.00 (pinned in `budgets.test.ts`). Latent on his ledger copy 2026-10-30: his
+ * 9 rolling budgets carry from Sep 1, 2026, so September is the one closed month and none has taken carry back — held
+ * back again, it can only lower a line (Travel's $70.00).
  */
 export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">): boolean {
   return row.rolloverMayAddCents > 0;

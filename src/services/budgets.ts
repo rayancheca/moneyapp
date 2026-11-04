@@ -307,7 +307,9 @@ export interface RolloverCarry {
    * `mayStillLapse`), where banking it back changes what can still roll over (`billsThatCanLift`) in some way the
    * periods held back can be read, oldest first. 🔴 Review of 73d2cbc4: every one that subtracted such a bill was named
    * — an August $100.00 past its plan with its bill gone among them, which can bank nothing back. 🔴 Review of 09e481d7:
-   * asked only of the most the carry can reach, an August whose statement alone lifted the line went unnamed.
+   * asked only of the most the carry can reach, an August whose statement alone lifted the line went unnamed. ⚠️ Each
+   * read on its term or not yet — under a cap that is reached, not at every amount a statement can bring
+   * (`billsThatCanLift`; review of 753bad2d, L65).
    */
   billMayLapse: readonly PeriodBounds[];
   /**
@@ -598,7 +600,9 @@ const WAYS_WALKED = 256;
  * ($30.00 rolled over). In that order only: what an older one past its plan takes back is gone before a newer one can
  * bank. Measured on his ledger copy 2026-10-29, at 2026-12-10 with nothing more imported: Travel — $70.00 banked from
  * September, October held back at $288.80, November at $0.00 — banked each held back on its own, whichever left more,
- * would have put $70.00 still to roll over where none can.
+ * would have put $70.00 still to roll over where none can. ⚠️ "Moves on": as the statements of its accounts land. The
+ * category's first row on an account imported short of it moves it back and holds a period read whole again, which
+ * no way here walks (`lib/rollover-held-back::lineMayRise`'s ⚠️; review of ca938320, L26).
  *
  * ⚠️ Older than those months, a period asks a window of its own, and can be read before the newer ones, after them, or
  * never: it is walked both ways, banked and passed. For the most, the way that leaves more is all that counts — every
@@ -692,7 +696,17 @@ const BILLS_ASKED_EVERY_WAY = 8;
  * one whose bill only makes good what a period held back takes back first is not named for it.
  *
  * Up to `BILLS_ASKED_EVERY_WAY` of them, a period named here has such a way among those `carryWays` walks, and every
- * one that has one is named — exactly, below `WAYS_WALKED` ways.
+ * one that has one there is named, below `WAYS_WALKED` ways. ⚠️ Not every one that can lift it: those ways read a
+ * period held back on its term or not at all, and its statement can bring more spend and bank less. Uncapped that
+ * names none more — a bill's lift only grows with what each period banks — nor where every period held back is in the
+ * window read in order: a bill that lifts the line in any reading of them lifts it before the first is read. Under a
+ * cap that is reached, beside one held back in a window of its own, a bill that lifts the line only where a period
+ * held back banks less than its most goes unnamed until the statements it waits on land, though the line still says
+ * it can rise (`mayStillBank` is exact: each held back leaves the most on its term, or passed). 🔴 Review of 753bad2d
+ * (L65): a $200.00 cap — a month in a window of its own held back with $200.00 left; the next read whole, $0.00 left
+ * owing a $100.00 bill that may lapse; the next $100.00 under; the newest held back $500.00 past — carried $100.00,
+ * $100.00 still to come, the bill's month unnamed; the old month's statement showing $100.00 more spend, the bill's
+ * lapse lifts the line from $100.00 to $200.00. Latent: no budget of his sets a cap (his ledger copy 2026-10-30).
  *
  * ⚠️ Past `BILLS_ASKED_EVERY_WAY` of them, each is asked with every other let go, with every other still owed, and let
  * go one by one, oldest first — those before it let go and those after it owed. With every other let go, that is exact
