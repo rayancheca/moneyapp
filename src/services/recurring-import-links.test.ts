@@ -758,6 +758,38 @@ describe("⚖️ default built, not asked (2026-10-29): what the import links to
     expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 1 row filed under Income > Salary"]);
   });
 
+  /*
+   * ⚖️ default built, not asked (2026-11-04): a re-read never changes what he filed (his decision, 2026-09-16) — so a
+   * carried row he excluded from analytics is filed as an active one is. ⛔ One a gap holds waits for its gap to be
+   * accepted, which files it then (`acceptGap`); a re-read's retired row (superseded) is no row of the ledger's.
+   * 🔴 It asked `status = 'active'`: July's rent, filed by its import and excluded, came back from a re-read excluded,
+   * linked and filed nowhere (the rent fixture in `import.test.ts`, 2026-10-30).
+   */
+  test("…and so is one he excluded; one a gap holds, and one a re-read retired, are not", () => {
+    const salary = categoryId("Income", "Salary");
+    const pay = confirmedPay();
+    const carried = (week: number, status: "active" | "excluded" | "quarantined" | "superseded"): string => {
+      const [postedOn, raw] = WEEKS[week]!;
+      const id = post({ postedOn, amountCents: 114192, raw, accountId: checking, seriesId: pay });
+      bundle.db.update(transactions).set({ status }).where(eq(transactions.id, id)).run();
+      return id;
+    };
+    const [active, excluded, held, retired] = [
+      carried(0, "active"),
+      carried(1, "excluded"),
+      carried(2, "quarantined"),
+      carried(3, "superseded"),
+    ];
+
+    const { filed } = linkRowsMadeActive(bundle.db, [active, excluded, held, retired], TODAY_OCT);
+
+    for (const id of [active, excluded]) expect(filingOf(id)).toEqual(filedByImport(salary));
+    for (const id of [held, retired]) expect(filingOf(id)).toEqual(unfiled);
+    expect(seriesOf(excluded).status).toBe("excluded");
+    expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 2 rows filed under Income > Salary"]);
+    expect([...filed[0]!.transactionIds].sort()).toEqual([active, excluded].sort());
+  });
+
   test("what the filing feeds is settled in the same step: a recompute afterwards changes nothing", () => {
     // ⛔ The kind a series' stats derive reads its rows' categories (`classifyKind`): three deposits he filed as
     // Internal Transfer outvote four unfiled ones, and four filed Income > Salary outvote the three — so a filing that

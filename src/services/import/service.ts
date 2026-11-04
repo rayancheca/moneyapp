@@ -535,7 +535,8 @@ function carriedLinkSource(
  * Every other engine (rules, the merchant map, bank categories, credit matching) runs over the new row once the batch
  * settles, and carrying its answer would freeze a stale guess — as does the import's filing of a row linked to a series
  * he confirmed (`confirmed_series`): the link travels, and `fileImportedLinks` files the new row under the category the
- * series has then.
+ * series has then — ⚖️ one he excluded too, as an active one (default built, not asked, 2026-11-04: a re-read never
+ * changes what he filed).
  *
  * 🔴 Only a hand-set category travelled. Measured on a copy of the real ledger, 2026-09-16: re-reading the Discover CSV
  * (v1 → v2, the money identical) re-derived 485 Claude and transfer-detection categories through the merchant map,

@@ -262,6 +262,20 @@ export function importFilingTargets(db: AppDatabase): ReadonlyMap<string, Confir
 }
 
 /**
+ * The rows an import's filing is written on: every row still in the ledger (`LIVE_ROW`) — the rows its read-back names
+ * it on (`importFilingsByRead`) — but one a gap holds, which waits for its gap to be accepted and is filed then
+ * (`acceptGap` links and files what it promotes). ⛔ One rule for the write and the read-back, so a status the ledger
+ * keeps is filed and named alike unless a gap holds it.
+ *
+ * ⚖️ default built, not asked (2026-11-04): a re-read never changes what he filed (his decision, 2026-09-16), so a
+ * carried row he excluded from analytics is filed as an active one is. 🔴 Measured on the rent fixture (2026-10-30):
+ * July's rent, filed by its import and excluded, came back from a chase-deposit-csv re-read excluded and linked to
+ * Rent and filed nowhere, its line under the read gone — this asked `status = 'active'`. Latent on his ledger copy
+ * 2026-11-04: 0 rows excluded, 0 filed as `confirmed_series`.
+ */
+const FILED_AT_IMPORT = LIVE_ROW.filter((status) => status !== "quarantined");
+
+/**
  * ⚖️ default built, not asked (2026-10-29). Owner context: he does nothing by hand (2026-09-14: "im not attaching shit
  * by hand") — an import must land his pay attached AND filed. Of the rows an import-path operation made active
  * (`scope`), those now linked to a series he confirmed are filed as his own attach files them (§6A 47, `rowsToFile`:
@@ -273,7 +287,8 @@ export function importFilingTargets(db: AppDatabase): ReadonlyMap<string, Confir
  *
  * A row in scope that arrives already linked — the carry of the read a re-read replaces, a link an un-import gave back
  * — is filed too: the import's filing never travels with a re-read (`engineCategoryCarry` leaves it out, as it leaves
- * every category an engine of the import derives again), so here is where the row that replaces it is filed again.
+ * every category an engine of the import derives again), so here is where the row that replaces it is filed again —
+ * ⚖️ one he excluded from analytics as an active one (`FILED_AT_IMPORT`, default built, not asked, 2026-11-04).
  *
  * 🔴 Measured on his ledger copy 2026-10-30, a trial of the Wells Fargo statement Sep 25 → Oct 26 on the copy from
  * before that import: the four +$1,141.92 payroll deposits and the off-cycle +$200.00 landed attached to "It America
@@ -303,7 +318,8 @@ export function fileImportedLinks(
     .from(transactions)
     .where(
       and(
-        eq(transactions.status, "active"),
+        // a row he excluded is filed as an active one; one a gap holds waits for its gap to be accepted
+        inArray(transactions.status, FILED_AT_IMPORT),
         inArray(transactions.recurringSeriesId, [...targets.keys()]),
         uncategorizedWhere(idx),
         notUserOwned(),
@@ -334,7 +350,8 @@ export function fileImportedLinks(
  * import's (`notUserOwned` lets a rule file it again), and a row no longer linked names no series. ⚖️ default built,
  * not asked (2026-10-30): it names every row still in the ledger (`LIVE_ROW`) — one he excludes from analytics, or one
  * a later gap holds, is filed as it was; only a re-read's retired rows (superseded) are not the ledger's, and the read
- * in place names them.
+ * in place names them. ⛔ The write's rule is this one less a gap's hold (`FILED_AT_IMPORT`): what a re-read files on
+ * the row that replaces one he excluded is named under the read in place.
  *
  * 🔴 Review of 304c59a4 (2026-10-30): an import's filing was said by the two scripts only — the /imports upload dropped
  * its report, and an un-import's restore and a gap acceptance discarded theirs. None stands on his ledger (0 rows

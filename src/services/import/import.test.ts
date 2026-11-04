@@ -1820,6 +1820,41 @@ describe("an import links what it brought in to the series that already carry it
   });
 
   /*
+   * ⚖️ default built, not asked (2026-11-04): a re-read never changes what he filed (his decision, 2026-09-16). The
+   * import's filing does not travel with a re-read's carry (`engineCategoryCarry` leaves `confirmed_series` out: the
+   * link travels, and `fileImportedLinks` files the row that replaces it), so it files a carried row he excluded as it
+   * files an active one. 🔴 Measured on this fixture (2026-10-30): July's rent, filed by its import and excluded, came
+   * back from a chase-deposit-csv re-read excluded and linked to Rent and filed nowhere — `fileImportedLinks` asked
+   * `status = 'active'` — and its line under the read was gone with it.
+   */
+  test("…and a re-read of a row he excluded files it again as the import left it, and names it", async () => {
+    const { june, rent } = await rentHeLinkedInJune();
+    await importStatementFiles(bundle.db, [load("chase", JULY_CHECKING)]);
+    setTransactionFlags(bundle.db, rowOn("2026-07-01", "ACH PYMT WESTVIEW").id, { exclude: true });
+
+    const report = await withBumpedParserVersion("chase-deposit-csv", () =>
+      importStatementFilesWithReport(bundle.db, [load("chase", JULY_CHECKING)]),
+    );
+
+    // the row that replaces it: still out of analytics and linked, as the carry left it — and filed, as it was
+    const live = bundle.db
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.postedOn, "2026-07-01"), ne(transactions.status, "superseded")))
+      .all()
+      .filter((t) => t.rawDescription.startsWith("ACH PYMT WESTVIEW"));
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({
+      status: "excluded",
+      recurringSeriesId: rent,
+      categoryId: june.categoryId,
+      categorizationSource: "confirmed_series",
+    });
+    expect(report.filed.map(importFilingLine)).toEqual(["Rent: 1 row filed under Housing > Rent"]);
+    expect(namedByRead()).toEqual([[live[0]!.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+  });
+
+  /*
    * …and one a later gap holds. A statement prints its balances (the checking CSV prints none, so its rows are never
    * held): the card's next import reconciles every month of it again (`reconcileAccounts`), and a month whose rows no
    * longer add up holds its own — the one its import filed with them, still filed and linked, waiting on the gap.
