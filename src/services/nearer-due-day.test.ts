@@ -1490,6 +1490,100 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
   });
 
   /*
+   * ⛔ …and the one rule is asked of a day of theirs only once the day it FELL DUE is read — the arrears' read days
+   * (`readDueDays`, by `occurrenceDates`) — and only then looks on their OWN day for a row (`occurrenceOwnDates`, the
+   * Dec 1 test above). The rent typed Nov 16, nothing of November posted, read through Nov 9, a Meal Kit −$125.00 due
+   * the 3rd unpaid, and a −$182.21 of their own Nov 1 sitting unattached: on Nov 20 their Nov 1 falls due with the
+   * rent's Nov 16, which no statement has covered, so the row is named for no day of theirs — the Meal Kit's $125.00 is
+   * what has not posted. 🔴 Filtered by their own Nov 1 — a mutation of the merge of 933b29e2 no test caught (review
+   * of 06abaf61: 457 files, 10,190 tests passed) — the runway read "A further $2,598.42 came due earlier this month:
+   * $125.00 is matched to the cent by a row of $182.21 on Nov 1 that is not attached to it, and no statement has
+   * covered the other $2,473.42 yet.", and their page carried the row (`overdue.unattached`) for a day no statement
+   * has covered.
+   */
+  test("⛔ (B) …read through Nov 9, their own −$182.21 of Nov 1 unattached: on Nov 20 no row is named for it", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    seriesWith(MEAL, "Meal Kit", -12500, "2026-09-03", ["2026-09-03", -12500], ["2026-10-03", -12500]);
+    pay("t-util-own-nov1", null, "2026-11-01", -18221);
+    checkedThrough(bundle.db, "acct", "2026-11-09");
+    const NOV20 = "2026-11-20";
+    expect(owed(NOV20)).toEqual([
+      [MEAL, "2026-11-03", 12500],
+      [UTIL, "2026-11-16", 18221],
+      [RENT, "2026-11-16", 229121],
+    ]);
+    expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBe(
+      "A further $2,598.42 came due earlier this month: $125.00 has not posted, and no statement has covered the " +
+        "other $2,473.42 yet.",
+    );
+    const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL, MEAL]), NOV20).series;
+    expect(late.map((s) => [s.id, s.unattached])).toEqual([
+      [MEAL, []],
+      [UTIL, []],
+      [RENT, []],
+    ]);
+    expect(seriesDetail(bundle.db, UTIL, NOV20)!.overdue!.unattached).toEqual([]);
+  });
+
+  /*
+   * ⛔ …and the calendar asks the one rule of exactly those days — each read on the day it falls due
+   * (`asksForUnattachedMatch` on `date`) — so a row the runway gives one bill is never spent on a day of theirs no
+   * statement has covered. The same shape, with a Water −$182.21 due the 2nd (three postings) unpaid and one −$182.21
+   * row of Nov 1 unattached: their Nov 1 falls due with the rent's unread Nov 16, so the row is Water's Nov 2 — named
+   * on the runway and Water's page, and drawn "?" naming it. 🔴 Asked on their own Nov 1 — a mutation no test caught
+   * (review of 06abaf61: 73 files, 2,782 tests passed) — their unread Nov 1 took the row in the calendar's matching,
+   * and November drew Water's Nov 2 a red ✕ "missed" beside a runway naming the row for it. Filtered by their own day
+   * in the arrears (above), the row was theirs there, and Water's page read "Already due, and not posted" beside it.
+   */
+  test("⛔ (B) …and a Water −$182.21 due Nov 2: their Nov 1's row is Water's, on the runway and the calendar", () => {
+    const WATER = "water";
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    const water: [string, number][] = [
+      ["2026-08-02", -18221],
+      ["2026-09-02", -18221],
+      ["2026-10-02", -18221],
+    ];
+    seriesWith(WATER, "Water", -18221, "2026-08-02", ...water);
+    pay("t-row-nov1", null, "2026-11-01", -18221);
+    checkedThrough(bundle.db, "acct", "2026-11-09");
+    const NOV20 = "2026-11-20";
+    expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBe(
+      "A further $2,655.63 came due earlier this month: $182.21 is matched to the cent by a row of $182.21 on Nov 1 " +
+        "that is not attached to it, and no statement has covered the other $2,473.42 yet.",
+    );
+    const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL, WATER]), NOV20).series;
+    expect(late.map((s) => [s.id, s.nextDate, s.unattached.map((m) => [m.date, m.row.postedOn])])).toEqual([
+      [WATER, "2026-11-02", [["2026-11-02", "2026-11-01"]]],
+      [UTIL, "2026-11-16", []],
+      [RENT, "2026-11-16", []],
+    ]);
+    expect(seriesDetail(bundle.db, WATER, NOV20)!.overdue!.unattached!.map((m) => m.row.postedOn)).toEqual([
+      "2026-11-01",
+    ]);
+    // …and November draws Water's Nov 2 "?" naming that row — never a ✕ — and theirs and the rent's "?" on Nov 16
+    const november = recurringCalendar(bundle.db, "2026-11", NOV20).entriesByDay;
+    const drawn = (day: string) =>
+      (november[day] ?? []).map((e) => [e.seriesId, e.state, e.unsettledReason, e.unattached?.row.postedOn ?? null]);
+    expect(drawn("2026-11-02")).toEqual([[WATER, "unsettled", "matched_unattached", "2026-11-01"]]);
+    expect(drawn("2026-11-16")).toEqual([
+      [UTIL, "unsettled", "not_imported", null],
+      [RENT, "unsettled", "not_imported", null],
+    ]);
+  });
+
+  /*
    * ⚖️ (B) …and "paid early" is measured against the day the grid draws it on, the day it falls due: the rent typed Nov
    * 16 and paid Nov 16, then Dec 5 — nearer its Dec 16 (decision 76), so early for it — pays their Dec 1, which falls
    * due with that Dec 16: drawn there "paid early with the rent's payment of Dec 5". Measured against their own Dec 1 it
