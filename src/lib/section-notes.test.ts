@@ -351,12 +351,12 @@ describe("budgetSectionNotes", () => {
     test("some of them: each kind is said of the rows it is true of", () => {
       expect(coverage([row({ ...UNREAD, categoryPath: "Car" }), row({ categoryPath: "Food", uncoveredDays: 4 })])).toBe(
         "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — up to 12 days on " +
-          "Car. Of them, 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
-          "spend and percentages are lower bounds, not measurements.",
+          "Car. Of them, 1 has nothing found and not one elapsed day imported, so no spend is shown there either, " +
+          "and the others' spend and percentages are lower bounds, not measurements.",
       );
       const twoUnread = [row({ ...UNREAD, categoryPath: "Car" }), row({ ...UNREAD, categoryPath: "Fees" })];
       expect(coverage([...twoUnread, row({ uncoveredDays: 4 })])).toMatch(
-        /\. Of them, 2 have not had one elapsed day imported/,
+        /\. Of them, 2 have nothing found and not one elapsed day imported, so no spend is shown there either/,
       );
     });
 
@@ -405,20 +405,28 @@ describe("budgetSectionNotes", () => {
      * over their plans are grading such days too" — 12 of 12 (review of ca938320, L19). Measured on his ledger copy
      * 2026-10-30: "6 of 12 … The 6 over their plans are grading such days too", all twelve October read in part.
      *
-     * ❓ PINNED, NOT DECIDED (2026-10-30): "3 have not had one elapsed day imported" counts the dashes (`spendUnread`:
-     * no day read AND nothing found), and every one of the seven has no elapsed day read — Food, Housing, Transport
-     * and Utilities each print "spending imported through Aug 12 · 29 days of this period unaccounted" (review of
-     * ca938320, L20; 6 of 6 on his ledger copy 2026-10-30, 2 of them dashes). His call; changing it flips this test.
+     * ⚖️ default built, not asked (2026-11-04): …and of them, the dashes are counted by what makes them dashes
+     * (`spendUnread`: nothing found AND not one elapsed day read) — the number he can check against the rows printing
+     * "—", in words true of it. 🔴 "3 have not had one elapsed day imported" counted the dashes alone, while every
+     * one of the seven has none read — Food, Housing, Transport and Utilities each print "spending imported through
+     * Aug 12 · 29 days of this period unaccounted" (review of ca938320, L20). Measured on his ledger copy 2026-10-30:
+     * "Of them, 2 have not had one elapsed day imported" over 6 withheld rows, all 6 read through Aug 12, 2 of them
+     * dashes (Cash & ATM, Fees). On 2026-11-04 all 12 are dashes (no November day read, nothing found), and the note
+     * reads "Not one elapsed day of their periods has been imported, so no spend is shown for them either." —
+     * before and after.
      */
-    test("his twelve: the seven withheld counted by what they lack, and the five over said to be floors", () => {
+    test("his twelve: the seven withheld counted by what they lack, the dashes by what makes them dashes", () => {
       expect(coverage(HIS)).toBe(
         "7 of 12 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
-          "Of them, 3 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
-          "spend and percentages are lower bounds, not measurements. The 5 over their plans are grading such days " +
-          "too, so each is over by at least what it shows.",
+          "Of them, 3 have nothing found and not one elapsed day imported, so no spend is shown there either, and " +
+          "the others' spend and percentages are lower bounds, not measurements. The 5 over their plans are grading " +
+          "such days too, so each is over by at least what it shows.",
       );
       // ⛔ never the shared predicate as the count: the over rows grade such days too, and the note says so after it
       expect(coverage(HIS)).not.toMatch(/budgets are grading days/);
+      // ⛔ …nor the dashes' count said of what all seven lack: not one of the seven has an elapsed day read
+      expect(HIS.filter((r) => r.pace !== "over" && r.noDayRead)).toHaveLength(7);
+      expect(coverage(HIS)).not.toMatch(/\d (has|have) not had one elapsed day imported/);
     });
 
     test("one over row is said in the singular — the e2e fixture's Housing", () => {
@@ -477,10 +485,10 @@ describe("budgetSectionNotes", () => {
         const withFees = HIS.map((r) => (r.categoryPath === "Fees" ? FEES : r));
         expect(coverage(withFees)).toBe(
           "6 of 12 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
-            "Of them, 2 have not had one elapsed day imported, so no spend is shown there either, and the others' " +
-            "spend and percentages are lower bounds, not measurements. The 6 over their plans are grading such days " +
-            "too, so 5 are over by at least what they show, and the other has spent at least what it shows, though " +
-            "more can still roll over into it.",
+            "Of them, 2 have nothing found and not one elapsed day imported, so no spend is shown there either, and " +
+            "the others' spend and percentages are lower bounds, not measurements. The 6 over their plans are " +
+            "grading such days too, so 5 are over by at least what they show, and the other has spent at least what " +
+            "it shows, though more can still roll over into it.",
         );
       });
 
@@ -517,8 +525,8 @@ describe("budgetSectionNotes", () => {
         const car = row({ ...DASH, categoryPath: "Car" });
         expect(coverage([car, row({ ...FLOOR, categoryPath: "Food", ...RISES })])).toBe(
           "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
-            "Of them, 1 has not had one elapsed day imported, so no spend is shown there either, and the others' " +
-            "spend is a lower bound, not a measurement.",
+            "Of them, 1 has nothing found and not one elapsed day imported, so no spend is shown there either, and " +
+            "the others' spend is a lower bound, not a measurement.",
         );
       });
 

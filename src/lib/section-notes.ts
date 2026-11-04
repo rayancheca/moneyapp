@@ -302,13 +302,20 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
     const pcts = uncovered.some((r) => !spendUnread(r) && lineMayRise(r))
       ? "spend is a lower bound, not a measurement"
       : "spend and percentages are lower bounds, not measurements";
+    /*
+     * ⚖️ default built, not asked (2026-11-04): the dashes are counted by what makes them dashes — nothing found AND
+     * not one elapsed day read (`spendUnread`) — so the number is the one he can check against the rows printing "—",
+     * and the words are true of it. 🔴 "N have not had one elapsed day imported" was said of the dashes alone, though
+     * the rows beside them may have no day read either: on his ledger copy 2026-10-30, "Of them, 2 have not had one
+     * elapsed day imported" over 6 withheld rows, all 6 read through Aug 12 — Cash & ATM and Fees the dashes (L20).
+     */
     const shown =
       unread === 0
         ? `Their ${pcts}.`
         : unread === uncovered.length
           ? "Not one elapsed day of their periods has been imported, so no spend is shown for them either."
-          : `Of them, ${unread} ${unread === 1 ? "has" : "have"} not had one elapsed day imported, so no spend is ` +
-            `shown there either, and the others' ${pcts}.`;
+          : `Of them, ${unread} ${unread === 1 ? "has" : "have"} nothing found and not one elapsed day imported, so ` +
+            `no spend is shown there either, and the others' ${pcts}.`;
     const overInPart = input.rows.filter((r) => r.pace === "over" && spendIsAFloor(r));
     notes.push({
       id: "budgets-coverage",
