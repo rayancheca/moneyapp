@@ -659,7 +659,18 @@ describe("seriesStaleness", () => {
     // a checked day before the late charge's tolerance ran out, yesterday)
     const checkedDays = [today, null, "2026-04-01", "2026-07-07"];
     // ⚖️ …and billed inside a carrier's payment at every age of ITS evidence (§6A 59)
-    const carriers = [null, ...ages.map((a) => ({ id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: a }))];
+    const carriers = [
+      null,
+      ...ages.map((a) => ({
+        id: "rent",
+        name: "Flamingo South Beach (rent)",
+        lastMatchedOn: a,
+        opensOn: "2026-09-01",
+        opensOnHisDate: true,
+        opensPaidBy: null,
+        schedule: { cadence: "monthly" as const, intervalDaysAvg: null, nextExpectedOn: "2026-09-01", anchorDay: null },
+      })),
+    ];
     // ⛔ …and with a schedule its end has closed: Aug 1 is the next day, and nothing is left inside a Jul 1 end. 🔴 The
     // page projected the Nov 11 balance a month past its day while the forecast and the subscriptions card had ended it
     // (review of 0af5689)

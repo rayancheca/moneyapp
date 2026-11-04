@@ -164,7 +164,11 @@ describe("linking at import — the rows an operation made active, and only thos
     expect(overdueForSeries(bundle.db, new Set([breezeline]), "2026-09-01", TODAY, TODAY).totalCents).toBe(0);
     // …and the recompute the 4th posting triggers does not re-step the owner's
     // schedule: still the 8th, twelve charges a year
-    const walk = projectOccurrences(toProjectable(seriesRow(breezeline)), "2026-09-15", "2027-09-14").map((o) => o.date);
+    const walk = projectOccurrences(
+      toProjectable({ ...seriesRow(breezeline), billedWith: null }),
+      "2026-09-15",
+      "2027-09-14",
+    ).map((o) => o.date);
     expect(walk).toHaveLength(12);
     expect(walk.every((d) => d.endsWith("-08"))).toBe(true);
   });

@@ -334,6 +334,17 @@ export function SeriesDetail({
                 ? null
                 : { day: data.oneChargeOn, label: formatDayShortIn(data.oneChargeOn, today) }
             }
+            // ⚖️ billed inside another, the day its day falls due on when that is its carrier's later one — the day
+            // its list below names (default (B), 2026-10-30): said beside its own, "due with the rent on the 16th"
+            dueWith={
+              data.nextFallsDueOn === null || data.billedWith === null
+                ? null
+                : {
+                    carrierName: data.billedWith.name,
+                    on: data.nextFallsDueOn,
+                    label: formatDayShortIn(data.nextFallsDueOn, today),
+                  }
+            }
             onChanged={onChanged}
           />
           <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-line pt-4 sm:grid-cols-4">

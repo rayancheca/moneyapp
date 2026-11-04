@@ -28,6 +28,7 @@ import { recurringSeries, type RatePeriod } from "@/db/schema/recurring";
 import { periodBounds } from "@/lib/dates";
 import { formatCents } from "@/lib/money";
 import { AmountHistoryError, parseAmountHistoryText, seriesAmountCents } from "@/lib/series-kind";
+import { asMoneyIn } from "@/services/billing-carriers";
 import { incomeExpectation } from "@/services/budgets";
 import { incomeCard } from "@/services/income-card";
 import { rateHistoryRefusals } from "@/services/rate-history-check";
@@ -152,7 +153,8 @@ export function loadFacts(bundle: DbBundle): Facts {
   const { h } = bundle.sqlite
     .prepare("SELECT user_amount_history AS h FROM recurring_series WHERE id = ?")
     .get(PAY.id) as { h: string | null };
-  const schedule = toProjectable({ ...s, userAmountHistory: null });
+  // his pay is money in: billed on its own (`asMoneyIn`)
+  const schedule = toProjectable(asMoneyIn({ ...s, userAmountHistory: null }));
   const boundary = projectOccurrences(schedule, BOUNDARY_PAYDAYS[0], BOUNDARY_PAYDAYS[1]).map((o) => o.date);
   return { hasColumn, series: { ...s, historyText: h }, rows, others, boundary };
 }

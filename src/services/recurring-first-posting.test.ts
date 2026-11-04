@@ -201,10 +201,40 @@ describe("anything short of certain links nothing", () => {
     const row = post({ postedOn: "2026-08-15", amountCents: -69504 });
     // what the rule relies on: the walk steps forward from Sep 15 only, so no
     // occurrence exists on Aug 15 for a charge that day to match
-    expect(projectOccurrences(toProjectable(seriesRow(lease)), "2026-08-12", "2026-08-18")).toEqual([]);
+    const walk = toProjectable({ ...seriesRow(lease), billedWith: null });
+    expect(projectOccurrences(walk, "2026-08-12", "2026-08-18")).toEqual([]);
     const control = gymControl();
     run([row, control.rowId]);
     expect(linkOf(row).recurringSeriesId).toBeNull();
+    expect(linkOf(control.rowId).recurringSeriesId).toBe(control.seriesId);
+  });
+
+  /*
+   * ⚖️ …nor a day before the date that opens a series billed inside another (`openingOf`, default built, not asked,
+   * 2026-10-29): what the rent carries opens where the rent's date he typed opens it, for this rule as for every other
+   * reader. The utilities on detection's Sep 1, carried by a rent he dated Oct 1, expect no Sep 1 — with the rent dated
+   * Sep 1, they do.
+   */
+  test.each([
+    ["2026-10-01", false],
+    ["2026-09-01", true],
+  ])("billed inside a rent he dated %s, the utilities' own Sep 1 takes a -$182.21 row: %s", (rentOn, links) => {
+    const rent = register({
+      name: "Flamingo South Beach (rent)",
+      amountCents: -229121,
+      nextOn: rentOn,
+      userDated: true,
+    });
+    const utilities = register({ name: "Rent utilities & fees", amountCents: -18221, nextOn: "2026-09-01" });
+    bundle.db
+      .update(recurringSeries)
+      .set({ userBilledWithSeriesId: rent })
+      .where(eq(recurringSeries.id, utilities))
+      .run();
+    const row = post({ postedOn: "2026-09-01", amountCents: -18221, raw: "FLAMINGO UTIL FEES" });
+    const control = gymControl();
+    run([row, control.rowId]);
+    expect(linkOf(row).recurringSeriesId).toBe(links ? utilities : null);
     expect(linkOf(control.rowId).recurringSeriesId).toBe(control.seriesId);
   });
 

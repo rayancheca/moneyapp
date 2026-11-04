@@ -3,7 +3,7 @@ import type { AppDatabase } from "@/db/client";
 import { recurringSeries, type SeriesKind, type SeriesStatus } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import type { BillingCarrier } from "@/lib/billed-with";
-import { addDays } from "@/lib/dates";
+import { addDays, compareDates } from "@/lib/dates";
 import {
   firstPaydayOn,
   hasArrived,
@@ -18,12 +18,20 @@ import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
-import { billDueDaysBySeries, billPaymentsBySeries, paymentFor } from "./billing-carriers";
+import {
+  asMoneyIn,
+  billDueDaysBySeries,
+  billPaymentsBySeries,
+  fallsDueOn,
+  paymentFor,
+  type DueDays,
+} from "./billing-carriers";
 import {
   effectiveSeries,
   projectOccurrences,
   rollForwardNextExpected,
   toProjectable,
+  walkDayAfter,
   type ProjectionOverrides,
   type SeriesOverrides,
 } from "./recurring";
@@ -120,7 +128,7 @@ export function paydaySettlement(
    */
   const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, rows, today);
   const walkBackBefore = walkBackBound(rows, s.toleranceDays, today);
-  const projectable = paydayProjectable(s, { firstPaydayOn: firstOn, walkBackBefore }, today);
+  const projectable = paydayProjectable(asMoneyIn(s), { firstPaydayOn: firstOn, walkBackBefore }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
     (o) => o.amountCents > 0,
   );
@@ -255,13 +263,16 @@ export function settledPaydaysForSeries(
  *
  * ⛔ NOT a RATE: N months hold N payments of a monthly bill whatever day they are asked on, paid or not
  * (`scheduledOccurrences` — the committed book, the car card).
+ *
+ * ⛔ Each asked on its OWN day (`SeriesOccurrence.ownDate`) — the due day a grader pairs with its carrier's itself
+ * (`paymentFor`) — and kept dated by the day it falls due (`date`), the day every list prints.
  */
-export function stillToCome<T extends { date: string }>(
+export function stillToCome<T extends { ownDate: string }>(
   toCome: StillToCome,
   series: { id: string },
   occurrences: readonly T[],
 ): T[] {
-  return occurrences.filter((o) => toCome(series.id, o.date));
+  return occurrences.filter((o) => toCome(series.id, o.ownDate));
 }
 
 /**
@@ -284,28 +295,50 @@ export function stillToCome<T extends { date: string }>(
  * `paydaySettlement` walks. A bill's day paid early is on the schedule the same way.
  *
  * ⛔ Not a second copy of the rule: `toCome` is the predicate `stillToCome`
- * filters with, and the steps are `rollForwardNextExpected`'s, so the walk visits
- * exactly the dates settlement and the payments graded (both step the effective
- * schedule from its anchor). It ends because settlement names finitely many paydays,
- * a ledger holds finitely many payments, and every step moves strictly forward.
+ * filters with, and the steps are the walk's — `rollForwardNextExpected`'s first,
+ * then `walkDayAfter`'s past each day paid — so the walk visits exactly the dates
+ * settlement and the payments graded (both step the effective schedule from its
+ * anchor). It ends because settlement names finitely many paydays, a ledger holds
+ * finitely many payments, and every step moves strictly forward (below).
  *
  * Null when the schedule has no next date, or none not already paid: a series whose
  * last occurrence was paid early expects nothing more, which is what its own page's
  * list says.
+ *
+ * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
+ * the day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29).
+ *
+ * ⚖️ …and NAMED by the day it falls due (`fallsDueOn`), as its list dates it (`SeriesOccurrence.date`): billed inside
+ * another on its carrier's step, the later of its own day and the carrier's day it pairs with (default (B), built,
+ * not asked, 2026-10-30) — the rent typed Nov 16, the utilities' Nov 1 is next on Nov 16. Stepped and asked paid on
+ * its own days, as the list's are. 🔴 It named the own day (review of aa05a56d): on Nov 10 the All tab's Next read
+ * "Nov 1", a day already past, beside an Upcoming tab listing them with the rent's Nov 16.
+ *
+ * ⛔ …and past a day paid, to the walk's next own day AFTER it (`walkDayAfter`) — never `rollForwardNextExpected` from
+ * the day after: billed inside another on its carrier's step, the first day falling due from there can be that same
+ * paid day, its carrier's day still to come (`firstStepFallingDue` steps back to it), and the walk asks it for good.
+ * The rent typed Nov 16 and paid early on Nov 5 opens the utilities on their Nov 1, paired with it and paid by it: on
+ * Nov 10, asked from Nov 2, their Nov 1 still falls due Nov 16. 🔴 Nothing pinned it (review of a456a6fc): stepped as
+ * before aa05a56d, 4,585 tests passed while `listSeries`, and so the /recurring render, would hang. Pinned in
+ * nearer-due-day.test.ts ("…paid early Nov 5", and the rent's Dec 5 early for its Dec 16), the walk bounded there.
  */
 export function nextStillToCome(
   toCome: StillToCome,
-  series: ProjectionOverrides & { id: string },
+  series: Parameters<typeof toProjectable>[0],
   today: string,
 ): string | null {
-  const eff = effectiveSeries(series);
+  const eff = toProjectable(series);
   let next = rollForwardNextExpected(eff, today);
-  while (next !== null && !toCome(series.id, next)) next = rollForwardNextExpected(eff, addDays(next, 1));
-  return next;
+  // past a paid day to the walk's next own day — asked paid on its own day, as `stillToCome` asks each
+  while (next !== null && !toCome(series.id, next)) next = walkDayAfter(eff, next);
+  return next === null ? null : fallsDueOn(eff.pairedWith, next);
 }
 
-/** Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date. */
-export type StillToCome = (seriesId: string, date: string) => boolean;
+/**
+ * Whether a series' occurrence on a date is still to come — `stillToComeReader`'s answer, asked per date: a day of
+ * its OWN schedule (`SeriesOccurrence.ownDate`), which a grader pairs with its carrier's itself (`paymentFor`).
+ */
+export type StillToCome = (seriesId: string, ownDate: string) => boolean;
 
 /**
  * What `stillToComeReader` reads of a series: its kind, and for a bill its grace, the carrier it is billed with and its
@@ -332,8 +365,11 @@ export interface StillToComeSeries extends SeriesOverrides {
  * before (`paymentFor`, ⚖️ his decision 76, 2026-10-14), its own or its carrier's, as the arrears and the calendar
  * grade it. FPL's Jul 28 pays its Aug 8: from Jul 28 on, Aug 8 is not still to come.
  *
- * ⛔ Asked of days from today on — every caller walks forward from today — so nothing late is asked: a payment past
- * the grace of a day from today on would post after today, and no import has brought one. Every payment is read, as
+ * ⛔ Asked of days that fall due from today on — every caller walks forward from today — so nothing late is asked of a
+ * day from today on (`nothingLateFrom`): a payment past its grace would post after today, and no import has brought
+ * one. ⚖️ A day of what the rent carries is asked by the rent's day it pairs with, which falls due with it (default
+ * (B), built, not asked, 2026-10-30): its own day may have passed — the utilities' Nov 1 asked on Nov 10, still to come
+ * with the rent's Nov 16 — and so may the rent's day, paid late, which is asked in full. Every payment is read, as
  * every grader reads them (`billPaymentsBySeries`): an early one lies as far back as the day before. ⚖️ …and so does a
  * catch-up, LATE for the day before (`paymentFor`'s, default built, not asked, 2026-10-23), which reads this day as
  * the one after it: Sep 19's -$715.16 for a premium due the 11th, Sep 11 missed, pays Oct 11 — on Sep 25 Upcoming and
@@ -358,16 +394,32 @@ export function stillToComeReader(
   const settled = new Map(income.map((s) => [s.id, settledPaydaysForSeries(db, s.id, today, idx)] as const));
   const bills = series.filter((s) => s.kind !== "income");
   const payments = billPaymentsBySeries(db, bills);
-  // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, and the day
-  // its schedule opens and whether it is his (its own row, or its carrier's for one billed inside another) — with
-  // nothing late asked (above)
-  const graded = billDueDaysBySeries(db, bills);
-  const dueDays = new Map(bills.map((s) => [s.id, { ...graded.get(s.id)!, after: () => null }] as const));
-  return (seriesId, date) => {
+  // its days as every grader reads them (`billDueDaysBySeries`) — the day before each, for one paid early, the day its
+  // schedule opens and whether it is his (its own row, or its carrier's for one billed inside another), and the
+  // carrier's day each pairs with — with nothing late asked of a day from today on (above)
+  const graded = billDueDaysBySeries(bills);
+  const dueDays = new Map(bills.map((s) => [s.id, nothingLateFrom(graded.get(s.id)!, today)] as const));
+  return (seriesId, ownDate) => {
     const paydays = settled.get(seriesId);
-    if (paydays !== undefined) return !paydays.has(date);
+    if (paydays !== undefined) return !paydays.has(ownDate);
     const days = dueDays.get(seriesId);
-    return days === undefined || paymentFor(payments.get(seriesId) ?? [], date, days) === undefined;
+    return days === undefined || paymentFor(payments.get(seriesId) ?? [], ownDate, days) === undefined;
+  };
+}
+
+/**
+ * A bill's due days with nothing late asked of a day from `today` on — no posting is dated past today, so none pays
+ * one late — and, billed inside another, its carrier's days alike (`DueDays.pairedWith`). ⚖️ A day before today is
+ * still asked in full: one of what the rent carries falls due with the rent's day it pairs with (`fallsDueOn`;
+ * default (B), built, not asked, 2026-10-30), so the readers that look ahead ask it while its own day has passed —
+ * and the rent's day it pairs with may have passed too, its payment late (`paymentFor`'s late branch).
+ */
+function nothingLateFrom(dueDays: DueDays, today: string): DueDays {
+  const paired = dueDays.pairedWith;
+  return {
+    ...dueDays,
+    after: (day) => (compareDates(day, today) >= 0 ? null : dueDays.after(day)),
+    pairedWith: paired === null ? null : { ...paired, carrierDays: nothingLateFrom(paired.carrierDays, today) },
   };
 }
 

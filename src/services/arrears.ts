@@ -12,7 +12,13 @@ import {
 } from "@/lib/occurrence-verdict";
 import { sharedFrontier, type UnbankedFrontier } from "@/lib/unbanked-income";
 import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
-import { billDueDaysBySeries, billPaymentsBySeries, paymentFor, withBillingCarriers } from "./billing-carriers";
+import {
+  asMoneyIn,
+  billDueDaysBySeries,
+  billPaymentsBySeries,
+  paymentFor,
+  withBillingCarriers,
+} from "./billing-carriers";
 import { checkedThroughBySeries, silenceMeasuredThroughBySeries, silenceOnceCheckedBySeries } from "./cash-earnings";
 import { dueDayGraces, dueDayReadings } from "./observation-frontier";
 import { paydayProjectable, paydaySettlementsBySeries } from "./payday-settlement";
@@ -50,8 +56,9 @@ export interface BudgetTailSeries {
   occurrenceCents: readonly number[];
   /**
    * Each in-window occurrence's date, in order, beside `occurrenceCents` — what the pay series' own page lists, one row
-   * a payday, and the days the rows that match them unattached are looked for on (`unattachedMatchesBySeries`). 🔴 Its
-   * page named none of Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
+   * a payday, and the days the rows that match them unattached are looked for on (`unattachedMatchesBySeries`): a
+   * bill's, on its own day (`OverdueSeries.occurrenceOwnDates`), this day billed on its own. 🔴 Its page named none of
+   * Oct 1 or Oct 8 beside a forecast naming both (a copy of his ledger, 2026-10-12).
    */
   occurrenceDates: readonly string[];
   href: string;
@@ -76,6 +83,12 @@ export interface OverdueSeries extends BudgetTailSeries {
    * and the line rose $440.00 under a row that had read "over budget by at least $200.00".
    */
   mayStillLapse: boolean;
+  /**
+   * Each in-window occurrence's OWN day (`SeriesOccurrence.ownDate`), beside `occurrenceDates`, the days each fell due
+   * on: the day a row of its own is matched against (`readDueDays`), as `paymentFor` grades one. Billed on its own, the
+   * same days; billed inside another on its carrier's step, each on or before the carrier's day it falls due with.
+   */
+  occurrenceOwnDates: readonly string[];
 }
 
 /** `overdueForSeries`' answer: what came due in the window and no posting covers, series by series. */
@@ -196,8 +209,11 @@ export function overdueForSeries(
    * 76), as far back as that day — FPL's Jul 28 pays its Aug 8, the Car lease's Sep 2 its Sep 15.
    */
   const paymentsBySeries = billPaymentsBySeries(db, live);
-  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens
-  const dueDaysBySeries = billDueDaysBySeries(db, live);
+  // …on its due days as every grader reads them: billed inside another, opening where its carrier's opens, each day
+  // paired with the carrier's own day of that period (`pairingOf`) — and each owed only once it falls due
+  // (`projectOccurrences` holds it by `fallsDueOn`): never before the carrier's day it pairs with. ⛔ Asked paid on its
+  // OWN day (`ownDate`), which `paymentFor` pairs; owed, and named "came due", on the day it fell due (`date`)
+  const dueDaysBySeries = billDueDaysBySeries(live);
   // …and, checked through today with nothing more posted, whether it would be let go after all (`mayStillLapse`) —
   // asked only once a series is found late
   let onceChecked: ((seriesId: string) => string | null) | null = null;
@@ -210,7 +226,7 @@ export function overdueForSeries(
     const dueDays = dueDaysBySeries.get(s.id)!;
     const occ = projectOccurrences(projectable, periodStart, through)
       .filter((o) => o.amountCents < 0)
-      .filter((o) => paymentFor(payments, o.date, dueDays) === undefined);
+      .filter((o) => paymentFor(payments, o.ownDate, dueDays) === undefined);
     if (occ.length === 0) continue;
     const amountCents = occ.reduce((sum, o) => sum - o.amountCents, 0);
     totalCents += amountCents;
@@ -224,6 +240,7 @@ export function overdueForSeries(
       occurrenceCount: occ.length,
       occurrenceCents: occ.map((o) => -o.amountCents),
       occurrenceDates: occ.map((o) => o.date),
+      occurrenceOwnDates: occ.map((o) => o.ownDate),
       href: `/recurring/${s.id}`,
       mayStillLapse: hasStoppedForecasting(s, today, onceChecked(s.id)),
     });
@@ -344,18 +361,31 @@ export function arrearsInWindow(
   };
 }
 
-/** Each late series' due days on or before the last one read (`lastDueDayRead`), each at its own amount, signed. */
+/**
+ * Each late series' due days on or before the last one read (`lastDueDayRead`), each at its own amount, signed — read
+ * by the day each FELL DUE (`occurrenceDates`), the day a surface says "has not posted" of, and asked of the one rule
+ * on its OWN day (`occurrenceOwnDates`): a row is matched to a day as a row of the series' own is graded — on its own
+ * days (`paymentFor`) — and as the import links one (`projectOwnDays`). Billed on its own, the two are one day.
+ * 🔴 Asked on the day it fell due, as the two sides first met (the merge of 933b29e2, 2026-10-30): a rent typed Nov 16
+ * and paid Nov 16, December unpaid, and the utilities' own −$182.21 of Dec 1 unattached — on time for their Dec 1,
+ * which falls due with the rent's Dec 16 — on Dec 20 the runway read "A further $2,473.42 came due earlier this month
+ * and has not posted." and December drew a ✕ on Dec 16 beside the row (a temp database; pinned in
+ * nearer-due-day.test.ts). Latent on his ledger copy 2026-10-30: the utilities have no account and no row of their
+ * own, and with the rent typed Sep 1 every day of theirs falls due on its own 1st.
+ */
 function readDueDays(
-  late: BudgetTail,
+  late: Overdue,
   readingOf: (seriesId: string) => DueDayReading,
 ): ReadonlyMap<string, readonly ExpectedDay[]> {
   const readDays = new Map<string, readonly ExpectedDay[]>();
   for (const s of late.series) {
     const readTo = lastDueDayRead(readingOf(s.id));
     if (readTo === null) continue;
-    const days = s.occurrenceDates
-      .map((date, i) => ({ date, amountCents: -s.occurrenceCents[i]! }))
-      .filter((d) => compareDates(d.date, readTo) <= 0);
+    const days = s.occurrenceDates.flatMap((fellDue, i) =>
+      compareDates(fellDue, readTo) <= 0
+        ? [{ date: s.occurrenceOwnDates[i]!, amountCents: -s.occurrenceCents[i]! }]
+        : [],
+    );
     readDays.set(s.id, days);
   }
   return readDays;
@@ -545,10 +575,11 @@ export function unbankedIncomeForSeries(
   return { totalCents: series.reduce((sum, x) => sum + x.amountCents, 0), series };
 }
 
-type RecurringSeriesRow = typeof recurringSeries.$inferSelect;
+/** A pay series' row as a projection takes it: money in, billed on its own (`asMoneyIn`). */
+type PaySeriesRow = typeof recurringSeries.$inferSelect & { readonly billedWith: null };
 
 /** These series, as the income mirror reads them: detected or confirmed, and pay. */
-function livePaySeries(db: AppDatabase, ids: ReadonlySet<string>): RecurringSeriesRow[] {
+function livePaySeries(db: AppDatabase, ids: ReadonlySet<string>): PaySeriesRow[] {
   if (ids.size === 0) return [];
   return (
     db
@@ -565,19 +596,25 @@ function livePaySeries(db: AppDatabase, ids: ReadonlySet<string>): RecurringSeri
        * it here would delete the sentence exactly when it matters most.
        */
       .filter((r) => r.kind === "income")
+      // money in: billed on its own (`asMoneyIn`)
+      .map(asMoneyIn)
   );
 }
 
 /** A pay series' passed paydays no deposit settled in the window, and which of them the ledger has read. */
 interface UnmetPaydays {
-  s: RecurringSeriesRow;
+  s: PaySeriesRow;
   occ: ReturnType<typeof projectOccurrences>;
   checkedThrough: string | null;
   checked: ReturnType<typeof projectOccurrences>;
   pastGrace: ReturnType<typeof projectOccurrences>;
 }
 
-/** Each series' checked paydays — what a surface would call "with no deposit", not banked yet or never banked. */
+/**
+ * Each series' checked paydays — what a surface would call "with no deposit", not banked yet or never banked. ⛔ Each
+ * on its `date`: a pay series is billed on its own (`asMoneyIn`), so the day a payday falls due IS its own day
+ * (`SeriesOccurrence.ownDate`) — the day settlement keys it by, the page lists it on and a row is matched against.
+ */
 function checkedDays(read: readonly UnmetPaydays[]): ReadonlyMap<string, readonly ExpectedDay[]> {
   return new Map(
     read.map(({ s, checked }) => [s.id, checked.map((o) => ({ date: o.date, amountCents: o.amountCents }))]),
@@ -587,7 +624,7 @@ function checkedDays(read: readonly UnmetPaydays[]): ReadonlyMap<string, readonl
 /** Each pay series' passed paydays in `[periodStart, today)` that no deposit settled — those with any. */
 function paydaysUnmetInWindow(
   db: AppDatabase,
-  live: readonly RecurringSeriesRow[],
+  live: readonly PaySeriesRow[],
   periodStart: string,
   today: string,
 ): UnmetPaydays[] {

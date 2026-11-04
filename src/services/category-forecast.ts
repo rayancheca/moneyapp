@@ -276,6 +276,9 @@ function predictWith(
     // commitment has not lapsed: it has not started)
     if (hasStoppedForecasting(series, ctx.today, ctx.checkedThrough(series.id))) continue;
     if (!subtreeSeriesIds.has(series.id)) continue;
+    // ⚖️ each on the day it falls due (`SeriesOccurrence.date`), the day the walk held it in the month by — never its
+    // own day (`ownDate`): 🔴 summed by that (review of aa05a56d), the utilities on the 25th carried by a rent typed
+    // Nov 1 were re-filtered out of November with their Oct 25 and counted in no month
     for (const o of projectOccurrences(toProjectable(series), ctx.target.start, ctx.target.end)) {
       if (o.amountCents < 0) occurrences.push({ day: o.date, amountCents: -o.amountCents });
     }

@@ -390,7 +390,15 @@ describe("AllSeriesView — awaiting statements is its own section, never Runnin
  * with "0 matched"; it is filed by the rent's evidence, and its row says why it has matched nothing of its own.
  */
 describe("AllSeriesView — a series billed inside another's payment says so on its row", () => {
-  const rent = { id: "rent", name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" };
+  const rent = {
+    id: "rent",
+    name: "Flamingo South Beach (rent)",
+    lastMatchedOn: "2026-09-02",
+    opensOn: "2026-09-01",
+    opensOnHisDate: true,
+    opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
+    schedule: { cadence: "monthly" as const, intervalDaysAvg: null, nextExpectedOn: "2026-09-01", anchorDay: null },
+  };
   const text = decode(
     renderToStaticMarkup(
       createElement(AllSeriesView, {

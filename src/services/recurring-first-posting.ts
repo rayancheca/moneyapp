@@ -2,12 +2,14 @@ import { and, eq, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { addDays } from "@/lib/dates";
+import { withBillingCarriers } from "./billing-carriers";
 import {
   effectiveSeries,
-  projectOccurrences,
+  projectOwnDays,
   recomputeSeriesStats,
   toProjectable,
   type AbsorptionResult,
+  type CarriedBy,
   type RecomputeCtx,
   type Tx,
 } from "./recurring";
@@ -46,7 +48,10 @@ import {
  *    posted on or before today;
  *  - the amount equals the effective amount EXACTLY, sign included;
  *  - the row posted within the series' own `toleranceDays` of one of the
- *    occurrences `projectOccurrences` walks. That walk only steps FORWARD from
+ *    occurrences its walk draws on its own days (`projectOwnDays` — the
+ *    calendar's days billed on its own; billed inside another, the calendar
+ *    draws each on the day it falls due with its carrier's, which no row of its
+ *    own is matched against). That walk only steps FORWARD from
  *    the schedule's next date (`stepsToReach` never goes below step 0), so a
  *    commitment registered as starting on the 15th cannot claim a charge a
  *    month earlier — the same arbiter arrears and the calendar use;
@@ -85,7 +90,8 @@ import {
  * only the new one is in scope.
  */
 
-type SeriesRow = typeof recurringSeries.$inferSelect;
+/** A live series row, with the carrier it is billed with — where its projection opens (`toProjectable`). */
+type SeriesRow = typeof recurringSeries.$inferSelect & CarriedBy;
 
 interface CandidateRow {
   id: string;
@@ -109,9 +115,10 @@ function expectsCharge(s: SeriesRow, row: CandidateRow): boolean {
   if (eff.nextExpectedAmountCents === null || eff.nextExpectedOn === null) return false;
   if (row.amountCents !== eff.nextExpectedAmountCents) return false;
   if (s.accountId !== null && s.accountId !== row.accountId) return false;
-  // the window IS the tolerance, so any occurrence inside it is close enough
+  // the window IS the tolerance, so any occurrence inside it is close enough — on the series' OWN days, a row of its
+  // own (`projectOwnDays`): never the day one of what the rent carries falls due with the rent's (`fallsDueOn`)
   return (
-    projectOccurrences(toProjectable(s), addDays(row.postedOn, -s.toleranceDays), addDays(row.postedOn, s.toleranceDays))
+    projectOwnDays(toProjectable(s), addDays(row.postedOn, -s.toleranceDays), addDays(row.postedOn, s.toleranceDays))
       .length > 0
   );
 }
@@ -125,11 +132,11 @@ export function planFirstPostings(
   today: string,
   candidateIds?: ReadonlySet<string>,
 ): FirstPostingLink[] {
-  const live = tx
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
+  // each with its carrier: billed inside another, a series expects no charge before its carrier's date opens it
+  const live = withBillingCarriers(
+    tx,
+    tx.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
   const posting = new Set(
     tx
       .selectDistinct({ id: transactions.recurringSeriesId })

@@ -161,7 +161,8 @@ describe("setSeriesOverrides — moving a one charge's day moves its end with it
     setSeriesOverrides(bundle.db, balanceId, { userNextExpectedOn: "2026-11-14" });
     expect(row().userEndsOn).toBe("2026-11-14");
     expect([...oneChargeDays(bundle.db, [row()])]).toEqual([[balanceId, "2026-11-14"]]);
-    expect(projectOccurrences(toProjectable(row()), TODAY, "2027-03-31").map((o) => o.date)).toEqual(["2026-11-14"]);
+    const projected = projectOccurrences(toProjectable({ ...row(), billedWith: null }), TODAY, "2027-03-31");
+    expect(projected.map((o) => o.date)).toEqual(["2026-11-14"]);
     expect(rollForwardNextExpected(effectiveSeries(row()), TODAY)).toBe("2026-11-14");
     const card = subscriptionsCard(bundle.db, TODAY)!;
     expect(card.oneOffs.map((o) => [o.seriesId, o.cadenceLabel])).toEqual([[balanceId, "once · Nov 14"]]);

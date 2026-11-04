@@ -48,6 +48,20 @@ const TODAY = "2026-10-08";
 const RENT = "rent";
 const UTIL = "util";
 const GYM = "gym";
+/**
+ * the rent as what it carries reads it: its newest charge, where its schedule opens — detection's Sep 1 here — and the
+ * payment that paid that day, Sep 2's, on time
+ */
+const RENT_CARRIER = {
+  id: RENT,
+  name: "Flamingo South Beach (rent)",
+  lastMatchedOn: "2026-09-02",
+  opensOn: "2026-09-01",
+  opensOnHisDate: false,
+  opensPaidBy: { postedOn: "2026-09-02", dueDaysPast: 0 },
+  // …and its own schedule, as its due days step — what pairs each day of what it carries with its own (`pairingOf`)
+  schedule: { cadence: "monthly", intervalDaysAvg: 30, nextExpectedOn: "2026-09-01", anchorDay: 1 },
+};
 
 const now = () => new Date().toISOString();
 
@@ -146,7 +160,7 @@ describe("the link — one nullable column, one reader", () => {
     link();
     const carriers = billingCarriers(bundle.db);
     expect([...carriers.keys()]).toEqual([UTIL]);
-    expect(carriers.get(UTIL)).toEqual({ id: RENT, name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" });
+    expect(carriers.get(UTIL)).toEqual(RENT_CARRIER);
   });
 
   test("the column refuses a carrier that does not exist", () => {
@@ -189,7 +203,7 @@ describe("/recurring — the All tab, the bands and footers, the calendar", () =
     const rows = listSeries(bundle.db, TODAY);
     const util = rows.find((s) => s.id === UTIL)!;
     expect(util.evidence).toBe("active");
-    expect(util.billedWith).toEqual({ id: RENT, name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" });
+    expect(util.billedWith).toEqual(RENT_CARRIER);
     // ⛔ its own column is untouched — the link lends evidence, it writes no posting
     expect(util.lastMatchedOn).toBeNull();
     expect(util.matchedCount).toBe(0);
@@ -285,7 +299,7 @@ describe("its page, and the committed lines", () => {
     link();
     const d = seriesDetail(bundle.db, UTIL, TODAY);
     expect(d.evidence).toBe("active");
-    expect(d.billedWith).toEqual({ id: RENT, name: "Flamingo South Beach (rent)", lastMatchedOn: "2026-09-02" });
+    expect(d.billedWith).toEqual(RENT_CARRIER);
     expect(seriesDetail(bundle.db, RENT, TODAY).billedWith).toBeNull();
   });
 
@@ -432,10 +446,17 @@ describe("a merge of the carrier — the link follows the rent to the series it 
   test("its carrier is the series the rent was merged into — last seen Dec 2, not the ended rent's Sep 2", () => {
     link();
     mergeRentIntoDetectedSeries();
+    // …and where it opens is the live series' too: detection's Jan 2, 2027, never the ended rent's Sep 1 — and what
+    // paid it is the live series' payment of that day, none yet (Dec 2 is Dec 2's)
     expect(billingCarriers(bundle.db).get(UTIL)).toEqual({
       id: WF,
       name: "Flamingo South Beach",
       lastMatchedOn: "2026-12-02",
+      opensOn: "2027-01-02",
+      opensOnHisDate: false,
+      opensPaidBy: null,
+      // …and its own schedule as the merge recomputed it, off the rent's rows and its own, Aug 3 → Dec 2
+      schedule: { cadence: "monthly", intervalDaysAvg: 30.25, nextExpectedOn: "2027-01-02", anchorDay: null },
     });
     const line = subscriptionsCard(bundle.db, TODAY_DEC)!.live.find((l) => l.seriesId === UTIL)!;
     expect(line.billedWithLabel).toBe("billed with Flamingo South Beach, last seen Dec 2");
@@ -501,8 +522,10 @@ describe("a merge of the carrier — the link follows the rent to the series it 
     const where = () => ({
       upcoming: upcomingOccurrences(bundle.db, TODAY_DEC, 60).some((o) => o.seriesId === UTIL),
       arrears: arrearsThisMonth(bundle.db, new Set([UTIL]), TODAY_DEC).series.length > 0,
+      // ⚖️ drawn on the day their Dec 1 falls due, the live carrier's Dec 2 it pairs with (default (B), 2026-10-30;
+      // on their own Dec 1 until the review of aa05a56d)
       december:
-        recurringCalendar(bundle.db, "2026-12", TODAY_DEC).entriesByDay["2026-12-01"]?.find((e) => e.seriesId === UTIL)
+        recurringCalendar(bundle.db, "2026-12", TODAY_DEC).entriesByDay["2026-12-02"]?.find((e) => e.seriesId === UTIL)
           ?.paidWith ?? null,
       card: subscriptionsCard(bundle.db, TODAY_DEC)!.live.some((l) => l.seriesId === UTIL),
       evidence: listSeries(bundle.db, TODAY_DEC).find((s) => s.id === UTIL)!.evidence,
