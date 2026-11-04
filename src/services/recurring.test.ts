@@ -1175,6 +1175,46 @@ describe("a live series absorbs its own charges", () => {
     return { seriesId: s[0]!.id };
   }
 
+  /*
+   * ⛔ A DESCRIPTOR IS READ IN NORMALIZER v3'S FORM (`withoutAchReferences`) — the group's key and its name — as
+   * absorption reads it. A row stored before v3 keeps its ACH entry's individual ID, so compared as stored no two of a
+   * payee's entries were one descriptor: each v2 row a group of its own, and the next statement's v3 rows a group
+   * without them (review of b53989c8).
+   */
+  test("a payee's rows stored by normalizer v2, each with its own ACH ID, and its v3 row detect as one series", () => {
+    const storedByV2 = (day: string, achId: string): string => {
+      const id = insertTxn(cardA, day, -150_000, `Capital One Mobile Pmt ${achId} Rayan Karim Checa`);
+      const normalizedDescription = `CAPITAL ONE MOBILE PMT ${achId} RAYAN KARIM CHECA`;
+      bundle.db.update(transactions).set({ normalizedDescription }).where(eq(transactions.id, id)).run();
+      return id;
+    };
+    const rows = [storedByV2("2026-04-12", "CA0FDA683870046"), storedByV2("2026-05-12", "RT0FDB716244107")];
+    rows.push(insertTxn(cardA, "2026-06-12", -150_000, "Capital One Mobile Pmt LD0FDC193857204 Rayan Karim Checa"));
+
+    detectRecurringSeries(bundle.db, TODAY);
+    const series = bundle.db.select().from(recurringSeries).all();
+    expect(series.map((s) => s.name)).toEqual(["CAPITAL ONE MOBILE PMT RAYAN KARIM CHECA"]);
+    expect(rows.map(seriesFor)).toEqual(rows.map(() => series[0]!.id));
+
+    // ⛔ …and a series named before v3, by one entry's descriptor, is that payee's: no second series beside it
+    bundle.db.update(transactions).set({ recurringSeriesId: null, seriesLinkSource: null }).run();
+    bundle.db.delete(recurringSeries).run();
+    const named = bundle.db
+      .insert(recurringSeries)
+      .values({
+        name: "CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA",
+        accountId: cardA,
+        kind: "bill",
+        cadence: "monthly",
+        status: "detected",
+      })
+      .returning({ id: recurringSeries.id })
+      .get().id;
+    detectRecurringSeries(bundle.db, TODAY);
+    expect(bundle.db.select().from(recurringSeries).all().map((s) => s.id)).toEqual([named]);
+    expect(rows.map(seriesFor)).toEqual(rows.map(() => named));
+  });
+
   test("a later charge on ANOTHER account still joins the series", () => {
     // The measured case: PURA VIDA's six untagged rows sit on Chase Sapphire
     // while its series lives on Venture X. The descriptor group key carries the

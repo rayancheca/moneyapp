@@ -530,14 +530,16 @@ export function detectRecurringSeries(
     existingSeries.filter((s) => s.status === "detected" || s.status === "confirmed").map((s) => s.id),
   );
 
+  /*
+   * ⛔ A descriptor in normalizer v3's form (`withoutAchReferences`), as absorption reads it below: a row stored before
+   * v3 keeps its ACH entry's individual ID, so as stored no two of a payee's ACH entries were one group — each v2 row a
+   * group of its own, the next statement's v3 rows one without them (review of b53989c8).
+   */
   const groups = new Map<string, GroupTxn[]>();
   for (const t of activeTxns) {
     if (t.seriesLinkSource === "user") continue; // the user owns this row's link
-    const key = t.merchantId
-      ? `m:${t.merchantId}`
-      : t.normalizedDescription !== ""
-        ? `d:${t.accountId}\x1f${t.normalizedDescription}`
-        : null;
+    const descriptor = withoutAchReferences(t.normalizedDescription);
+    const key = t.merchantId ? `m:${t.merchantId}` : descriptor !== "" ? `d:${t.accountId}\x1f${descriptor}` : null;
     if (!key) continue; // empty descriptions would group unrelated rows
     const list = groups.get(key);
     if (list) list.push(t);
@@ -550,14 +552,15 @@ export function detectRecurringSeries(
       const isMerchantGroup = key.startsWith("m:");
       const merchantId = isMerchantGroup ? txns[0]!.merchantId! : null;
       const merchant = merchantId ? ctx.merchantById.get(merchantId) : undefined;
-      const name = merchant ? merchant.canonicalName : txns[0]!.normalizedDescription;
+      // …and named by it: a group of rows stored before v3 is the payee, never one entry's ID
+      const name = merchant ? merchant.canonicalName : withoutAchReferences(txns[0]!.normalizedDescription);
       const accountIds = new Set(txns.map((t) => t.accountId));
       const accountId = accountIds.size === 1 ? txns[0]!.accountId : null;
 
       const existing = isMerchantGroup
         ? existingSeries.find((s) => s.merchantId === merchantId)
         : existingSeries.find(
-            (s) => s.merchantId === null && s.accountId === accountId && s.name === name,
+            (s) => s.merchantId === null && s.accountId === accountId && withoutAchReferences(s.name) === name,
           );
 
       /*

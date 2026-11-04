@@ -308,3 +308,33 @@ describe("a name the app could never print", () => {
     expect(names).not.toContain("<UNKNOWN>");
   });
 });
+
+/*
+ * ⛔ A STORED DESCRIPTION IS QUEUED IN NORMALIZER v3'S FORM (`withoutAchReferences`), as absorption and the stripped key
+ * read it: a row stored before v3 keeps its ACH entry's individual ID, the per-entry field v3 takes off. 🔴 Keyed as
+ * stored, each of a payee's entries was a merchant of its own — asked one by one, "seen 1x" apiece — and its next
+ * statement's rows another (review of b53989c8; his ledger copy holds 41 active rows that keep an ID, none unfiled).
+ */
+describe("a payee's rows stored before normalizer v3 are one description with its v3 rows", () => {
+  const PAYEE = "CAPITAL ONE MOBILE PMT RAYAN KARIM CHECA";
+  /** a Capital One payment as an import before v3 stored it: its ACH individual ID kept */
+  function storedByV2(achId: string): string {
+    const id = insertTxn(`Capital One Mobile Pmt ${achId} Rayan Karim Checa`);
+    const normalizedDescription = `CAPITAL ONE MOBILE PMT ${achId} RAYAN KARIM CHECA`;
+    bundle.db.update(transactions).set({ normalizedDescription }).where(eq(transactions.id, id)).run();
+    return id;
+  }
+
+  test("they are queued as one, and classified together", async () => {
+    const rows = [storedByV2("CA0FDA683870046"), storedByV2("RT0FDB716244107")];
+    rows.push(insertTxn("Capital One Mobile Pmt LD0FDC193857204 Rayan Karim Checa"));
+    expect(pendingMerchantQueue(bundle.db)).toEqual([{ description: PAYEE, count: 3 }]);
+
+    const category = "Transfers > Credit Card Payment";
+    mockBatch([{ description: PAYEE, canonicalName: "Capital One", category, confidence: 0.95 }]);
+    const result = await classifyPendingMerchants(bundle.db);
+
+    expect(result.classified).toBe(3);
+    for (const id of rows) expect(txnRow(id).categoryId).toBe(categoryIdFor("Credit Card Payment"));
+  });
+});

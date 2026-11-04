@@ -610,6 +610,59 @@ describe("createSeriesFromTransaction — the 'Make recurring' button", () => {
     expect(snapshot()).toEqual(after);
   });
 
+  /*
+   * ⛔ Its siblings are read in normalizer v3's form (`withoutAchReferences`), as detection and absorption read them: a
+   * row stored before v3 keeps its ACH entry's individual ID. 🔴 Compared as stored, a v3 row of a payee had no sibling
+   * among the rows its earlier statements stored, and the series was named with the seed's ID (review of b53989c8).
+   */
+  test("a v3 row's siblings stored by normalizer v2, each with its own ACH ID, join it under the payee's name", () => {
+    const storedByV2 = (day: string, achId: string): string => {
+      const rawDescription = `Capital One Mobile Pmt ${achId} X`;
+      const id = insertTxn({ postedOn: day, amountCents: -150_000, rawDescription });
+      const normalizedDescription = `CAPITAL ONE MOBILE PMT ${achId} X`;
+      bundle.db.update(transactions).set({ normalizedDescription }).where(eq(transactions.id, id)).run();
+      return id;
+    };
+    const rows = [storedByV2("2026-04-12", "CA0FDA683870046"), storedByV2("2026-05-12", "RT0FDB716244107")];
+    rows.push(insertTxn({ postedOn: "2026-06-12", amountCents: -150_000, rawDescription: "Capital One Mobile Pmt X" }));
+    // another payee on the same card, with no merchant either, is no sibling
+    for (const day of ["2026-04-10", "2026-05-10", "2026-06-10"]) {
+      insertTxn({ postedOn: day, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" });
+    }
+
+    const result = createSeriesFromTransaction(bundle.db, rows[0]!, TODAY);
+    expect([result.mode, result.name, result.linked]).toEqual(["created", "CAPITAL ONE MOBILE PMT X", 3]);
+    expect(taggedIds(result.seriesId)).toEqual([...rows].sort());
+
+    // ⛔ …and a series named before v3, by one entry's descriptor, is that payee's: a row of it joins, no second one
+    bundle.db
+      .update(recurringSeries)
+      .set({ name: "CAPITAL ONE MOBILE PMT CA0FDA683870046 X" })
+      .where(eq(recurringSeries.id, result.seriesId))
+      .run();
+    bundle.db.update(transactions).set({ recurringSeriesId: null }).where(eq(transactions.id, rows[2]!)).run();
+    const joined = createSeriesFromTransaction(bundle.db, rows[2]!, TODAY);
+    expect([joined.mode, joined.seriesId]).toEqual(["attached", result.seriesId]);
+  });
+
+  // …and a merchant's siblings are every row of the merchant's, as they always were — whatever each one's words
+  test("a merchant seed's siblings are its merchant's rows, whatever each one's description", () => {
+    const now = new Date().toISOString();
+    const gym = bundle.db
+      .insert(merchants)
+      .values({ canonicalName: "Zzz Gym", createdAt: now, updatedAt: now })
+      .returning({ id: merchants.id })
+      .get().id;
+    const rows = [
+      ["2026-04-03", "ZZZ GYM 001"],
+      ["2026-05-03", "ZZZ GYM MIAMI"],
+      ["2026-06-03", "ZZZ GYM BRICKELL"],
+    ].map(([day, raw]) => insertTxn({ postedOn: day!, amountCents: -4_000, rawDescription: raw!, merchantId: gym }));
+
+    const result = createSeriesFromTransaction(bundle.db, rows[2]!, TODAY);
+    expect([result.mode, result.linked]).toEqual(["created", 3]);
+  });
+
   test("the created series ABSORBS its next charge on the following detection run", () => {
     const ids = ["2026-03-10", "2026-04-10", "2026-05-10"].map((d) =>
       insertTxn({ postedOn: d, amountCents: -5000, rawDescription: "BREEZELINE 866-290-5400" }),
