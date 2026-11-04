@@ -60,6 +60,7 @@ export interface UseViewStateResult {
 }
 
 const NO_CARRY: readonly string[] = [];
+const NOTHING = (): void => {};
 
 /** the carried keys `view` sets, as URL params */
 function carriedParams(carry: readonly string[], view: ViewState): Record<string, string> {
@@ -101,6 +102,8 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
       if (sameValues(keys, next, base.view) && sameValues(spec.map((dim) => dim.key), next, state)) return;
       const href = `${basePath}${viewHrefQuery(spec, next, { ...base.params, ...carriedParams(carry, next) })}`;
       asks?.ask(href, next);
+      // still going until it has gone for the last time (`PageAsks.going`): it draws its own page
+      const gone = asks?.going() ?? NOTHING;
       startTransition(async () => {
         // To the NEWEST asked URL, which every press made since this one built on — not to
         // this press's own, or a range pill pressed meanwhile would be navigated away from.
@@ -111,6 +114,13 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
           const to: Landing | null = asks === null ? { href, kind: "push", scroll: false } : asks.landing();
           if (to !== null) router[to.kind](to.href, { scroll: to.scroll });
         };
+        const goLast = (): void => {
+          try {
+            go();
+          } finally {
+            gone();
+          }
+        };
         // Persist BEFORE navigating. Switching to the DEFAULT view drops its URL
         // param (clean links), so the RSC falls back to the PERSISTED preference —
         // it must already be written or the navigation re-reads the stale value.
@@ -119,17 +129,17 @@ export function useViewState(opts: UseViewStateOptions): UseViewStateResult {
         // ⚖️ B2: queued behind a save of Back's view that hangs, no longer than
         // BACK_SAVE_WAIT_MS — the bound every URL writer has — and, cut short, again once
         // the write lands: a default view only the saved one draws (`pressWriteLanding`).
-        // Cut short, that settles `true` (the write's own answer is an object), and the press
-        // says so as it goes (`goneAtBound`): it draws its page again itself.
+        // Cut short, that settles `true` (the write's own answer is an object): it goes now,
+        // and is still going until it goes again then (`goLast`).
         const write = saveViewPreferenceAction(surface, next);
         let cut = false;
         try {
-          cut = (await (asks === null ? write : pressWriteLanding(asks, write, go))) === true;
+          cut = (await (asks === null ? write : pressWriteLanding(asks, write, goLast))) === true;
         } catch {
           /* persistence is best-effort */
         }
-        if (cut && asks !== null) asks.goneAtBound(go);
-        else go();
+        if (cut) go();
+        else goLast();
       });
     },
     [asks, pressBase, surface, spec, state, basePath, carry, router],

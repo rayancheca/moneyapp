@@ -11,6 +11,7 @@ import {
   pageLinkHref,
   pressBase,
   pressWriteLanding,
+  redrawAfterBackSaves,
   withAsk,
   type PageAsk,
   type PageAsks,
@@ -329,32 +330,28 @@ describe("createPageAsks: a link followed while a press is being written", () =>
 });
 
 /**
- * A press gone at BACK_SAVE_WAIT_MS goes again itself once its write lands, so the page it goes to now is not one
- * PageAsksProvider draws again: 🔴 making again a link he had followed, it was rendered twice (review of 7898ee2).
+ * What navigates once what it waits on lands — a press once its write does, a URL writer held by Back's saves once they
+ * do — is still going until it has: it draws its own page then, so PageAsksProvider waits on it before drawing the page
+ * on screen again (`redrawAfterBackSaves`). 🔴 Waiting on nothing, the page was rendered twice (review of 1c057674).
  */
-describe("createPageAsks: a press gone at BACK_SAVE_WAIT_MS", () => {
-  test("goesAgain is true while its navigation runs (`goneAtBound`), and only then", () => {
-    const asks = createPageAsks();
-    asks.ask("/h?view=returns", {});
-    asks.departing("/h/b", "push"); // a link he followed while the press waited
-    expect(asks.goesAgain()).toBe(false);
-    const during: boolean[] = [];
-    asks.goneAtBound(() => {
-      asks.departing(asks.landing()!.href, "push"); // the link made again: its start, inside the navigation
-      during.push(asks.goesAgain());
-    });
-    expect(during).toEqual([true]);
-    expect(asks.goesAgain()).toBe(false);
-  });
+describe("createPageAsks: what is still going", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-  test("a navigation that throws leaves it false", () => {
+  test("settles once everything going has gone, each once however often it says so; nothing going is null", async () => {
     const asks = createPageAsks();
-    expect(() =>
-      asks.goneAtBound(() => {
-        throw new Error("blocked");
-      }),
-    ).toThrow("blocked");
-    expect(asks.goesAgain()).toBe(false);
+    expect(asks.stillGoing()).toBeNull();
+    const press = asks.going();
+    const pill = asks.going();
+    let gone = false;
+    void asks.stillGoing()!.then(() => (gone = true));
+    press();
+    press();
+    await flush();
+    expect(gone).toBe(false);
+    pill();
+    await flush();
+    expect(gone).toBe(true);
+    expect(asks.stillGoing()).toBeNull();
   });
 });
 
@@ -616,6 +613,116 @@ describe("navigateAfterBackSaves", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  /** …and is still going (`PageAsks.going`) until it has gone once they land: its page is drawn by it */
+  test("held by Back's saves, it is still going until it has gone once they land — newest or not", async () => {
+    for (const newer of [false, true]) {
+      const asks = createPageAsks();
+      let land!: () => void;
+      asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+      asks.ask("/h?range=1M", {});
+      const order: string[] = [];
+      navigateAfterBackSaves(asks, "/h?range=1M", () => order.push("go"));
+      if (newer) asks.ask("/h?range=1M&view=returns", { view: "returns" }); // a press, built on it: that one goes
+      void asks.stillGoing()!.then(() => order.push("gone"));
+      land();
+      await flush();
+      expect(order, newer ? "a newer URL asked" : "the newest").toEqual(newer ? ["gone"] : ["go", "gone"]);
+      expect(asks.stillGoing()).toBeNull();
+    }
+  });
+
+  test("gone at BACK_SAVE_WAIT_MS, it is still going until it goes again once they land", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.ask("/h?range=1M", {});
+    const go = vi.fn();
+    navigateAfterBackSaves(asks, "/h?range=1M", go);
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(asks.stillGoing()).not.toBeNull();
+    land();
+    await flush();
+    expect(go).toHaveBeenCalledTimes(2);
+    expect(asks.stillGoing()).toBeNull();
+  });
+
+  test("going at once while none is being written, it is never still going", () => {
+    const asks = createPageAsks();
+    asks.ask("/h?range=1M", {});
+    navigateAfterBackSaves(asks, "/h?range=1M", () => {});
+    expect(asks.stillGoing()).toBeNull();
+  });
+});
+
+/**
+ * ⚖️ B2: a page drawn while a save of Back's view is being written may draw the saved view he walked away from, so
+ * PageAsksProvider draws it again once that lands — after what is still going has gone, which draws its own page, and
+ * no later than BACK_SAVE_WAIT_MS after: 🔴 waiting on a press whose write never answered, the page kept the view he
+ * walked away from until a reload (review of 1c057674, batch 8).
+ */
+describe("redrawAfterBackSaves", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("draws nothing while no save of Back's view is being written", async () => {
+    const asks = createPageAsks();
+    const redraw = vi.fn();
+    redrawAfterBackSaves(asks, redraw);
+    await flush();
+    expect(redraw).not.toHaveBeenCalled();
+  });
+
+  test("draws once Back's saves have landed, with nothing still going", async () => {
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    const redraw = vi.fn();
+    redrawAfterBackSaves(asks, redraw);
+    await flush();
+    expect(redraw).not.toHaveBeenCalled();
+    land();
+    await flush();
+    expect(redraw).toHaveBeenCalledTimes(1);
+  });
+
+  test("waits on what is still going then: its navigation comes first, and leaves no timer behind", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    const gone = asks.going(); // a press, its write queued behind Back's save
+    const order: string[] = [];
+    redrawAfterBackSaves(asks, () => order.push("redraw"));
+    land();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    expect(order).toEqual([]);
+    order.push("the press goes");
+    gone();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["the press goes", "redraw"]); // `redraw` itself sees that a navigation has started
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("waits on it no longer than BACK_SAVE_WAIT_MS after Back's saves land, however long they took", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    asks.going(); // a press whose write never answers
+    const redraw = vi.fn();
+    redrawAfterBackSaves(asks, redraw);
+    await vi.advanceTimersByTimeAsync(3 * BACK_SAVE_WAIT_MS); // Back's save, late
+    land();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    expect(redraw).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(redraw).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**
@@ -692,7 +799,7 @@ describe("pressWriteLanding", () => {
     expect(again).not.toHaveBeenCalled(); // never cut short: it goes once, after its write
   });
 
-  /** …so the press can say so as it goes (`goneAtBound`): it draws its page again itself, once its write lands. */
+  /** …so the press knows it is still going (`PageAsks.going`): it goes again itself, once its write lands. */
   test("while Back's saves are being written it settles true when cut short, false when its write lands first", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     for (const outcome of ["cut short", "landed", "refused"] as const) {

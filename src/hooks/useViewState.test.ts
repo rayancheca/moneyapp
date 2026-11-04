@@ -1252,7 +1252,10 @@ describe("Back/Forward to a page with view pills", () => {
     ]);
   });
 
-  /** ⛔ A writer gone at its bound goes again itself once Back's save lands, and that is a move: no second redraw. */
+  /**
+   * ⛔ A writer gone at its bound goes again itself once Back's save lands, to its asked URL — no move. The provider's
+   * redraw waits on it (`PageAsks.going`) and draws nothing once a navigation has started since (`starts`): no second.
+   */
   test("a range pill gone at BACK_SAVE_WAIT_MS: once Back's save lands its page is drawn once more, not twice", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const page = await open(portfolioPage, "/investments?range=1Y");
@@ -1335,6 +1338,175 @@ describe("Back/Forward to a page with view pills", () => {
     expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
     // he stays where the link took him
     expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1Y", "/investments?range=3M"]);
+  });
+
+  /**
+   * …and so is a link followed while a press still waits on its write, which Next queues behind Back's save: the press
+   * makes the link again once its write lands (`landing`), so nothing else draws it once Back's save lands. 🔴 Review
+   * of 1c057674 (batch 8, L27; harness probe, the same at 2b4ed44e): the provider drew ?range=3M as Back's save landed,
+   * before the press's write, and the press made the link again: two renders, the first without the press.
+   */
+  test("a link followed while a press waits on its write: once both land, drawn once more, not twice", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent"); // its write queued behind Back's save
+    await idle();
+    page.router.push("/investments?range=3M"); // a link that carries no view
+    await idle();
+    await page.serve("render");
+    const before = page.navigations.length;
+    await page.serve("write"); // Back's save, in time
+    expect(page.pending.map((work) => work.kind)).toEqual(["write"]); // the press's own: nothing drawn before it lands
+    await page.serve("write");
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=3M"]);
+    expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=3M"]);
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
+    expect(page.history.map((entry) => entry.url)).toEqual(["/investments?range=1Y", "/investments?range=3M"]);
+  });
+
+  /** …and one followed once the press went at its bound to its own URL: its write landing, it makes the link again */
+  test("a press gone at BACK_SAVE_WAIT_MS to its own URL, then a link: once both land, drawn once more, not twice", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent");
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // the press, gone at its bound
+    expect(page.url).toBe("/investments?range=1Y&unit=percent");
+    page.router.push("/investments?range=3M"); // a link that carries no view
+    await idle();
+    await page.serve("render");
+    const before = page.navigations.length;
+    await page.serve("write"); // Back's save, late
+    await page.serve("write"); // and the press's own
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=3M"]);
+    expect(page.navigations.slice(before).map((nav) => nav.url)).toEqual(["/investments?range=3M"]);
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
+  });
+
+  /**
+   * …and so is the page of a press or URL writer he makes on the link's page before Back's save lands: each goes to its
+   * own URL then, built on the link's. 🔴 Measured in this harness 2026-10-30: the provider drew ?range=3M again first.
+   */
+  test("a press made on that link's page before Back's save lands: once it lands, its own page alone", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+    page.router.push("/investments?range=3M");
+    await idle();
+    await page.serve("render"); // drawn before Back's save landed: his Return
+    ui.portfolio!.setView("unit", "percent"); // pressed on the Return he sees, its write behind Back's save
+    await idle();
+
+    await page.serve("write"); // Back's save
+    expect(page.pending.map((work) => work.kind)).toEqual(["write"]);
+    await page.serve("write"); // the press's own
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=3M&view=returns&unit=percent"]);
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns", unit: "percent" });
+  });
+
+  test("…and a range pill pressed there: once Back's save lands, the pill's page alone", async () => {
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+    page.router.push("/investments?range=3M");
+    await idle();
+    await page.serve("render");
+    pills.range!("1M"); // it waits on Back's save
+    await idle();
+
+    await page.serve("write"); // Back's save
+    const renders: string[] = [];
+    while (page.pending.length > 0) renders.push((await page.serve("render")).label);
+    expect(renders).toEqual(["/investments?range=1M"]);
+    expect(page.url).toBe("/investments?range=1M");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value" });
+  });
+
+  /**
+   * ⚖️ B2, bounded: once Back's save lands, the provider waits on a press still going no longer than BACK_SAVE_WAIT_MS.
+   * 🔴 Review of 1c057674 (batch 8, L28; harness probe): a press gone at its bound making the link again was drawn
+   * again by nothing once Back's save landed (the provider skipped what such a press made), so with its write never
+   * answered the link's page kept his Return — the view he walked away from — while Value was saved, until a reload.
+   * 2b4ed44e drew the Value.
+   */
+  test("a press gone at its bound making a link again, its write hung: drawn again BACK_SAVE_WAIT_MS after Back's save", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent");
+    await idle();
+    page.router.push("/investments?range=3M");
+    await idle();
+    await page.serve("render");
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // the press, gone at its bound: the link made again
+    await page.serve("write"); // Back's save, late; the press's own write is never answered
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns", unit: "dollar" }); // drawn before Back's save landed
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    await idle();
+    expect(page.pending.map((work) => work.kind)).toEqual(["write"]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await idle();
+    expect(page.pending).toContainEqual({ kind: "render", label: "/investments?range=3M" });
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=3M");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "dollar" }); // the view Back showed, as saved
+    expect(page.persisted.investments).toMatchObject({ view: "value", unit: "dollar" });
+  });
+
+  /** …the same for one gone at its bound to its own URL: 🔴 7898ee2 made the same trade there, unbounded */
+  test("a press gone at its bound to its own URL, its write hung: drawn again BACK_SAVE_WAIT_MS after Back's save", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent");
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // the press, gone at its bound
+    expect(ui.portfolio!.state).toMatchObject({ view: "returns", unit: "percent" }); // the saved Return beside it
+    await page.serve("write"); // Back's save, late; the press's own write is never answered
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS - 1);
+    await idle();
+    expect(page.pending.map((work) => work.kind)).toEqual(["write"]); // the press may yet go again itself
+
+    await vi.advanceTimersByTimeAsync(1);
+    await idle();
+    expect(page.pending).toContainEqual({ kind: "render", label: "/investments?range=1Y&unit=percent" });
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=1Y&unit=percent");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
   });
 
   test("the control: a link followed once Back's save has landed draws the view Back showed, once", async () => {
