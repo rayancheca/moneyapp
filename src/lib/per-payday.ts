@@ -1,5 +1,5 @@
 import { compareDates } from "./dates";
-import type { SettlementPortion } from "./payday-settlement";
+import type { AttributedDeposit, SettlementPortion } from "./payday-settlement";
 import { ratePeriodOf, rateOn, type RateSchedule } from "./series-kind";
 
 /**
@@ -136,6 +136,8 @@ export interface PaydayReading {
  * shortfall note, so no two can word the same row two ways. 🔴 Before the reach bound June's $400.00 read "paid
  * (toward the payday of Aug 27, 2026)"; after it, the series page still graded the row "-$647.00" beside the
  * calendar's "toward no payday". Here, in `lib`, since a /spending note needs it too (`components` re-exports it).
+ * ⛔ …and of the same money: the deposits beside a week, which /spending cannot tell from change, are read here for it
+ * (`moneyBesideTheWeek`).
  */
 export const TOWARD_NO_PAYDAY = "toward no payday";
 
@@ -247,7 +249,8 @@ function dayPerPayday(
  * set." — for a week paid to the cent and a second deposit (his ledger copy, 2026-11-04).
  *
  * ⛔ The lowest id of the deposits that match: the same row is the week on the calendar, the series page and the posted
- * average, whichever order each read the day's rows in.
+ * average, whichever order each read the day's rows in. ⛔ And /spending's notes read the money beside it from the same
+ * readings (`moneyBesideTheWeek`).
  */
 function weekBesideExtra(
   deposits: readonly ReadableRow[],
@@ -360,6 +363,34 @@ export function paydayReadings(
     );
   }
   return out;
+}
+
+/**
+ * ⚖️ THE MONEY BESIDE THE WEEK, per day, oldest first: of each pay day read as the week beside an extra deposit
+ * (`weekBesideExtra`, default built, not asked, 2026-11-04), what its other deposits brought — on a day whose money
+ * paid a payday, the money the readings above say paid none (`PaydayReading.towardNoPayday`). Settlement leaves it over
+ * INSIDE a day that paid, where a reader of the settlement alone cannot tell it from change over a payday's worth.
+ * ⛔ So /spending's notes read it here (`payShortfall`'s `towardNoPayday`, off the settlement's answer): one phrase for
+ * the same row on every page (`TOWARD_NO_PAYDAY`). 🔴 Read off the settlement alone, his Oct 15's $200.00 — "toward no
+ * payday" on the calendar, the series page and the popover — was "more than the paydays its deposits paid came to" on
+ * /spending's October and Oct 15, and his year named Jun 5's $400.00 alone (review of 339b2c7a, his ledger copy
+ * 2026-11-04). ⛔ Only its pay days' rows (`onPayDay`): a credit settlement never read is no money it left over.
+ */
+export function moneyBesideTheWeek(
+  rows: readonly ReadableRow[],
+  portions: readonly SettlementPortion[],
+  schedule: RateSchedule,
+): AttributedDeposit[] {
+  const paying = new Set(portions.map((p) => p.depositOn));
+  const readings = paydayReadings(rows, portions, schedule);
+  const days = new Map<string, number>();
+  for (const r of rows.filter(onPayDay)) {
+    // a row whose day's money paid a payday, that the reading says paid none — money out never does: the deposit
+    // beside the week
+    if (!paying.has(r.postedOn) || readings.get(r.id)?.towardNoPayday !== true) continue;
+    days.set(r.postedOn, (days.get(r.postedOn) ?? 0) + r.amountCents);
+  }
+  return [...days].sort(([a], [b]) => compareDates(a, b)).map(([postedOn, amountCents]) => ({ postedOn, amountCents }));
 }
 
 /** The figure a row is held to the expectation as — per payday for a lump, else its amount. */

@@ -11,6 +11,7 @@ import {
   type WindowEarnings,
 } from "./pay-shortfall";
 import { settlePaydaysBackwards, type AttributedDeposit, type PaydayOccurrence } from "./payday-settlement";
+import { moneyBesideTheWeek } from "./per-payday";
 import { daysThatBanked, daysThatWentBackOut } from "./posted-average";
 
 /**
@@ -107,10 +108,17 @@ function shortfallOf(
             lastOn: asChecked.lastPeriodOn,
           },
   };
-  // what the service hands it (`paydaySettlement`): the days that banked, and the days money went back out on
+  // what the service hands it (`paydaySettlement`): the days that banked, the days money went back out on, and the
+  // money beside a day's week, as the rows' readings read it (`moneyBesideTheWeek`)
   const banked = daysThatBanked(arrived).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents }));
   const wentBackOut = daysThatWentBackOut(arrived).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents }));
-  return payShortfall({ settledBy: s.settledBy, portions: s.portions, paydays, deposits: banked, wentBackOut }, w, e);
+  const besideTheWeek = moneyBesideTheWeek(
+    arrived.map((d, i) => ({ id: `row-${i}`, ...d })),
+    s.portions,
+    { nextExpectedAmountCents: series.amountCents, amountHistory: series.amountHistory },
+  );
+  const walked = { paydays, deposits: banked, wentBackOut, besideTheWeek };
+  return payShortfall({ settledBy: s.settledBy, portions: s.portions, ...walked }, w, e);
 }
 
 const his = (from: string, to: string, checkedThrough: string | null = CHECKED, today = TODAY) =>

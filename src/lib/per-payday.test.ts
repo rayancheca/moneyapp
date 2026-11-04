@@ -3,6 +3,7 @@ import {
   amountPerPayday,
   comparableCents,
   expectedCentsOf,
+  moneyBesideTheWeek,
   paydayReadings,
   paydaysPaidAloneByDeposit,
   spreadSampleCents,
@@ -390,6 +391,58 @@ describe("paydayReadings — the week's own deposit beside an extra one the same
       FLAT,
     );
     expect(two.get("a")?.perPayday).toEqual({ paydays: 2, cents: WEEK + 10_000, deposits: 2 });
+  });
+});
+
+/*
+ * ⛔ THE MONEY BESIDE THE WEEK, per day — what the readings above call toward no payday on a day whose money paid one:
+ * settlement leaves it over inside a day that paid, so /spending, which reads the settlement, reads it here. 🔴 Read
+ * off the settlement alone, his Oct 15's $200.00 was "more than the paydays its deposits paid came to" on /spending
+ * beside the calendar's "toward no payday" (review of 339b2c7a, his ledger copy 2026-11-04).
+ */
+describe("moneyBesideTheWeek — the deposits beside a week, by day", () => {
+  const OCT_15 = [{ paydayOn: "2026-10-15", depositOn: "2026-10-15", cents: WEEK }];
+
+  test("his Oct 15: the week paid its payday, and the $200.00 beside it is that day's money toward no payday", () => {
+    const rows = [
+      { id: "extra", postedOn: "2026-10-15", amountCents: 20_000 },
+      { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+      // a week alone on its day is the week, and nothing beside it
+      { id: "oct-8", postedOn: "2026-10-08", amountCents: WEEK },
+    ];
+    const portions = [...OCT_15, { paydayOn: "2026-10-08", depositOn: "2026-10-08", cents: WEEK }];
+    expect(moneyBesideTheWeek(rows, portions, HIS)).toEqual([{ postedOn: "2026-10-15", amountCents: 20_000 }]);
+  });
+
+  test("two weeks to the cent on a day that paid one: the other week is the money beside it", () => {
+    const rows = [
+      { id: "a", postedOn: "2026-10-15", amountCents: WEEK },
+      { id: "b", postedOn: "2026-10-15", amountCents: WEEK },
+    ];
+    expect(moneyBesideTheWeek(rows, OCT_15, FLAT)).toEqual([{ postedOn: "2026-10-15", amountCents: WEEK }]);
+  });
+
+  // ⛔ only a day read as the week beside an extra: every other day is the day, or paid no payday at all — the
+  // settlement's own days that banked say that one (`payShortfall`)
+  test("a day read as the day, and a day that paid no payday, have no money beside a week", () => {
+    const rows = [
+      // one week sent as two transfers: the day is that payday's pay
+      { id: "part", postedOn: "2026-10-15", amountCents: 50_000 },
+      { id: "rest", postedOn: "2026-10-15", amountCents: WEEK - 50_000 },
+      // Jun 5's $400.00 paid no payday
+      { id: "jun-5", postedOn: "2026-06-05", amountCents: 40_000 },
+    ];
+    expect(moneyBesideTheWeek(rows, OCT_15, HIS)).toEqual([]);
+  });
+
+  // ⛔ a credit linked to the pay that is no row of its pay day is no part of the day's money (`onPayDay`): the
+  // settlement never read it, so it is not the settlement's money left over
+  test("a credit off the pay day is not money beside the week", () => {
+    const rows = [
+      { id: "week", postedOn: "2026-10-15", amountCents: WEEK },
+      { id: "refund", postedOn: "2026-10-15", amountCents: 3_000, offPayDay: true },
+    ];
+    expect(moneyBesideTheWeek(rows, OCT_15, FLAT)).toEqual([]);
   });
 });
 

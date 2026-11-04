@@ -14,7 +14,7 @@ import {
   type PaydayOccurrence,
   type PaydaySettlement,
 } from "@/lib/payday-settlement";
-import { paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-payday";
+import { moneyBesideTheWeek, paydayReadings, type PaydayReading, type ReadableRow } from "@/lib/per-payday";
 import { daysThatBanked, daysThatWentBackOut } from "@/lib/posted-average";
 import { ratePeriodOf } from "@/lib/series-kind";
 import { loadCategoryIndex, payDayRows, type AnalyticsTxn, type CategoryIndex } from "./analytics";
@@ -88,6 +88,7 @@ export function paydaySettlement(
 
   const linked = db
     .select({
+      id: transactions.id,
       postedOn: transactions.postedOn,
       amountCents: transactions.amountCents,
       categoryId: transactions.categoryId,
@@ -126,7 +127,8 @@ export function paydaySettlement(
    * reaches `today + toleranceDays`. Money has arrived, so there is a first payday. Walking back it draws the past and
    * the paydays that money has reached (`walkBackBound`), the ones every past reader draws beside it.
    */
-  const firstOn = firstPaydayOn(effectiveSeries(s), s.toleranceDays, rows, today);
+  const eff = effectiveSeries(s);
+  const firstOn = firstPaydayOn(eff, s.toleranceDays, rows, today);
   const walkBackBefore = walkBackBound(rows, s.toleranceDays, today);
   const projectable = paydayProjectable(asMoneyIn(s), { firstPaydayOn: firstOn, walkBackBefore }, today);
   const occurrences = projectOccurrences(projectable, firstOn ?? today, addDays(today, s.toleranceDays)).filter(
@@ -155,6 +157,9 @@ export function paydaySettlement(
     // counts its money names them (`payShortfall`) — 🔴 netted unnamed, a return two days after its payroll took the
     // payday the payroll paid back off /spending's note, and a window with no read payday read "came to $0.00"
     wentBackOut: daysThatWentBackOut(rows).map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents })),
+    // …and the money a day that paid its week brought beside it, as every reading of its rows reads it — held to the
+    // calendar's rate schedule (`effectiveSeries`), the one its readings are taken against (`paydayReadingsBySeries`)
+    besideTheWeek: moneyBesideTheWeek(rows, settlement.portions, eff),
   };
 }
 
@@ -182,6 +187,14 @@ export interface SeriesPaydaySettlement extends PaydaySettlement {
   deposits: readonly AttributedDeposit[];
   /** the days whose rows netted below $0.00 (`daysThatWentBackOut`) — signed, so negative — oldest first */
   wentBackOut: readonly AttributedDeposit[];
+  /**
+   * ⚖️ …and of each day read as the week beside an extra deposit, what its other deposits brought (`moneyBesideTheWeek`,
+   * default built, not asked, 2026-11-04) — money the walk left over inside a day that paid, which every reading of the
+   * rows calls "toward no payday". ⛔ For a reader of this answer that names money (`payShortfall`): it cannot tell
+   * that money from change in `deposits`. 🔴 His Oct 15's $200.00 read "more than the paydays its deposits paid came
+   * to" on /spending beside the calendar's "toward no payday" (review of 339b2c7a, his ledger copy 2026-11-04).
+   */
+  besideTheWeek: readonly AttributedDeposit[];
 }
 
 const unsettled = (): SeriesPaydaySettlement => ({
@@ -191,6 +204,7 @@ const unsettled = (): SeriesPaydaySettlement => ({
   paydays: [],
   deposits: [],
   wentBackOut: [],
+  besideTheWeek: [],
 });
 
 /**
