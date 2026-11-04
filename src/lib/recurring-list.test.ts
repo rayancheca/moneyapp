@@ -90,13 +90,16 @@ describe("seriesListed — what the All tab lists, and how much of it a link lef
 /*
  * 🔴 /recurring's wiring was pinned by matching the page's SOURCE TEXT (`page.test.ts`): a reflow or a renamed local
  * broke it with nothing changed (review of the dashboard links, 2026-10-12). The page now makes ONE call, and what the
- * call returns is pinned here by behaviour — the param read, the rows cut and the badge counted by one rule.
+ * call returns is pinned here by behaviour — the param read, the rows cut and the badge counted by one rule. 🔴 With no
+ * ended series here, a badge that dropped only the dismissed passed this file; only the page's render caught it
+ * (review of efdf2de0, batch 8).
  */
 describe("allTabOf — the All tab the page hands its view, from the `?series=` value it was given", () => {
   const rows = [
     { id: PAY, name: "Salary", status: "confirmed" },
     { id: TUTORING, name: "Tutoring", status: "detected" },
     { id: "rent", name: "Rent", status: "confirmed" },
+    { id: "old", name: "Old job", status: "ended" },
     { id: "coke", name: "STOCK LENDING (COKE)", status: "dismissed" },
   ] as const;
 
