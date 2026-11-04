@@ -485,7 +485,9 @@ describe("unreadMonthsSentence — why an average stops before the last complete
 
   /*
    * ⚖️ Default built, not asked (2026-10-23): the income pace's months end at the last one every account its own rows
-   * land in is read to the end of (`incomePaceMonths`), and say so in this sentence's words, those accounts NAMED.
+   * come in on habitually (before any account holds the habit, those still coming in when last read) that a statement
+   * is still coming for is read to the end of (`incomePaceMonths`), and say so in this sentence's words, those
+   * accounts NAMED.
    * 🔴 Measured on his ledger copy at 2026-10-23: Robinhood Cash, where every Dividends and Interest row the pace reads
    * lands, is read to Sep 9 — never a day every account he SPENDS from is read to (Aug 12). 🔴 Review of af84411: it
    * said "every account your income lands in" of a day that leaves out the account his pay lands in (a live series
