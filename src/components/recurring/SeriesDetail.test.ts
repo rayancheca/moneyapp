@@ -466,14 +466,22 @@ describe("SeriesDetail — what the rent carries: its sentence names the day its
     )
       .replace(/<[^>]+>/g, "")
       .replace(/\s+/g, " ");
-  /** each date its "Next expected" list names falls on the day of the month its sentence says it falls due on */
+  /**
+   * each date its "Next expected" list names falls on the day of the month its sentence says it falls due on — or, in a
+   * month too short for that day, on the month's last, as every day token clamps (`stepFrom`). 🔴 Review of 933b29e2
+   * (L76): "on the day of the month" alone was false at month ends, and nothing asked it there.
+   */
   const listAgreesWithSentence = (seriesId: string, today: string): void => {
     const words = wordsOf(seriesId, today);
     const dueWith = /, due with the rent on the (\d+)(?:st|nd|rd|th),/.exec(words);
     const said = dueWith ?? /around the (\d+)(?:st|nd|rd|th)/.exec(words);
     const list = seriesDetail(bundle.db, seriesId, today)!.nextExpected.map((o) => o.date);
     expect(list.length).toBeGreaterThan(0);
-    for (const day of list) expect(Number(day.slice(8)), `${day} beside "${said?.[0]}"`).toBe(Number(said?.[1]));
+    const lastOfMonth = (day: string): number => new Date(Date.UTC(+day.slice(0, 4), +day.slice(5, 7), 0)).getUTCDate();
+    for (const day of list) {
+      const clamped = Math.min(Number(said?.[1]), lastOfMonth(day));
+      expect(Number(day.slice(8)), `${day} beside "${said?.[0]}"`).toBe(clamped);
+    }
   };
 
   test("his ledger, the rent and the utilities both on the 1st: 'around the 1st', and a list on the 1st", () => {
@@ -504,6 +512,67 @@ describe("SeriesDetail — what the rent carries: its sentence names the day its
       "Nov 1, 2026-$182.21Next expectedDec 1, 2026-$182.21Jan 1, 2027-$182.21Feb 1, 2027-$182.21",
     );
     listAgreesWithSentence(rent.utilitiesId, "2026-11-05");
+  });
+
+  /*
+   * ⛔ …and the clause is said of the LIST, not of one day: where the sentence's own day ties with the rent's — a month
+   * too short for either, both clamped to its last — the first day of the list that falls due on the rent's later day
+   * says it. 🔴 Review of 933b29e2 (L76): the rent retyped Oct 31 and the utilities Oct 30, on Nov 5 the page read
+   * "charges monthly around the 30th, about $182.21." over Nov 30 · Dec 31 · Jan 31 — their own Dec 30 and Jan 30, due
+   * with the rent's 31st (his ledger copy 2026-11-04, the same what-if).
+   */
+  test("the rent retyped Oct 31, the utilities Oct 30: on Nov 5 'due with the rent on the 31st' over Nov 30", () => {
+    retype(rent.rentId, "2026-10-31");
+    retype(rent.utilitiesId, "2026-10-30");
+    const words = wordsOf(rent.utilitiesId, "2026-11-05");
+    expect(words).toContain("charges monthly around the 30th, due with the rent on the 31st, about $182.21.");
+    expect(words).toContain("Next expectedNov 30, 2026-$182.21Dec 31, 2026-$182.21Jan 31, 2027-$182.21");
+    listAgreesWithSentence(rent.utilitiesId, "2026-11-05");
+    // the 29th beside the rent's 30th, from Jan 31: February clamps both to the 28th, March's 30th says it
+    retype(rent.rentId, "2026-10-30");
+    retype(rent.utilitiesId, "2026-10-29");
+    expect(wordsOf(rent.utilitiesId, "2027-01-31")).toContain("around the 28th, due with the rent on the 30th,");
+    listAgreesWithSentence(rent.utilitiesId, "2027-01-31");
+  });
+
+  // ⛔ …and of one charge, the day it falls due on — 🔴 no test rendered it: the page handing the sentence its own day
+  // twice ("charges once on Nov 1, due with the rent on Nov 1") passed every one (review of 933b29e2, L77)
+  test("as one charge on Nov 1, the rent retyped Nov 16: on Oct 30 'once on Nov 1, due with the rent on Nov 16'", () => {
+    retype(rent.rentId, "2026-11-16");
+    retype(rent.utilitiesId, "2026-11-01");
+    const theirs = eq(recurringSeries.id, rent.utilitiesId);
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-11-01" }).where(theirs).run();
+    const words = wordsOf(rent.utilitiesId, "2026-10-30");
+    expect(words).toContain("charges once on Nov 1, due with the rent on Nov 16, about $182.21.");
+    expect(words).toContain("Next expectedNov 16, 2026-$182.21");
+  });
+
+  /*
+   * ⛔ …and a row of their OWN is said against their own day: shown on the rent's day it falls due with, a carried day
+   * names the window a row of theirs is graded in — their own day's (`paymentFor`). 🔴 Review of 95cdf198 (L80, two
+   * reviewers): the rent typed Nov 16 and paid Nov 16, December unpaid, their own −$182.21 of Dec 1 unattached — on
+   * Dec 20 their card showed "Dec 16, 2026" over "…with no posting attached to this bill within 3 days of it; they hold
+   * a row of $182.21 on Dec 1 that is not attached to it, matching it to the cent." — fifteen days from "it" (a temp
+   * database; latent on his ledger, where the utilities have no account and no row of their own).
+   */
+  test("their own −$182.21 of Dec 1 unattached: on Dec 20 their Already due says the window of their own Dec 1", () => {
+    retype(rent.rentId, "2026-11-16");
+    rent.charge("2026-11-16", -229_121, rent.rentId);
+    const its = eq(recurringSeries.id, rent.rentId);
+    bundle.db.update(recurringSeries).set({ lastMatchedOn: "2026-11-16" }).where(its).run();
+    // what-if: the utilities on the rent's account, where the one rule looks for a row of their own
+    const accountId = bundle.db.select().from(accounts).where(eq(accounts.name, "Rent account")).get()!.id;
+    bundle.db.update(recurringSeries).set({ accountId }).where(eq(recurringSeries.id, rent.utilitiesId)).run();
+    const own = rent.charge("2026-12-01", -18_221, rent.rentId);
+    bundle.db.update(transactions).set({ recurringSeriesId: null }).where(eq(transactions.id, own)).run();
+    readThrough("2026-12-19");
+    const words = wordsOf(rent.utilitiesId, "2026-12-20");
+    expect(words).toContain(
+      "Inside this calendar month, and the statements reach 3 days past it with no posting attached to this bill of " +
+        "its own within 3 days of Dec 1, and none of the rent's payments within 3 days of it; they hold a row of " +
+        "$182.21 on Dec 1 that is not attached to it, matching it to the cent.",
+    );
+    expect(words).toContain("Dec 16, 2026-$182.21");
   });
 
   test("…and ended, nothing is still to fall due: no day it falls due on, said or carried", () => {

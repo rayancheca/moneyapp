@@ -330,6 +330,8 @@ describe("seriesDetail", () => {
     // the Card's newest row is Jun 15, so no statement has reached Jul 1 — all of it unread
     expect(d.overdue).toEqual({
       date: "2026-07-01",
+      // billed on its own: its own day is the day it fell due
+      ownDate: "2026-07-01",
       amountCents: -1549,
       occurrenceCount: 1,
       unreadCents: 1549,
@@ -390,6 +392,7 @@ describe("seriesDetail", () => {
       cardReadThrough("2026-07-10");
       expect(seriesDetail(bundle.db, weekly, "2026-07-20").overdue).toEqual({
         date: "2026-07-01",
+        ownDate: "2026-07-01",
         amountCents: -3000,
         occurrenceCount: 3,
         unreadCents: 1000,

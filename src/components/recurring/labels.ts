@@ -186,11 +186,15 @@ export function dueWithPhrase(dueWith: DueWith, cadence: Cadence, once: boolean)
  * What the sentence's date editor calls the date it opens on, and what its Save says it saved: "Next expected date" —
  * or, its day falling due on its carrier's later one (`dueWith`), "Its own next date": ⛔ the date it opens on and
  * saves is its OWN schedule's (`SeriesDetail.nextExpectedOn`), never the day its list names, so a Save with nothing
- * changed never retypes it onto the rent's day — and the field says so beside a list that names another.
+ * changed never retypes it onto the rent's day — and the field says so beside a list that names another. …and what
+ * its "Use detected" says it reset (`reset`). 🔴 Review of 933b29e2 (L78): it toasted "Next date reset to detected"
+ * beside "Its own next date", the one message left that did not say which date it meant.
  */
-export function nextDateWords(dueWith: DueWith | null): { field: string; saved: string } {
-  if (dueWith === null) return { field: "Next expected date", saved: "Next expected" };
-  return { field: "Its own next date", saved: "Its own next date" };
+export function nextDateWords(dueWith: DueWith | null): { field: string; saved: string; reset: string } {
+  if (dueWith === null) {
+    return { field: "Next expected date", saved: "Next expected", reset: "Next date reset to detected" };
+  }
+  return { field: "Its own next date", saved: "Its own next date", reset: "Its own next date reset to detected" };
 }
 
 /**
@@ -652,14 +656,20 @@ export function unsettledReasonWord(reason: UnsettledReason): string {
  * 🔴 Review of de31d22 (HIGH): on his ledger copy (2026-10-29, after the Oct 26 import and before his filing) the
  * calendar said "not yet known — never reached a bank $1,141.92" of Oct 1, 8, 15 and 22 beside the forecast card
  * naming the four payroll rows. Null for a mark with no reason — one that is not "not yet known".
+ *
+ * ⚖️ (B) …and a mark drawn on its carrier's later day (`CalendarEntry.ownDate`) says the row answers its OWN day: "its
+ * own Dec 1 is matched to the cent by a row of $182.21 on Dec 1 that is not attached to it", in the cell of Dec 16.
+ * 🔴 Review of 95cdf198 (L81): it named the Dec 1 row in that cell, fifteen days off, and nothing said why.
  */
 export function unsettledWords(e: {
   unsettledReason: UnsettledReason | null;
   unattached: UnattachedMatch | null;
+  ownDate?: string;
 }): string | null {
   if (e.unsettledReason === null) return null;
   if (e.unsettledReason === "matched_unattached" && e.unattached !== null) {
-    return `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords([e.unattached], formatDayShort)}`;
+    const matched = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords([e.unattached], formatDayShort)}`;
+    return e.ownDate === undefined ? matched : `its own ${formatDayShort(e.ownDate)} is ${matched}`;
   }
   return unsettledReasonWord(e.unsettledReason);
 }
@@ -777,12 +787,21 @@ export function overdueNote(
  * figure, the wider, stood for both (review of 44eb3e7): with the rent's 5 days and the utilities' own 3, their page
  * read "hold no posting within 5 days of it" beside a posting of their own four days off the day, which paid them
  * nothing. Of the same width — his rent and utilities, both 3 — one figure is true of both, and stays.
+ *
+ * ⚖️ (B) …and shown on the carrier's later day it falls due with (`ownDay`, the own day of the day shown), its own
+ * window is said on its OWN day, where a row of its own is graded (`paymentFor`): "of its own within 3 days of Dec 1,
+ * and none of the rent's payments within 3 days of it". 🔴 Review of 95cdf198 (L80, two reviewers): the rent typed Nov
+ * 16 and paid Nov 16, December unpaid, their own −$182.21 of Dec 1 unattached — on Dec 20 the card showed "Dec 16, 2026"
+ * over "…with no posting attached to this bill within 3 days of it; they hold a row of $182.21 on Dec 1 that is not
+ * attached to it, matching it to the cent." — fifteen days from "it" (a temp database; latent on his ledger).
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
   graceDays: number,
   occurrenceCount: number,
   carried: CarriedGrace | null,
+  // the own day of the due day shown when that is another — billed inside another, on its carrier's later day
+  ownDay: string | null = null,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
   const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
@@ -795,13 +814,14 @@ export function alreadyDueWords(
   const all = one ? "it" : n === 2 ? "both" : `all ${n}`;
   const any = one ? "it" : n === 2 ? "either" : "any of them";
   const ofDay = (grace: number, day: string) => (grace === 0 ? `on ${day}` : `within ${days(grace)} of ${day}`);
-  // "no posting …" of a due day — of its own days and its carrier's when the two differ (`carried`)
-  const noPostingOf = (day: string) =>
-    carried === null || carried.ownDays === carried.carrierDays
+  // "no posting …" of a due day — of its own days and its carrier's when the two differ (`carried`), or when its own
+  // window is on another day than the one shown (`ownDay`): that day by date, of one due day; of several, each one's
+  const noPostingOf = (day: string, ownOn: string) =>
+    carried === null || (ownDay === null && carried.ownDays === carried.carrierDays)
       ? ofDay(graceDays, day)
-      : `of its own ${ofDay(carried.ownDays, day)}, and none of ${carrierWord(carried.carrierName)}'s payments ` +
-        ofDay(carried.carrierDays, day);
-  const within = noPostingOf(any);
+      : `of its own ${ofDay(carried.ownDays, ownDay === null ? day : ownOn)}, and none of ` +
+        `${carrierWord(carried.carrierName)}'s payments ${ofDay(carried.carrierDays, day)}`;
+  const within = noPostingOf(any, ownDay === null || !one ? "each one's own day" : formatDayShort(ownDay));
   /*
    * ⛔ "No posting" only where no row matches to the cent (`lib/unattached-match`): a row that does, sitting unattached,
    * is named by its day and amount, and the bill stays owed. 🔴 His ledger copy 2026-10-29 (before his filing): the Car
@@ -845,7 +865,7 @@ export function alreadyDueWords(
   }
   const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
   // said of that one due day
-  const withinIt = noPostingOf("it");
+  const withinIt = noPostingOf("it", "its own day");
   const rest = waitsOnDays ? DAYS_TO_POST_NOT_OVER : "no statement reaches that far yet";
   return {
     heading: `Already due: ${arrearsClause(reading, NOT_POSTED)}`,

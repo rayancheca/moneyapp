@@ -779,6 +779,7 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
     userAmountCents: null,
     userEndsOn: null as string | null,
     lastMatchedOn: null as string | null,
+    billedWith: null,
   };
 
   test("its last date on or before the end — null while one is to come, or with no end", () => {

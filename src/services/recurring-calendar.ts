@@ -15,6 +15,8 @@ import {
   type PaydayReading,
   type PerPayday,
 } from "@/lib/per-payday";
+import { daysThatPaid } from "@/lib/posted-average";
+import { seriesAmountCents } from "@/lib/series-kind";
 import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import { billedWithPhrase, carrierWord } from "@/lib/billed-with";
 import {
@@ -181,6 +183,14 @@ export interface CalendarEntry {
    */
   towardNoPayday: boolean;
   /**
+   * ⚖️ A row of a series read by its rows (no payday reading) on a day that PAID NO CHARGE (`daysThatPaid`, the one rule
+   * every grader of a bill's day reads, `PaymentDays.paid`) — money back, or a charge and its same-day reversal: graded
+   * against nothing (`state` "paid", `expectedAmountCents` null) and said "toward no due day" (`TOWARD_NO_DUE_DAY`),
+   * pay's "toward no payday" on a bill. 🔴 Review of d7a5485c (L16): +$357.58 back on Sep 9 read "paid (amount
+   * changed)" "expected −$357.58" beside the Sep 11 ✕ it paid nothing of. Absent on every other entry.
+   */
+  towardNoDueDay?: true;
+  /**
    * What this mark adds to the month's Settled figure, or null for a mark that
    * has not settled (upcoming, missed, not yet known). The footer's Settled
    * total and the flow strip's posted line are both the sum of these, and each
@@ -211,6 +221,14 @@ export interface CalendarEntry {
    * amount (`unsettledWords`), and never paid: the mark settles nothing (`settledCents` null).
    */
   unattached: UnattachedMatch | null;
+  /**
+   * ⚖️ (B) The day of its OWN a past mark was graded on (`SeriesOccurrence.ownDate`), present only when the mark is
+   * drawn on another — billed inside another, on its carrier's later day it falls due with — the day a row of its own
+   * answers (`unsettledWords`: "its own Dec 1 is matched to the cent by …"). 🔴 Review of 95cdf198 (L81): the rent typed
+   * Nov 16 and paid Nov 16, December unpaid, their own −$182.21 of Dec 1 unattached — on Dec 20 the cell of Dec 16
+   * named "a row of $182.21 on Dec 1", fifteen days off, and nothing said why (a temp database; latent on his ledger).
+   */
+  ownDate?: string;
   /**
    * How firmly this forecast is asserted. Non-null exactly when `state` is
    * "upcoming" — a settled day needs no confidence, it has an outcome.
@@ -722,7 +740,7 @@ export function recurringCalendar(
     o: { date: string; amountCents: number },
     graded: Pick<
       CalendarEntry,
-      "state" | "unsettledReason" | "unattached" | "confidence" | "isStale" | "neverBilled" | "billedWith"
+      "state" | "unsettledReason" | "unattached" | "ownDate" | "confidence" | "isStale" | "neverBilled" | "billedWith"
     >,
   ): void =>
     pushEntry(o.date, {
@@ -842,6 +860,22 @@ export function recurringCalendar(
         ),
       )
       .all();
+    // ⚖️ …and of each series read by its rows, the days that PAID a charge — every grader's one rule (`daysThatPaid`,
+    // `PaymentDays.paid`): money back, or a day netted to nothing, pays no due day, and is drawn as none (below). A
+    // day's rows all post inside its month, so the month's rows are every row of each of its days.
+    const monthRowsBySeries = new Map<string, { postedOn: string; amountCents: number }[]>();
+    for (const p of posted) {
+      if (p.seriesId !== null) monthRowsBySeries.set(p.seriesId, [...(monthRowsBySeries.get(p.seriesId) ?? []), p]);
+    }
+    const paidDaysOf = new Map<string, ReadonlySet<string>>();
+    const paidADueDay = (s: (typeof historyRows)[number], day: string): boolean => {
+      let days = paidDaysOf.get(s.id);
+      if (days === undefined) {
+        days = new Set(daysThatPaid(monthRowsBySeries.get(s.id) ?? [], seriesAmountCents(s)).map((o) => o.postedOn));
+        paidDaysOf.set(s.id, days);
+      }
+      return days.has(day);
+    };
 
     for (const p of posted) {
       const s = p.seriesId ? seriesById.get(p.seriesId) : undefined;
@@ -877,7 +911,10 @@ export function recurringCalendar(
        * Nor is money out (decision 75): it is no payday's pay — the same day,
        * its deposit is graded at the day's net — so it is drawn as it is.
        */
-      const expected = expectedCentsOf(reading, effectiveSeries(s), p.postedOn);
+      // ⚖️ …and a row read by its rows whose day paid no charge — money back — is graded against nothing, as a pay row
+      // toward no payday is: it answers no due day (`daysThatPaid`, `CalendarEntry.towardNoDueDay`)
+      const towardNoDueDay = reading === undefined && !paidADueDay(s, p.postedOn);
+      const expected = towardNoDueDay ? null : expectedCentsOf(reading, effectiveSeries(s), p.postedOn);
       const state: DayStateKind =
         expected === null ? "paid" : classifyPostedAmount(comparableCents(p.amountCents, reading), expected, stddev);
       // the money this deposit spent on another month's paydays is THAT month's
@@ -895,6 +932,7 @@ export function recurringCalendar(
         settlesPaydaysOn: elsewhere.paydays,
         perPayday: reading?.perPayday ?? null,
         towardNoPayday: reading?.towardNoPayday ?? false,
+        ...(towardNoDueDay ? { towardNoDueDay: true as const } : {}),
         settledCents: p.amountCents - elsewhere.cents,
         unsettledReason: null,
         unattached: null,
@@ -1200,6 +1238,8 @@ export function recurringCalendar(
       state: verdict.state,
       unsettledReason: verdict.reason,
       unattached: verdict.unattached ?? null,
+      // ⚖️ (B) drawn on its carrier's later day: the day of its own a row of its own answers
+      ...(o.ownDate === o.date ? {} : { ownDate: o.ownDate }),
       confidence: null,
       isStale: false,
       neverBilled: false,

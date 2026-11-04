@@ -16,7 +16,8 @@ import {
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { formatCents, formatCentsSigned } from "@/lib/money";
 import type { PerPayday } from "@/lib/per-payday";
-import { postedAsWord } from "@/lib/posted-average";
+import { postedAsWord, TOWARD_NO_DUE_DAY } from "@/lib/posted-average";
+import { ATTACHED_NOT_FILED } from "@/lib/unattached-match";
 import type { AmountHistoryPoint } from "@/services/recurring-detail";
 import { longDate, perPaydayWord, shortDate, TOWARD_NO_PAYDAY } from "./labels";
 
@@ -32,6 +33,10 @@ interface AmountRow {
   expectedCents: number | null;
   /** its money paid no payday — said, and graded against nothing (`AmountHistoryPoint.towardNoPayday`) */
   towardNoPayday: boolean;
+  /** linked to the pay and filed as no income — said so (`AmountHistoryPoint.notFiledAsIncome`) */
+  notFiledAsIncome?: true;
+  /** a payment whose day paid no charge — money back — said so, graded against nothing (`AmountHistoryPoint`) */
+  towardNoDueDay?: true;
   /** the rows one payment posted as (`AmountHistoryPoint.postings`) */
   postings?: number;
 }
@@ -43,6 +48,20 @@ interface AmountRow {
 function paymentWord(r: Pick<AmountRow, "postings">): string | null {
   const word = postedAsWord({ postings: r.postings ?? 1 });
   return word === null ? null : `one payment, ${word}`;
+}
+
+/**
+ * Where a deposit's money went when it paid no payday: linked to the pay and filed as no income, that — the words the
+ * page's passed paydays name the row by (`ATTACHED_NOT_FILED`) — else "toward no payday"; null for money that paid one.
+ * …and a bill's payment whose day paid no charge, money back, "toward no due day" (`TOWARD_NO_DUE_DAY`), as the
+ * calendar says it.
+ * 🔴 Review of 92de2b12 (L56): his unfiled payroll rows read "toward no payday" beside the passed paydays' "Pay
+ * matched to the cent by rows of $1,141.92 … that are attached to it but not filed as income".
+ */
+function towardNoneWord(r: Pick<AmountRow, "towardNoPayday" | "notFiledAsIncome" | "towardNoDueDay">): string | null {
+  if (r.notFiledAsIncome === true) return ATTACHED_NOT_FILED;
+  if (r.towardNoDueDay === true) return TOWARD_NO_DUE_DAY;
+  return r.towardNoPayday ? TOWARD_NO_PAYDAY : null;
 }
 
 /** One bar of the chart: what its tooltip and its table row say of it. */
@@ -58,7 +77,7 @@ export function AmountTooltip({ point: p }: { point: ChartPoint }) {
       <div className="text-ink-faint">{p.date}</div>
       <div className="figures mt-0.5 text-sm font-medium">{formatCentsSigned(p.amountCents)}</div>
       {p.perPayday ? <div className="mt-0.5 text-ink-faint">{perPaydayWord(p.perPayday)}</div> : null}
-      {p.towardNoPayday ? <div className="mt-0.5 text-ink-faint">{TOWARD_NO_PAYDAY}</div> : null}
+      {towardNoneWord(p) !== null ? <div className="mt-0.5 text-ink-faint">{towardNoneWord(p)}</div> : null}
       {paymentWord(p) !== null ? <div className="mt-0.5 text-ink-faint">{paymentWord(p)}</div> : null}
       {p.expectedCents !== null && p.comparableCents !== p.expectedCents ? (
         <div className="mt-0.5 text-ink-faint">expected {formatCents(p.expectedCents)}</div>
@@ -95,8 +114,8 @@ function AMOUNT_COLUMNS(expectedCents: number | null): Column<AmountRow>[] {
             // each row against ITS expectation (§6A 55), not the rate now — and money that paid no payday against
             // none, in the calendar's words for it (§6A 55b)
             render: (r: AmountRow) =>
-              r.towardNoPayday ? (
-                <span className="text-ink-faint">{TOWARD_NO_PAYDAY}</span>
+              towardNoneWord(r) !== null ? (
+                <span className="text-ink-faint">{towardNoneWord(r)}</span>
               ) : r.expectedCents === null ? (
                 <span className="text-ink-faint">—</span>
               ) : r.comparableCents === r.expectedCents ? (
@@ -161,6 +180,8 @@ export function AmountHistoryChart({ points, expectedCents, asTable = false }: A
           expectedCents: p.expectedCents,
           expectedMagnitude: p.expectedCents === null ? null : Math.abs(p.expectedCents) / 100,
           towardNoPayday: p.towardNoPayday,
+          ...(p.notFiledAsIncome === true ? { notFiledAsIncome: true as const } : {}),
+          ...(p.towardNoDueDay === true ? { towardNoDueDay: true as const } : {}),
           postings: p.postings,
         };
       }),

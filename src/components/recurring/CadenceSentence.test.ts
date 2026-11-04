@@ -296,4 +296,16 @@ describe("CadenceSentence — what the rent carries says the day it falls due be
     dateEditorOf({ ...utilities, dueWith: null }).onSave("2026-11-05");
     await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Next expected 2026-11-05" }));
   });
+
+  // 🔴 Review of 933b29e2 (L78): beside a field called "Its own next date", "Use detected" toasted "Next date reset to
+  // detected" — the one message left that did not say which date it meant
+  test("…and its 'Use detected' says the date it reset is its own — 'Next date' of one billed on its own", async () => {
+    vi.mocked(setSeriesOverridesAction).mockResolvedValue({ ok: true, data: {} });
+    vi.mocked(toast).mockClear();
+    dateEditorOf(utilities).onSave(null);
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Its own next date reset to detected" }));
+    vi.mocked(toast).mockClear();
+    dateEditorOf({ ...utilities, dueWith: null }).onSave(null);
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Next date reset to detected" }));
+  });
 });

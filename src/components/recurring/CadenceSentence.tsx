@@ -113,7 +113,7 @@ export function CadenceSentence(props: CadenceSentenceProps) {
   const dueClause = dueWith === null ? null : `, ${dueWithPhrase(dueWith, cadence, oneCharge !== null)}`;
 
   function saveDate(d: string | null): void {
-    void save({ userNextExpectedOn: d }, d === null ? "Next date reset to detected" : `${dateWords.saved} ${d}`);
+    void save({ userNextExpectedOn: d }, d === null ? dateWords.reset : `${dateWords.saved} ${d}`);
   }
 
   return (

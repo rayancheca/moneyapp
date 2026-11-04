@@ -10,7 +10,10 @@ import { institutions } from "@/db/schema/institutions";
 import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
+import { seriesEndInput, seriesEndLines } from "@/components/recurring/end-radius";
+import { unsettledWords } from "@/components/recurring/labels";
 import { arrearsSentence } from "@/lib/committed";
+import { formatCents } from "@/lib/money";
 import { arrearsThisMonth } from "./arrears";
 import { billingCarriers, billPaymentsBySeries } from "./billing-carriers";
 import { budgetOverdue, budgetTail } from "./budgets";
@@ -23,6 +26,7 @@ import { nextStillToCome, stillToComeReader, type StillToCome } from "./payday-s
 import { listSeries, upcomingOccurrences } from "./recurring";
 import { recurringCalendar } from "./recurring-calendar";
 import { seriesDetail } from "./recurring-detail";
+import { subscriptionsCard } from "./subscriptions-card";
 
 /**
  * ⚖️ His decision 76 (2026-10-14, his answer, refines 73): THE NEARER DUE DAY WINS — the option he chose, word for
@@ -1454,6 +1458,16 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
       "matched_unattached",
       "2026-12-01",
     ]);
+    // …and the mark on Dec 16 says the row answers their OWN Dec 1 — 🔴 review of 95cdf198 (L81): it named "a row of
+    // $182.21 on Dec 1" in a cell of Dec 16, fifteen days apart, and nothing said why
+    expect(unsettledWords(mark)).toBe(
+      "its own Dec 1 is matched to the cent by a row of $182.21 on Dec 1 that is not attached to it",
+    );
+    // the rent's mark, on its own day, reads as every mark billed on its own does
+    const rentMark = recurringCalendar(bundle.db, "2026-12", DEC20).entriesByDay["2026-12-16"]!.find(
+      (e) => e.seriesId === RENT,
+    )!;
+    expect(rentMark.ownDate).toBeUndefined();
   });
 
   /*
@@ -1643,6 +1657,74 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     ]);
     expect(detailsIn("2026-11", NOV5)).toContain("1 × -$182.21 (monthly), came due Nov 1 and has not posted");
   });
+
+  /*
+   * ⛔ …and whether its schedule has ENDED is asked of the days a projection walks (`scheduleHasEnded`): from where its
+   * carrier opens it, each day falling due with the carrier's day it pairs with — ONE day for every reader. 🔴 Asked of
+   * its own schedule alone (review of 46f19f15, L57), the utilities detected Sep 1 and ending Oct 15, the rent typed
+   * Nov 1: on Sep 20 nothing projected them — their Nov 1 lies past the end — while the forecast's predicate called them
+   * live: the subscriptions card counted them, and their page and the All tab read "~$0.00/yr" (his ledger copy
+   * 2026-11-04, the same what-if). 🔴 …and the other way, the rent typed Nov 16 and paid Nov 16, theirs ending Dec 10:
+   * from Dec 2 their own Dec 1 was past and the page read "nothing expected", no Next on the All tab, while Upcoming
+   * and the calendar still held it on the rent's Dec 16 (review of 933b29e2, L74).
+   */
+  test("⛔ …ending before the rent's date opens them: on Sep 20 nothing projects them, and they have ended", () => {
+    rentWith({ rentOn: "2026-11-01", typed: true, utilOn: "2026-09-01", noneOfTwo: true }, "2026-07-01", "2026-08-02");
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-10-15" }).where(eq(recurringSeries.id, UTIL)).run();
+    const SEP20 = "2026-09-20";
+    const page = seriesDetail(bundle.db, UTIL, SEP20)!;
+    expect([page.evidence, page.nextExpected, page.annualizedCents]).toEqual(["schedule-ended", [], null]);
+    expect(listSeries(bundle.db, SEP20).find((s) => s.id === UTIL)!.annualizedCents).toBeNull();
+    // the rent's Nov 1 is still to come: of the two, only what it carries has ended
+    expect(subscriptionsCard(bundle.db, SEP20)!.endedCount).toBe(1);
+  });
+
+  test("⛔ …ending Dec 10, their Dec 1 still comes with the rent's Dec 16: on Dec 2 their page names it", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+    );
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2026-12-10" }).where(eq(recurringSeries.id, UTIL)).run();
+    const DEC2 = "2026-12-02";
+    expect(coming(DEC2, UTIL)).toEqual(["2026-12-16"]);
+    const page = seriesDetail(bundle.db, UTIL, DEC2)!;
+    expect([page.evidence, page.nextExpected.map((o) => o.date)]).toEqual(["active", ["2026-12-16"]]);
+    expect(listSeries(bundle.db, DEC2).find((s) => s.id === UTIL)!.nextExpectedOn).toBe("2026-12-16");
+    // …and once the rent's Dec 16 has come, nothing of theirs is left inside the end
+    expect(seriesDetail(bundle.db, UTIL, "2026-12-17")!.evidence).toBe("schedule-ended");
+  });
+
+  /*
+   * ⛔ …and the End dialog's span runs FORWARD: from the day its list names first to its end — or, past the end, to the
+   * day its last charge inside the end falls due on (`SeriesDetail.lastFallsDueOn`). 🔴 Review of 933b29e2 (L74): the
+   * rent typed Nov 16 and paid Nov 16, theirs ending Dec 10 — on Nov 20 their dialog read "Upcoming charges off the
+   * calendar: every charge from Dec 16, 2026 to Dec 10, 2026" (his ledger copy 2026-11-04, the same what-if).
+   */
+  test("⛔ …ending Dec 10, their End dialog's span runs from the rent's Dec 16 to it — never back to Dec 10", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+    );
+    const NOV20 = "2026-11-20";
+    const upcomingOn = (endsOn: string) => {
+      bundle.db.update(recurringSeries).set({ userEndsOn: endsOn }).where(eq(recurringSeries.id, UTIL)).run();
+      const lines = seriesEndLines(seriesEndInput(seriesDetail(bundle.db, UTIL, NOV20)!), formatCents);
+      return lines.find((l) => l.label === "Upcoming charges off the calendar")!.value;
+    };
+    expect(upcomingOn("2026-12-10")).toBe("every charge from Dec 16, 2026 to Dec 16, 2026");
+    // their Jan 1, inside a Jan 10 end, falls due with the rent's Jan 16
+    expect(upcomingOn("2027-01-10")).toBe("every charge from Dec 16, 2026 to Jan 16, 2027");
+    // …and past the day their last charge falls due, the end itself, as one billed on its own reads
+    expect(upcomingOn("2027-01-20")).toBe("every charge from Dec 16, 2026 to Jan 20, 2027");
+  });
 });
 
 /*
@@ -1820,10 +1902,32 @@ describe("⚖️ a late catch-up — two premiums in one payment after a missed 
     pay(`t-${PREMIUM}-sep9`, PREMIUM, "2026-09-09", 35758);
     expect(unpaid("2026-09", "2026-09-11", TODAY)).toEqual([PREMIUM]);
     expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    /*
+     * …and the calendar draws the credit as what it is — toward no due day, graded against nothing — and so does its
+     * page's Amount history: 🔴 review of d7a5485c (L16), September drew Sep 9 "paid (amount changed)" +$357.58
+     * "expected -$357.58" beside Sep 11's mark (his ledger copy 2026-10-29 with this premium on Venture X).
+     */
+    const drawn = (day: string) =>
+      (recurringCalendar(bundle.db, "2026-09", TODAY).entriesByDay[day] ?? [])
+        .filter((e) => e.seriesId === PREMIUM && e.transactionId !== null)
+        .map((e) => [e.state, e.expectedAmountCents, e.towardNoDueDay ?? false]);
+    expect(drawn("2026-09-09")).toEqual([["paid", null, true]]);
+    const history = seriesDetail(bundle.db, PREMIUM, TODAY)!.amountHistory;
+    expect(history.map((p) => [p.date, p.expectedCents, p.towardNoDueDay ?? false])).toEqual([
+      ["2026-06-11", -35758, false],
+      ["2026-07-11", -35758, false],
+      ["2026-08-11", -35758, false],
+      ["2026-09-09", null, true],
+    ]);
     // …nor is a charge and its same-day reversal, a day that netted to nothing (`occurrencesOf`)
     pay(`t-${PREMIUM}-sep11`, PREMIUM, "2026-09-11", -35758);
     pay(`t-${PREMIUM}-sep11r`, PREMIUM, "2026-09-11", 35758);
     expect(owedPremium("2026-09-30")).toEqual([["2026-09-11", 35758, 0]]);
+    // both of its rows drawn toward no due day — the charge too: its day paid nothing
+    expect(drawn("2026-09-11")).toEqual([
+      ["paid", null, true],
+      ["paid", null, true],
+    ]);
   });
 
   test("Oct 12, inside Oct 11's grace: it pays Oct 11 on time AND Sep 11 late — owed on Sep 30, before it came", () => {

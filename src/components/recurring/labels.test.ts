@@ -778,6 +778,26 @@ describe("alreadyDueWords", () => {
     );
   });
 
+  /*
+   * ⚖️ (B) …shown on the rent's later day it falls due with, its own window is on its OWN day, of either width — 🔴 the
+   * card read "within 3 days of it" of Dec 16 beside their own Dec 1 row (review of 95cdf198, L80)
+   */
+  test("shown on the rent's later day: its own window on its own day, the rent's on the day shown", () => {
+    const same = { ownDays: 3, carrierName: "Flamingo South Beach (rent)", carrierDays: 3 };
+    expect(alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 3, 1, same, "2026-12-01").body).toContain(
+      "with no posting of its own within 3 days of Dec 1, and none of the rent's payments within 3 days of it.",
+    );
+    const wider = { ...same, carrierDays: 5 };
+    expect(alreadyDueWords({ owedCents: 18221, unreadCents: 0 }, 5, 1, wider, "2026-12-01").body).toContain(
+      "with no posting of its own within 3 days of Dec 1, and none of the rent's payments within 5 days of it.",
+    );
+    // a mix speaks of one due day of several: each by its own day
+    expect(alreadyDueWords({ owedCents: 36442, unreadCents: 18221 }, 3, 2, same, "2026-12-01").body).toContain(
+      "they hold no posting of its own within 3 days of its own day, and none of the rent's payments within 3 days " +
+        "of it;",
+    );
+  });
+
   test("a mix names both halves by amount", () => {
     const w = alreadyDueWords({ owedCents: 3000, unreadCents: 1000 }, 1, 3, null);
     expect(w.heading).toBe("Already due: $20.00 not posted, and no statement has covered the other $10.00 yet");

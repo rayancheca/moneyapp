@@ -909,15 +909,19 @@ export function billDueDaysBySeries(
  * utilities & fees -$182.21 (monthly), next Nov 1" and its spend moved from -$10,835.73 to -$10,653.52, their page and
  * the All tab named Dec 1 and their year read ~$2,004.31 for ~$2,186.52; on Nov 20 the runway read "A further $2,991.65
  * came due earlier this month and no statement has covered it yet." for $3,173.86, November drawing no Nov 1 of theirs.
- * And through `liesBeforeHisDate`, already at ae29cda4: November missed, Dec 10 two months drew their Jan 1 "paid early
- * by Dec 10" beside the rent's Jan 2 still to come, and on Dec 20 Upcoming and the All tab named their Feb 1 next. Now
- * their Nov 1 opens them: every figure above reads as at ae29cda4 again, and Dec 10 pays their Nov 1 and Dec 1 as it
- * pays the rent's Nov 2 and Dec 2, their Jan 1 still to come with its Jan 2. ⛔ The rent's date BEFORE their own reads
- * the same way: typed Sep 1 beside their own Nov 1 (a Save of their date editor, which opens on Nov 1, types it), they
- * open on their own Sep 1, so a payment of two late for their Nov 1 catches up their Oct 1 and pays no Dec 1 early. 🔴
- * Nothing pinned that branch (review of 0ac5d059): read as the LATER of the two dates, every test passed. Pinned in
- * nearer-due-day.test.ts ("…the rent typed Nov 2", "…the rent typed Sep 1") and on the day itself in
- * billing-carriers.test.ts.
+ * And through `liesBeforeHisDate`, already at ae29cda4 — on a temp database, the what-if rent at −$2,291.21, whose
+ * average names a payment of two (pinned in nearer-due-day.test.ts): November missed, Dec 10 two months drew their Jan 1
+ * "paid early by Dec 10" beside the rent's Jan 2 still to come, and on Dec 20 Upcoming and the All tab named their Feb 1
+ * next. Now their Nov 1 opens them: every figure above reads as at ae29cda4 again, and Dec 10 pays their Nov 1 and Dec
+ * 1 as it pays the rent's Nov 2 and Dec 2, their Jan 1 still to come with its Jan 2. ⚠️ Not on his copy (review of
+ * 46f19f15, L60): his rent at −$2,109.00 names no payment of two (`BillPayment`'s known gap), so there Dec 10's
+ * −$4,582.42 pays the rent's Dec 2 and their Dec 1, late, and November draws both Nov 2 missed — on Dec 20 Upcoming
+ * names their Jan 1 by the rent's Jan 2 (his ledger copy 2026-11-04, the rent retyped Nov 2). ⛔ The rent's date
+ * BEFORE their own reads the same way: typed Sep 1 beside their own Nov 1 (a Save of their date editor, which opens on
+ * Nov 1, types it), they open on their own Sep 1, so a payment of two late for their Nov 1 catches up their Oct 1 and
+ * pays no Dec 1 early. 🔴 Nothing pinned that branch (review of 0ac5d059): read as the LATER of the two dates, every
+ * test passed. Pinned in nearer-due-day.test.ts ("…the rent typed Nov 2", "…the rent typed Sep 1") and on the day
+ * itself in billing-carriers.test.ts.
  *
  * 🔴 At ec7fd198 that day was read off the carrier's DATE even once a payment of it had posted (review of ec7fd198):
  * the rent's payments post a day or more after its date (Sep 2, Oct 2, Jul 8, Aug 4 on his ledger), and one a day or

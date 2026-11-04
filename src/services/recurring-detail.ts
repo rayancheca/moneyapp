@@ -4,7 +4,7 @@ import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/ser
 import type { PassedPaydaysReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { CarriedGrace } from "@/lib/occurrence-verdict";
-import type { Occurrence } from "@/lib/posted-average";
+import { daysThatPaid, type Occurrence } from "@/lib/posted-average";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -19,6 +19,7 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, isValidIsoDate, todayIso } from "@/lib/dates";
 import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
+import { seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from "./arrears";
@@ -31,6 +32,7 @@ import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
+  lastFallsDueAfterItsEnd,
   oneChargeDays,
   projectOccurrences,
   rollForwardNextExpected,
@@ -87,6 +89,22 @@ export interface AmountHistoryPoint {
    * ledger, 2026-10-08).
    */
   towardNoPayday: boolean;
+  /**
+   * ⛔ Money in linked to the pay that its settlement never read (`PaydayReading.notFiledAsIncome`): no pay of the
+   * series on any surface, and said so — "attached to it but not filed as income", the words the page's passed paydays
+   * name it by (`ATTACHED_NOT_FILED`) — never "toward no payday" beside them. 🔴 Review of 92de2b12 (L56): the trial
+   * import of the Oct 26 statement into his pre-import copy, read Oct 29 — Oct 1, 8, 15 ($200.00 and $1,141.92) and 22
+   * read "toward no payday" beside the passed paydays' "Pay matched to the cent by rows of $1,141.92 … that are attached
+   * to it but not filed as income" (re-measured at 95cdf198 on that copy, 2026-11-04). Absent on every other row.
+   */
+  notFiledAsIncome?: true;
+  /**
+   * ⚖️ A payment of a series read per occurrence on a day that PAID NO CHARGE (`daysThatPaid`) — money back: graded
+   * against nothing (`expectedCents` null) and said "toward no due day", the calendar's words for the same row
+   * (`CalendarEntry.towardNoDueDay`). 🔴 Held to the rate, a +$357.58 credit on a −$357.58 premium read "$0.00" against
+   * it in the table lens and "expected −$357.58" in its tooltip (review of d7a5485c, L16). Absent on every other row.
+   */
+  towardNoDueDay?: true;
   /**
    * The rows the bank posted this PAYMENT as, for a series read per occurrence (`SeriesPostedAverage.everyOccurrence`):
    * a day's rows are one point, their sum, said "one payment, posted as 2" (`postedAsWord`). Absent for a row drawn as
@@ -164,6 +182,13 @@ export interface SeriesDetail {
    * copy 2026-10-29b, his rent retyped Nov 16 (Wells Fargo read through Nov 9): on Nov 10 the utilities' sentence read
    * "around the 1st", its editor opening on Nov 1, over "Next expected Nov 16 · Dec 16 · Jan 16" and the All tab's Nov
    * 16 — and nothing on the page said which date was which.
+   *
+   * ⛔ …and where `nextExpectedOn` ties with its carrier's day — a month too short for either day, both clamped to its
+   * last — the first day of the list that falls due on the carrier's later day: the clause is said of the list, so it
+   * is said beside every date the list names on the carrier's day, clamped as every day token is. 🔴 Review of
+   * 933b29e2 (L76): read off the one day, the rent retyped Oct 31 and the utilities Oct 30, on Nov 5 the page read
+   * "charges monthly around the 30th, about $182.21." over Nov 30 · Dec 31 · Jan 31 — their own Dec 30 and Jan 30,
+   * due with the rent's 31st (his ledger copy 2026-11-04, the same what-if).
    */
   nextFallsDueOn: string | null;
   /** the un-rolled stored value, so the UI can distinguish shown from saved */
@@ -256,6 +281,13 @@ export interface SeriesDetail {
    */
   scheduleRanOutOn: string | null;
   /**
+   * ⚖️ (B) Billed inside another on its carrier's step, the day its last charge inside its end FALLS DUE on when that is
+   * after the end itself (`lastFallsDueAfterItsEnd`) — else null. Where the End dialog's span runs to
+   * (`seriesEndInput`). 🔴 Review of 933b29e2 (L74): the rent typed Nov 16 and paid Nov 16, the utilities ending Dec
+   * 10, on Nov 20 the dialog read "every charge from Dec 16, 2026 to Dec 10, 2026" (his ledger copy 2026-11-04).
+   */
+  lastFallsDueOn: string | null;
+  /**
    * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null. ⚖️ Owner decision
    * 2026-10-08 (§6A 56): then the CADENCE stat reads "Once" and the sentence "charges once on Nov 11". 🔴 The Nov 11
    * car-insurance balance's page read "Cadence Monthly" under "charges monthly around the 11th".
@@ -297,6 +329,11 @@ export interface SeriesDetail {
    */
   overdue: {
     date: string;
+    /**
+     * ⚖️ (B) the own day of `date` (`ArrearsSeries.occurrenceOwnDates`): billed inside another on its carrier's later
+     * day, the day a row of its own is graded on — said where its own window is (`alreadyDueWords`); else `date`
+     */
+    ownDate: string;
     amountCents: number;
     occurrenceCount: number;
     unreadCents: number;
@@ -517,14 +554,20 @@ export function seriesDetail(
    * ⚖️ Every payment at every rate, each against its own time's (§6A 55): a history is drawn whole, as his pay's cash
    * weeks are, though the Per charge above averages only the payments at the rate in force now (§6A 63).
    */
+  // ⚖️ …of which the days that PAID a charge — every grader's one rule (`daysThatPaid`); money back is held to nothing
+  const paidDays =
+    posted.everyOccurrence === null
+      ? null
+      : new Set(daysThatPaid(posted.everyOccurrence, seriesAmountCents(s)).map((o) => o.postedOn));
   const amountHistory: AmountHistoryPoint[] =
     posted.everyOccurrence !== null
       ? posted.everyOccurrence.map((o) => ({
           date: o.postedOn,
           amountCents: o.amountCents,
           perPayday: null,
-          expectedCents: expectedCentsOf(undefined, eff, o.postedOn),
+          expectedCents: paidDays!.has(o.postedOn) ? expectedCentsOf(undefined, eff, o.postedOn) : null,
           towardNoPayday: false,
+          ...(paidDays!.has(o.postedOn) ? {} : { towardNoDueDay: true as const }),
           postings: o.postings,
         }))
       : [...linked].reverse().map((t) => {
@@ -537,6 +580,8 @@ export function seriesDetail(
             // the payday it paid, and nothing when it paid none; any other row, its own day's
             expectedCents: expectedCentsOf(reading, eff, t.postedOn),
             towardNoPayday: reading?.towardNoPayday ?? false,
+            // the calendar's own flag for it (`asPayRows`: ONE flagging for every reader of a pay series' rows)
+            ...(reading?.notFiledAsIncome === true ? { notFiledAsIncome: true as const } : {}),
           };
         });
 
@@ -612,6 +657,9 @@ export function seriesDetail(
   // day its list above names it by (default (B), built, not asked, 2026-10-30)
   const sentenceOn = projects ? rollForwardNextExpected(projectable, today) : eff.nextExpectedOn;
   const sentenceFallsDueOn = projects && sentenceOn !== null ? fallsDueOn(projectable.pairedWith, sentenceOn) : null;
+  // ⛔ …said of the LIST, not of that one day: where it ties with the carrier's — a month too short for either, both
+  // clamped to its last — the first day the list names on the carrier's later day says it (review of 933b29e2, L76)
+  const listFallsDueOn = nextExpected.find((o) => o.date !== o.ownDate)?.date ?? null;
 
   /*
    * ⛔ The BACKWARD half asks the arrears walk's own rule — a live status, not let go (`overdueForSeries` filters both)
@@ -624,6 +672,7 @@ export function seriesDetail(
   const overdue = late
     ? {
         date: late.nextDate,
+        ownDate: late.occurrenceOwnDates[0]!,
         amountCents: -late.amountCents,
         occurrenceCount: late.occurrenceCount,
         unreadCents: late.unreadCents,
@@ -676,7 +725,7 @@ export function seriesDetail(
     // Save then writes as its own
     nextExpectedOn: sentenceOn,
     // ⚖️ …and the day it falls due on, said beside it when that is another — the day its list names (`nextFallsDueOn`)
-    nextFallsDueOn: sentenceFallsDueOn === sentenceOn ? null : sentenceFallsDueOn,
+    nextFallsDueOn: sentenceFallsDueOn === sentenceOn ? listFallsDueOn : sentenceFallsDueOn,
     storedNextExpectedOn: eff.nextExpectedOn,
     nextExpectedAmountCents: eff.nextExpectedAmountCents,
     userCadence: s.userCadence,
@@ -701,6 +750,7 @@ export function seriesDetail(
     billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
     scheduleRanOutOn: scheduleRanOutOn(s, today),
+    lastFallsDueOn: projects ? lastFallsDueAfterItsEnd(projectable, today) : null,
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,

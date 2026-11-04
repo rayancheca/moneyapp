@@ -318,6 +318,17 @@ export function daysThatPaid(
   return occurrencesOf(rows).filter((o) => way === 0 || Math.sign(o.amountCents) === way);
 }
 
+/**
+ * ⚖️ A ROW WHOSE DAY PAID NO CHARGE SAYS SO (`daysThatPaid`, default built, not asked, 2026-10-29) — money back, or a
+ * charge and its same-day reversal: it pays no due day of any grader's, so where it is drawn it is graded against
+ * nothing and says where it went, a bill's mirror of "toward no payday" (`TOWARD_NO_PAYDAY`). One phrase for the
+ * calendar's cell and Day Sheet and the series page's Amount history. 🔴 Review of d7a5485c (L16): with a −$357.58
+ * premium's Sep 11 missed, a +$357.58 credit on Sep 9 was drawn "paid (amount changed)" +$357.58 "expected −$357.58"
+ * beside Sep 11's ✕ (his ledger copy 2026-10-29 with that premium on Venture X); latent on his ledger, where no day of
+ * any series of his paid no charge (2026-11-04).
+ */
+export const TOWARD_NO_DUE_DAY = "toward no due day";
+
 /** A day's rows summed, one per day, oldest first — what `occurrencesOf` and `nettedToNothing` divide between them. */
 function daysOf(rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[]): Occurrence[] {
   const byDay = new Map<string, Occurrence>();
