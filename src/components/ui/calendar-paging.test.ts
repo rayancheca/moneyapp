@@ -229,3 +229,22 @@ describe("/spending's heatmap — what it draws around a load", () => {
     expect(findElement(tree(calendar), Sheet)!.props.open).toBe(false);
   });
 });
+
+/*
+ * 🔴 The review of b96b7546 (2026-11-05, a dev server over his ledger copy 10-29b): with every server action's POST
+ * failing as a down server's does, a tap on the P&L calendar's "Thu, Oct 1, 2026" replaced /investments with its
+ * error screen ("This page didn't render … Failed to fetch") — the day's load, awaited inside
+ * `startTransition(async …)`, which throws its rejection to the page's error boundary. Re-measured with the fix (same
+ * copy, same day): the sheet "Thu, Oct 1, 2026" opened, "Failed to fetch." was toasted, and the page stayed.
+ */
+describe("/investments' P/L calendar — a day's sheet", () => {
+  test("a day that never reaches the server says so, and the page still draws", async () => {
+    vi.mocked(investmentActions.loadPnlDayAction).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const page = new HookSlots();
+    const grid = findElement(PNL.draw(page), CalendarGrid)!;
+    (grid.props.onDayActivate as (iso: string) => void)("2026-10-01");
+    await page.settle();
+    expect(vi.mocked(toast).mock.calls).toEqual([[{ title: "Failed to fetch", tone: "negative" }]]);
+    expect(findElement(PNL.draw(page), Sheet)!.props.open).toBe(true);
+  });
+});

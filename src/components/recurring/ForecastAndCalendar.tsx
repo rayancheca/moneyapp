@@ -3,7 +3,9 @@
 import { useState, useTransition } from "react";
 import { loadMonthForecastAction } from "@/app/recurring/actions";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
+import { toast } from "@/components/ui/Toast";
 import { ViewSwitcher } from "@/components/ui/ViewSwitcher";
+import { settleAction } from "@/hooks/useAction";
 import { useViewState } from "@/hooks/useViewState";
 import type { MonthForecast } from "@/services/forecast";
 import type { RecurringCalendarMonth } from "@/services/recurring-calendar";
@@ -94,10 +96,13 @@ export function ForecastAndCalendar({
     setShownMonth(month.monthKey);
     setCalendarCount(month.entryCount);
     startTransition(async () => {
-      const r = await loadMonthForecastAction({ monthKey: month.monthKey });
+      // 🔴 settled: a transition throws a rejection to the page's error boundary, as a P&L day tapped with the server
+      // down made /investments its error screen (the review of b96b7546, 2026-11-05)
+      const r = await settleAction(() => loadMonthForecastAction({ monthKey: month.monthKey }));
       // a failed load leaves the previous card standing rather than blanking it:
-      // a stale-but-labelled projection beats an empty space with no reason
+      // a stale-but-labelled projection beats an empty space with no reason — and says why
       if (r.ok) setForecast(r.data);
+      else toast({ title: r.error, tone: "negative" });
     });
   }
 

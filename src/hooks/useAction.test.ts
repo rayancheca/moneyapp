@@ -151,12 +151,14 @@ describe("every press a client file makes is settled", () => {
    * and the review inbox's row pick awaited inside `startTransition(async …)`, whose rejection a transition throws to
    * the page's error boundary. So every server action is read where it is used, in the parsed file
    * (`scanServerActions`): a call is settled — inside `settleAction`, a run (`useAction`'s, or a card's own that settles
-   * what it is handed), an Undo card (`offerUndoToastWith`), an inline edit's `onSave` (`useInlineEdit` settles it) or
-   * a toast's `onAction` (`settleToastAction`) — or caught (`.catch(`, awaited inside a `try` that catches, or bound to
-   * a name every use of which is), or a load (`load…`, as above).
+   * what it is handed), an Undo card (`offerUndoToastWith`), the month pager (`useMonthPaging`), an inline edit's
+   * `onSave` (`useInlineEdit` settles it) or a toast's `onAction` (`settleToastAction`) — or caught (`.catch(`, awaited
+   * inside a `try` that catches, or bound to a name every use of which is), or a load (`load…`, as above) whose
+   * rejection reaches no transition.
    */
   const scan = scanServerActions();
-  const SETTLERS = new Set(["settleAction", "run", "offerUndoToastWith"]);
+  // `useMonthPaging` runs the month load it is handed through `useAction`'s run
+  const SETTLERS = new Set(["settleAction", "run", "offerUndoToastWith", "useMonthPaging"]);
 
   /** Is the promise `node` stands for settled where it is: handed to a settler, caught, or awaited in a `try`? */
   function settledAt(node: ts.Node): boolean {
@@ -197,10 +199,37 @@ describe("every press a client file makes is settled", () => {
         .map((id) => ({ scanned, id }));
     });
 
+  /**
+   * Does `call`'s rejection reach a transition — awaited or returned by the function handed to `startTransition`,
+   * which throws it to the page's error boundary?
+   */
+  function rejectsIntoTransition(call: ts.CallExpression): boolean {
+    let reaches = false;
+    for (let at: ts.Node = call; at.parent !== undefined; at = at.parent) {
+      const up = at.parent;
+      const returned = ts.isReturnStatement(up) || (ts.isArrowFunction(up) && up.body === at);
+      if (ts.isAwaitExpression(up) || returned) reaches = true;
+      if (ts.isFunctionLike(at)) {
+        if (!reaches || !ts.isCallExpression(up)) return false;
+        return up.arguments.some((a) => a === at) && calleeName(up) === "startTransition";
+      }
+    }
+    return false;
+  }
+
+  /*
+   * 🔴 Review of b96b7546 (2026-11-05, a dev server over his ledger copy 10-29b, /investments): with every server
+   * action's POST failing as a down server's does, a tap on the P&L calendar's "Thu, Oct 1, 2026" replaced the whole
+   * page with "This page didn't render … Failed to fetch" — `loadPnlDayAction`, awaited inside
+   * `startTransition(async …)` and let through by its name, as /recurring's forecast load (`loadMonthForecastAction`)
+   * was. A load changes nothing, and one left unsettled elsewhere replaces nothing; one whose rejection reaches a
+   * transition is held as a press is.
+   */
   it("a server action a client file calls is settled where it is called — awaited, or in a transition", () => {
     const unsettled = uses.flatMap(({ scanned, id }) => {
       const call = id.parent;
-      if (!ts.isCallExpression(call) || call.expression !== id || /^load[A-Z]/.test(id.text)) return [];
+      if (!ts.isCallExpression(call) || call.expression !== id) return [];
+      if (/^load[A-Z]/.test(id.text) && !rejectsIntoTransition(call)) return [];
       return settledCall(call) ? [] : [`${lineOf(scanned, call)} ${id.text}`];
     });
     expect(unsettled).toEqual([]);
@@ -209,8 +238,7 @@ describe("every press a client file makes is settled", () => {
   it("…and one is handed on only as a form's `action` or to a settler, so every call is read where it is imported", () => {
     const handed = uses.flatMap(({ scanned, id }) => {
       const up = id.parent;
-      // a load handed to the month pager (`useMonthPaging` runs it), as a load is called anywhere
-      if (/^load[A-Z]/.test(id.text)) return [];
+      // a load too: one handed to a hook that awaits it in a transition would be read nowhere
       if (ts.isCallExpression(up) && (up.expression === id || SETTLERS.has(calleeName(up) ?? ""))) return [];
       if (ts.isJsxExpression(up) && ts.isJsxAttribute(up.parent) && up.parent.name.getText() === "action") return [];
       return [`${lineOf(scanned, id)} ${id.text}`];
