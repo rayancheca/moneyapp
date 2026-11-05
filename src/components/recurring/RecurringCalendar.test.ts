@@ -256,6 +256,38 @@ describe("RecurringCalendar — a deposit that paid another month's payday", () 
     const sheet = render(createElement(DaySheetBody, { entries: june.entriesByDay["2026-06-05"]! }));
     expect(sheet).toContain("paid — toward no payday");
   });
+
+  /*
+   * ⚖️ …and a bill's money back, its day paying no charge (`daysThatPaid`), says it went toward no due day — graded
+   * against nothing. 🔴 Review of d7a5485c (L16): "paid (amount changed)" +$357.58 "expected -$357.58" beside the Sep
+   * 11 ✕ it paid nothing of.
+   */
+  test("a bill's money back says 'toward no due day', never 'amount changed'", () => {
+    const back = entry({
+      seriesId: "premium",
+      name: "Premium (what-if)",
+      amountCents: 35758,
+      expectedAmountCents: null,
+      state: "paid",
+      transactionId: "t-sep9",
+      towardNoDueDay: true,
+      settledCents: 35758,
+    });
+    const september: RecurringCalendarMonth = {
+      ...month,
+      monthKey: "2026-09",
+      entriesByDay: { "2026-09-09": [back] },
+      entryCount: 1,
+      upcomingNetCents: 0,
+    };
+    const render = (el: Parameters<typeof renderToStaticMarkup>[0]): string => decode(renderToStaticMarkup(el));
+    expect(render(createElement(RecurringCalendar, { initialMonth: september, today: "2026-10-23" }))).toContain(
+      'aria-label="Sep 9, 2026 — 1 item: Premium (what-if) paid (toward no due day) $357.58"',
+    );
+    const sheet = render(createElement(DaySheetBody, { entries: [back] }));
+    expect(sheet).toContain("paid — toward no due day");
+    expect(sheet).not.toContain("expected");
+  });
 });
 
 /**

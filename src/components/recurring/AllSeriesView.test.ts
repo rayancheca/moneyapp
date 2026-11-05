@@ -40,6 +40,7 @@ function series(over: Partial<SeriesView> & Pick<SeriesView, "id" | "name" | "st
     annualizedCents: 18588,
     postedAvgCents: -1549,
     endsOn: null,
+    lastFallsDueOn: null,
     // 🔴 left out, every fixture here read "Once": `cadenceLabel` asks `=== null`, and undefined is not
     oneChargeOn: null,
     billedWith: null,

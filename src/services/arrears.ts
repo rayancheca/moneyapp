@@ -4,6 +4,8 @@ import { recurringSeries, type SeriesKind } from "@/db/schema/recurring";
 import type { ArrearsReading } from "@/lib/arrears-reading";
 import { addDays, compareDates, periodBounds } from "@/lib/dates";
 import {
+  dayAskedForUnattachedMatch,
+  dueDayIsRead,
   lastDueDayRead,
   paydayIsRead,
   paydayLandingIsRead,
@@ -365,13 +367,14 @@ export function arrearsInWindow(
  * Each late series' due days on or before the last one read (`lastDueDayRead`), each at its own amount, signed — read
  * by the day each FELL DUE (`occurrenceDates`), the day a surface says "has not posted" of, and asked of the one rule
  * on its OWN day (`occurrenceOwnDates`): a row is matched to a day as a row of the series' own is graded — on its own
- * days (`paymentFor`) — and as the import links one (`projectOwnDays`). Billed on its own, the two are one day.
+ * days (`paymentFor`) — and as the import links one (`projectOwnDays`). Billed on its own, the two are one day. ⛔ Each
+ * by the one function the calendar asks too (`dayAskedForUnattachedMatch`; review of 95cdf198, L82).
  * 🔴 Asked on the day it fell due, as the two sides first met (the merge of 933b29e2, 2026-10-30): a rent typed Nov 16
  * and paid Nov 16, December unpaid, and the utilities' own −$182.21 of Dec 1 unattached — on time for their Dec 1,
  * which falls due with the rent's Dec 16 — on Dec 20 the runway read "A further $2,473.42 came due earlier this month
  * and has not posted." and December drew a ✕ on Dec 16 beside the row (a temp database; pinned in
- * nearer-due-day.test.ts). Latent on his ledger copy 2026-10-30: the utilities have no account and no row of their
- * own, and with the rent typed Sep 1 every day of theirs falls due on its own 1st.
+ * nearer-due-day-paired.test.ts). Latent on his ledger copy 2026-10-30: the utilities have no account and no row of
+ * their own, and with the rent typed Sep 1 every day of theirs falls due on its own 1st.
  */
 function readDueDays(
   late: Overdue,
@@ -379,13 +382,14 @@ function readDueDays(
 ): ReadonlyMap<string, readonly ExpectedDay[]> {
   const readDays = new Map<string, readonly ExpectedDay[]>();
   for (const s of late.series) {
-    const readTo = lastDueDayRead(readingOf(s.id));
-    if (readTo === null) continue;
-    const days = s.occurrenceDates.flatMap((fellDue, i) =>
-      compareDates(fellDue, readTo) <= 0
-        ? [{ date: s.occurrenceOwnDates[i]!, amountCents: -s.occurrenceCents[i]! }]
-        : [],
-    );
+    const reading = readingOf(s.id);
+    if (lastDueDayRead(reading) === null) continue;
+    const isRead = (fellDue: string): boolean => dueDayIsRead(fellDue, reading);
+    const days = s.occurrenceDates.flatMap((date, i) => {
+      const occurrence = { date, ownDate: s.occurrenceOwnDates[i]!, amountCents: -s.occurrenceCents[i]! };
+      const asked = dayAskedForUnattachedMatch(occurrence, isRead);
+      return asked === null ? [] : [asked];
+    });
     readDays.set(s.id, days);
   }
   return readDays;

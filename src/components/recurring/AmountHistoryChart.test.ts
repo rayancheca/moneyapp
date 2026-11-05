@@ -187,4 +187,40 @@ describe("AmountTooltip — what one bar's hover card says", () => {
     expect(render(none)).toContain("toward no payday");
     expect(render(none)).not.toContain("expected");
   });
+
+  // ⚖️ …and a bill's money back, its day paying no charge, says so — 🔴 held to the rate it read "expected -$357.58"
+  // and "$0.00" against it in the table lens (review of d7a5485c, L16)
+  test("a bill's money back says 'toward no due day', in the tooltip and the table lens", () => {
+    const back = {
+      ...jun16,
+      amountCents: 35758,
+      comparableCents: 35758,
+      expectedCents: null,
+      towardNoDueDay: true as const,
+    };
+    expect(render(back)).toContain("toward no due day");
+    expect(render(back)).not.toContain("expected");
+    const table = decode(
+      renderToStaticMarkup(
+        createElement(AmountHistoryChart, {
+          points: [
+            { date: "2026-08-11", amountCents: -35758, perPayday: null, expectedCents: -35758, towardNoPayday: false },
+            {
+              date: "2026-09-09",
+              amountCents: 35758,
+              perPayday: null,
+              expectedCents: null,
+              towardNoPayday: false,
+              towardNoDueDay: true,
+            },
+          ],
+          expectedCents: -35758,
+          asTable: true,
+        }),
+      ),
+    );
+    const sep9 = table.slice(table.indexOf("Sep 9, 2026"), table.indexOf("</tr>", table.indexOf("Sep 9, 2026")));
+    expect(sep9).toContain("toward no due day");
+    expect(sep9).not.toContain("$0.00");
+  });
 });

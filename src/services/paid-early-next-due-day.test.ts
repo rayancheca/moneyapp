@@ -206,9 +206,10 @@ describe("the day before UNPAID — Jul 28, nearer Aug 8, pays it, and Jul 8 is 
 });
 
 /*
- * ⚖️ What is billed inside the rent is paid by the rent's payments, by the rent's own test (§6A 59) — the same walk
- * over the same postings, so the pair cannot part over an early payment either. His rent: $2,109.00 on the 1st, 3 days'
- * grace, posted Jul 8, Aug 4 and Sep 2 (anchored Jul 1 here so July is graded); the utilities never post.
+ * ⚖️ What is billed inside the rent is paid by the rent's payments (§6A 59 as recorded: "paid when the rent's payment of
+ * the period posts", implied), each read by the rent's own test — the same walk over the same postings, so the pair
+ * cannot part over an early payment either. His rent: $2,109.00 on the 1st, 3 days' grace, posted Jul 8, Aug 4 and
+ * Sep 2 (anchored Jul 1 here so July is graded); the utilities never post.
  */
 describe("the carrier path: the utilities paid with the rent's payments, as before — and early with an early one", () => {
   beforeEach(() => {

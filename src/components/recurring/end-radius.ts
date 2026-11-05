@@ -10,7 +10,7 @@ import {
   type SeriesStatusForCopy,
 } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
-import { annualizedFigure, longDate } from "./labels";
+import { annualizedFigure, longDate, seriesStopsOn } from "./labels";
 
 /**
  * What ending a series actually costs — the lines under "End this series".
@@ -90,7 +90,12 @@ export interface SeriesEndInput {
    * from Nov 11, 2026 to Nov 11, 2026" (review of 7a3c702, the balance's dialog on his ledger copy 2026-10-13).
    */
   oneChargeOn: string | null;
-  /** last day the series can occur; null = open-ended */
+  /**
+   * Where its span runs to: the last day the series can occur — or, billed inside another, the later day its last
+   * charge inside that end falls due on (`SeriesDetail.lastFallsDueOn`); null = open-ended. ⚖️ (B) Its first day is the
+   * one its list names first (`nextChargeOn`), the day it FALLS DUE, so the span runs forward. 🔴 Review of 933b29e2
+   * (L74): "every charge from Dec 16, 2026 to Dec 10, 2026" — the rent typed Nov 16, the utilities ending Dec 10.
+   */
   endsOn: string | null;
   linkedCount: number;
 }
@@ -118,6 +123,7 @@ export function seriesEndInput(
     | "nextExpected"
     | "oneChargeOn"
     | "endsOn"
+    | "lastFallsDueOn"
     | "linkedTxns"
   >,
 ): SeriesEndInput {
@@ -135,7 +141,8 @@ export function seriesEndInput(
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
     oneChargeOn: data.oneChargeOn,
-    endsOn: data.endsOn,
+    // the day it stops as its list dates it — its badge's and its Annualized qualifier's (`seriesStopsOn`)
+    endsOn: seriesStopsOn(data),
     linkedCount: data.linkedTxns.length,
   };
 }

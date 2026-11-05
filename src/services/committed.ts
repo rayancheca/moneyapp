@@ -445,6 +445,14 @@ export function committedBook(
    * today and unposted is not late — it is due — and it is counted once, in
    * the forward leg.
    *
+   * ⚖️ …but one: this leg holds a day by the day it FALLS DUE (`projectOccurrences`), the forward leg by its own day
+   * (`scheduledOccurrences`) — so a day of what the rent carries whose own day is past while the rent's day it falls
+   * due with is still to come lies in neither (default (B), 2026-10-30): on his ledger copy 2026-11-04 with his rent
+   * retyped Nov 16, read Nov 10, the utilities' Nov 1. No figure moves: the forward leg is a rate, whole either way —
+   * twelve of their own days in its twelve months, Dec 1 to Nov 1, 2027, $182.21 a month — and from the day after the
+   * rent's Nov 16, unposted, this leg holds it, $182.21 owed on Nov 17. 🔴 It said no day belongs to neither (review
+   * of 933b29e2, L73).
+   *
    * 🔴 `/budgets` SPLITS THE SAME INSTANT THE OTHER WAY ROUND, and the first
    * version of this comment was wrong about why that is tolerable. It said
    * budgets "cannot see the difference" because it ADDS the two

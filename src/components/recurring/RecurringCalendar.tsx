@@ -18,6 +18,7 @@ import { flowEntryOf } from "@/lib/month-flow";
 import { CALENDAR_DENSITY_CLASS } from "./recurring-view-spec";
 import { formatCents } from "@/lib/money";
 import type { ForecastConfidence } from "@/lib/occurrence-verdict";
+import { TOWARD_NO_DUE_DAY } from "@/lib/posted-average";
 import { SERIES_EVIDENCE_LABEL, seriesEvidenceTone } from "@/lib/series-evidence";
 import {
   calendarMonthFlow,
@@ -224,6 +225,8 @@ function settledByWord(e: CalendarEntry): string | null {
  */
 function settlesWord(e: CalendarEntry): string | null {
   if (e.towardNoPayday) return TOWARD_NO_PAYDAY;
+  // ⚖️ …and a bill's row whose day paid no charge — money back — says so (`CalendarEntry.towardNoDueDay`)
+  if (e.towardNoDueDay === true) return TOWARD_NO_DUE_DAY;
   const days = e.settlesPaydaysOn;
   if (days.length === 0) return null;
   return `toward the ${days.length === 1 ? "payday" : "paydays"} of ${DATE_LIST.format(days.map(longDate))}`;

@@ -364,9 +364,10 @@ describe("recurringCalendar", () => {
   });
 
   test("a schedule extrapolated from one or two postings cannot be missed", () => {
-    // FPL on the real ledger: ONE posting, a due date extrapolated from it that
-    // was wrong by thirteen days, and a red ✕ reporting the biller delinquent on
-    // a date the app had invented.
+    // FPL on the real ledger on 2026-08-25 (`occurrence-verdict`, "Why this gate exists"): ONE linked posting, Jul 10
+    // −$14.21, a due date extrapolated from it that was wrong by thirteen days, and a red ✕ reporting the biller
+    // delinquent on a date the app had invented. Jun 15 below is a what-if standing in for it — his copy holds Jul 10
+    // and Jul 28 −$56.22 linked since (re-read 2026-11-04), and no Jun 15.
     insertTxn({ postedOn: "2026-06-15", amountCents: -1421, rawDescription: "FPL ELEC PYMT" });
     cardImportedThrough("2026-07-18");
     const id = bundle.db

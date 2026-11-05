@@ -215,7 +215,8 @@ describe("analyzeGroup", () => {
     const stats = analyzeGroup(rows)!;
     expect(stats.amountCentsAvg).toBe(-1001);
     expect(stats.nextExpectedAmountCents).toBe(-1001);
-    const posted = postedAverage(rows, { per: "occurrence" }, { amountHistory: null }, TODAY);
+    const reading = { per: "occurrence", rateCents: stats.nextExpectedAmountCents } as const;
+    const posted = postedAverage(rows, reading, { amountHistory: null }, TODAY);
     expect(posted.avgCents).toBe(stats.nextExpectedAmountCents);
   });
 
@@ -716,6 +717,9 @@ describe("seriesStaleness", () => {
  * a figure. 🔴 The qualifier kept a "stopped" sentence for that case — "a year this series no longer bills — it
  * stopped on …" — which 0af5689 made unreachable when it took the "~$0.00/yr" away, and its comment still promised Car
  * insurance would reach it on 2027-01-12 (review of the 10-12/13 batches). This grid is the proof the branch was dead.
+ * ⚖️ (B) Of a series billed on its own, as these rows are: billed inside another, its figure holds its last charge
+ * until the carrier's later day it falls due on, past its end — the day it stops, which both qualifiers name
+ * (`seriesStopsOn`; pinned in SeriesDetail-carried-end.test.ts, review of 99bd525a).
  */
 describe("annualizedCentsOf — no year ahead of a series whose end has passed", () => {
   const row = {
@@ -779,6 +783,7 @@ describe("scheduleRanOutOn — the day a closed schedule ran out", () => {
     userAmountCents: null,
     userEndsOn: null as string | null,
     lastMatchedOn: null as string | null,
+    billedWith: null,
   };
 
   test("its last date on or before the end — null while one is to come, or with no end", () => {

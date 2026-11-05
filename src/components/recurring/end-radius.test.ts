@@ -136,6 +136,7 @@ describe("seriesEndLines", () => {
       nextExpected: [] as never[],
       oneChargeOn: "2026-11-11",
       endsOn: "2026-11-11",
+      lastFallsDueOn: null,
       linkedTxns: [] as never[],
     };
     expect(value(seriesEndInput(page), "Leaving the forecast")).toBe("~$715.16 / yr");
@@ -343,6 +344,7 @@ describe("seriesEndHeadline", () => {
           nextExpected: [],
           oneChargeOn: null,
           endsOn: null,
+          lastFallsDueOn: null,
           linkedTxns: linked(n) as never[],
         };
         const headline = seriesEndHeadline(page).startsWith("Ending ");

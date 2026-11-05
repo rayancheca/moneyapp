@@ -1,6 +1,6 @@
 import type { SeriesKind } from "@/db/schema/recurring";
 import { addDays, compareDates } from "./dates";
-import type { UnattachedMatch } from "./unattached-match";
+import type { ExpectedDay, UnattachedMatch } from "./unattached-match";
 
 /**
  * What the calendar is allowed to SAY about one expected occurrence.
@@ -419,6 +419,43 @@ export function settledVerdict(
 export function asksForUnattachedMatch(kind: SeriesKind, occurrenceDate: string, reading: OccurrenceReading): boolean {
   if (absenceIsEvidence(kind)) return dueDayIsRead(occurrenceDate, reading.dueDay);
   return paydayIsRead(occurrenceDate, reading.paydaysCheckedThrough);
+}
+
+/**
+ * A past occurrence as the one rule is asked of it (`dayAskedForUnattachedMatch`): the day it FELL DUE
+ * (`SeriesOccurrence.date`), the day of its own schedule it is (`ownDate`, the same day billed on its own), and what
+ * it expected, signed as `ExpectedDay.amountCents` is.
+ */
+export interface PastOccurrence {
+  readonly date: string;
+  readonly ownDate: string;
+  readonly amountCents: number;
+}
+
+/**
+ * ⛔ THE DAY A PAST OCCURRENCE ASKS THE ONE RULE ABOUT (`services/unattached-match`), or null when it asks none — ONE
+ * function for both askers of a bill's day, the arrears' read days (`readDueDays`: the runway, /budgets, the bill's
+ * page) and the calendar's (`recurringCalendar`, a payday's too), so neither can read one day and ask another. Asked
+ * once the day it FELL DUE is read (`isRead` of `date`: a bill's `dueDayIsRead`, the day a surface says "has not
+ * posted" of — a payday's through `asksForUnattachedMatch`), and asked on its OWN day at its own amount (`ownDate`): a
+ * row is matched to a day as a row of the series' own is graded (`paymentFor`) and as the import links one
+ * (`projectOwnDays`). Billed on its own the two days are one; billed inside another on its carrier's step, its own day
+ * is on or before the one it falls due on (default (B), 2026-10-30).
+ *
+ * 🔴 One rule in two forms (review of 95cdf198, L82): `compareDates(fellDue, lastDueDayRead(reading)) <= 0` in the
+ * arrears beside `asksForUnattachedMatch` on `date` in the calendar — each right alone, and each could read the OWN
+ * day instead with every test passing (review of 06abaf61). On a temp database, the rent typed Nov 16 and read through
+ * Nov 9, the utilities' own −$182.21 of Nov 1 unattached: the runway named that row on Nov 20 for a day no statement
+ * had covered; and with a Water −$182.21 due Nov 2, November drew Water's Nov 2 ✕ beside a runway naming the row for
+ * it. Pinned in nearer-due-day-paired.test.ts ("…read through Nov 9", "…a Water −$182.21 due Nov 2"), both red when
+ * this reads the own day, and here (occurrence-verdict.test.ts).
+ */
+export function dayAskedForUnattachedMatch(
+  occurrence: PastOccurrence,
+  isRead: (fellDue: string) => boolean,
+): ExpectedDay | null {
+  if (!isRead(occurrence.date)) return null;
+  return { date: occurrence.ownDate, amountCents: occurrence.amountCents };
 }
 
 /** The fields `forecastConfidence` reads — a subset of a `recurring_series` row. */

@@ -21,12 +21,14 @@ import { alreadyDueWords, longDate } from "./labels";
  * for another. …and where its own window and the rent's differ, each by name (`overdue.carriedGrace`).
  */
 export function AlreadyDueCard({ overdue }: { overdue: NonNullable<SeriesDetail["overdue"]> }) {
-  // …said of each due day it owes this month, the "and N more" below included — and of each window it is paid in
+  // …said of each due day it owes this month, the "and N more" below included — and of each window it is paid in, its
+  // own on its own day when the day shown is its carrier's later one (⚖️ (B), `SeriesDetail.overdue.ownDate`)
   const words = alreadyDueWords(
     overdueReading(overdue),
     overdue.graceDays,
     overdue.occurrenceCount,
     overdue.carriedGrace,
+    overdue.ownDate === overdue.date ? null : overdue.ownDate,
   );
   return (
     <SurfaceCard>

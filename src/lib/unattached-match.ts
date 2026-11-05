@@ -146,12 +146,17 @@ export function silenceMatches(
 
 const AND_LIST = new Intl.ListFormat("en", { style: "long", type: "conjunction" });
 
+/**
+ * A row linked to the pay and filed as no income (`UnattachedRow.notFiledAsIncome`), said of the row itself — the
+ * series page's Amount history says it of each such bar (`AmountHistoryPoint.notFiledAsIncome`) — and said of `it`,
+ * the sentence's own pronoun, by the sentences below.
+ */
+const attachedNotFiled = (it: string) => `attached to ${it} but not filed as income`;
+export const ATTACHED_NOT_FILED = attachedNotFiled("it");
+
 /** What a row is that the series does not count, said of `it`: never attached, or attached and filed as no income. */
 const notAttached = (it: string) => ({ one: `that is not attached to ${it}`, many: `that are not attached to ${it}` });
-const notFiled = (it: string) => ({
-  one: `that is attached to ${it} but not filed as income`,
-  many: `that are attached to ${it} but not filed as income`,
-});
+const notFiled = (it: string) => ({ one: `that is ${attachedNotFiled(it)}`, many: `that are ${attachedNotFiled(it)}` });
 
 /** One kind of row by its own day and amount (one amount named once, each year once), oldest first. */
 function rowsOfOneKind(

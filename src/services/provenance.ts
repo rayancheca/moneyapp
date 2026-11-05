@@ -62,6 +62,7 @@ import { billingCarriers } from "./billing-carriers";
 import {
   postedAsWord,
   postedAvgNotes,
+  TOWARD_NO_DUE_DAY,
   type Occurrence,
   type PaydaySample,
   type PerPaydayEvidence,
@@ -2032,6 +2033,32 @@ function nettedDetail(netted: readonly Occurrence[], today: string): string {
 }
 
 /**
+ * ⚖️ The days of money back (`SeriesPostedAverage.moneyBack`) — no payment, which the average leaves out
+ * (`averagedPayments`; default built, not asked, 2026-11-04) — named after the payments are counted, in the Amount
+ * history's words for the same bar (`TOWARD_NO_DUE_DAY`), so the words still account for every tagged row: " Oct 12's
+ * $50.00 was money back, toward no due day, and is not counted." "" with none, as on every series of his ledger (a copy
+ * of it, 2026-11-04). 🔴 Review of 23e9c5d1: counted as a payment, Breezeline's +$50.00 credit read "Its 6 tagged
+ * postings … were 3 different amounts, from -$50.00 to $50.00" beside a bar saying it paid no charge.
+ */
+function moneyBackWords(days: readonly Occurrence[], today: string): string {
+  if (days.length === 0) return "";
+  const each = days.map((o) => {
+    const word = postedAsWord(o);
+    return `${formatDayShortIn(o.postedOn, today)}'s ${formatCents(o.amountCents)}${word === null ? "" : ` (${word})`}`;
+  });
+  const named = each.length < 3 ? each.join(" and ") : `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
+  const were = days.length === 1 ? "was" : "were";
+  return ` ${named} ${were} money back, ${TOWARD_NO_DUE_DAY}, ${notCounted(days.length)}`;
+}
+
+/** …and its evidence line: "one on Oct 12, toward no due day" — "" with none */
+function moneyBackDetail(days: readonly Occurrence[], today: string): string {
+  if (days.length === 0) return "";
+  const rows = days.reduce((sum, o) => sum + o.postings, 0);
+  return `${rows === 1 ? "one" : rows} on ${daysWords(days, today)}, ${TOWARD_NO_DUE_DAY}`;
+}
+
+/**
  * "None of the 3 paid the -$17.88 forecast here." — why the `k` payments counted, all of one amount, do not check the
  * figure graded: none of them is it. Said after the sentence naming that amount, so "them" has been named.
  */
@@ -2299,6 +2326,8 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const payments = posted.occurrences ?? postings.map((p) => ({ ...p, postings: 1 }));
   // ⛔ days whose rows net to $0.00 — no payment, named so the words still account for every row (`nettedToNothing`)
   const netted = posted.netted ?? [];
+  // ⚖️ …and the days of money back, no payment either (`moneyBackDays`; default built, not asked, 2026-11-04)
+  const moneyBack = posted.moneyBack ?? [];
   /*
    * ⚖️ …and a pay series read per payday by what each deposit paid PER PAYDAY, at the rate in force now (§6A 55 —
    * `SeriesPostedAverage.perPayday`): its samples are what is counted, ranged and graded, as the average averages them.
@@ -2310,8 +2339,12 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const distinct = new Set(paydays === null ? payments.map((p) => p.amountCents) : paydays.samples.map((s) => s.cents));
   const days = payments.map((p) => p.postedOn).sort();
   // the payments of another rate than the one in force now, drawn on the page's Amount history but in no figure here
+  // — never money back, named as what it is (`moneyBackWords`)
   const countedDays = new Set(payments.map((p) => p.postedOn));
-  const before = (posted.everyOccurrence ?? []).filter((o) => !countedDays.has(o.postedOn));
+  const backDays = new Set(moneyBack.map((o) => o.postedOn));
+  const before = (posted.everyOccurrence ?? []).filter(
+    (o) => !countedDays.has(o.postedOn) && !backDays.has(o.postedOn),
+  );
   // …or for pay, the deposits
   const earlier = paydays === null ? before.length : paydays.earlier;
   // the day that rate began — null when no payment is left out, which every series whose rate never changed is
@@ -2327,8 +2360,8 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
   const next = posted.nextRateSince;
   // "Jun 16's posted as 2" — each payment the bank posted as several rows; empty when every row is a payment
   const split = splitWords(payments, today);
-  // every tagged row its own payment — nothing posted as several, nothing netted: the words count "tagged postings"
-  const oneRowEach = split === "" && netted.length === 0;
+  // every tagged row its own payment — none posted as several, netted or money back: the words count "tagged postings"
+  const oneRowEach = split === "" && netted.length === 0 && moneyBack.length === 0;
   const userSet = series.userAmountCents !== null;
   /*
    * ⛔ "adds up" is over the FIGURE graded — the amount on screen (`seriesAmountCents`): his, else detection's forecast.
@@ -2367,8 +2400,11 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       : k === 0
         ? "no payment"
         : `${k === 1 ? "one payment" : `${k} payments`}${split === "" ? "" : ` (${split})`}: ${amounts}`;
-    // …and the rows that paid nothing, so the line adds up to the label: "· 2 on Jul 20, netting to $0.00"
-    const nothing = netted.length === 0 ? "" : ` · ${nettedDetail(netted, today)}`;
+    // …and the rows that paid nothing, so the line adds up to the label: "· 2 on Jul 20, netting to $0.00", and "· one
+    // on Oct 12, toward no due day"
+    const nothing = [nettedDetail(netted, today), moneyBackDetail(moneyBack, today)]
+      .flatMap((part) => (part === "" ? [] : [` · ${part}`]))
+      .join("");
     const earlierSplit = splitWords(before, today);
     sources.push({
       kind: "period",
@@ -2458,7 +2494,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
     // ⚖️ a pay series, per payday (§6A 55): what the average is of, the rows it leaves out, and the gate on them
     if (paydays !== null) return observedPerPayday({ evidence: paydays, era, next, earlierRate, seen, n, today });
     // ⛔ …and after the payments, the rows that paid nothing — so the words account for every tagged row
-    const nothing = nettedWords(netted, today);
+    const nothing = `${nettedWords(netted, today)}${moneyBackWords(moneyBack, today)}`;
     // ⚖️ before the rows' gate: with an `era` the words count what the badge and the average count (§6A 63) — never
     // "Only 2 tagged postings have ever landed" beside an average of the one at the rate in force now
     if (era !== null) {
@@ -2475,7 +2511,7 @@ function recurringSeriesProvenance(db: AppDatabase, id: string, today: string): 
       const paid = formatCents(only.amountCents);
       const word = postedAsWord(only);
       const one =
-        netted.length === 0
+        netted.length === 0 && moneyBack.length === 0
           ? `Its ${n} tagged postings are one payment, of ${paid} on ${readableDay(only.postedOn)}.`
           : `Its one payment was ${paid}, on ${readableDay(only.postedOn)}${word === null ? "" : `, ${word}`}.`;
       return `${one}${thin}${nothing}`;

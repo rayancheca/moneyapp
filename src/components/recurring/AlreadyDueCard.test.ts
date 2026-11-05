@@ -16,8 +16,8 @@ function render(
   headingClass: string;
   text: string;
 } {
-  // a statement is what the unread part waits for, unless a test says its days to post are
-  const props = { overdue: { inGraceCents: 0, ...overdue, graceDays, carriedGrace } };
+  // a statement is what the unread part waits for, unless a test says its days to post are — on its own day
+  const props = { overdue: { inGraceCents: 0, ownDate: overdue.date, ...overdue, graceDays, carriedGrace } };
   const html = decode(renderToStaticMarkup(createElement(AlreadyDueCard, props)));
   const h2 = /<h2 class="([^"]*)">([\s\S]*?)<\/h2>/.exec(html);
   return {

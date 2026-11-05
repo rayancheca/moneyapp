@@ -6,6 +6,7 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { PassedPaydaysLine } from "@/components/budgets/PassedPaydaysLine";
+import { AmountHistoryChart } from "@/components/recurring/AmountHistoryChart";
 import { UnbankedIncomeNote } from "@/components/recurring/ForecastCard";
 import { createDatabase, type DbBundle } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
@@ -509,6 +510,17 @@ describe("an import's link that files nothing: his payroll rows attached and unf
         `matched to the cent by a row of $1,141.92 on ${formatDayShort(day)} that is attached to it but not filed as income`,
       );
     }
+    // …and the series page's Amount history says it of each row, in the same words — 🔴 review of 92de2b12 (L56): its
+    // bars read "toward no payday" beside the page's passed paydays naming the rows "not filed as income"
+    const history = seriesDetail(bundle.db, PAY, TODAY)!.amountHistory.filter((p) => PAYDAYS.includes(p.date));
+    expect(history.map((p) => [p.date, p.notFiledAsIncome, p.expectedCents])).toEqual(
+      PAYDAYS.map((d) => [d, true, null]),
+    );
+    const table = renderToStaticMarkup(
+      createElement(AmountHistoryChart, { points: history, expectedCents: 114_192, asTable: true }),
+    );
+    expect(table.match(/attached to it but not filed as income/g)).toHaveLength(PAYDAYS.length);
+    expect(table).not.toContain("toward no payday");
   });
 
   /*
@@ -1494,5 +1506,23 @@ describe("two pay schedules of one amount on one account, one row: it answers on
     const lines = incomeCard(bundle.db, TODAY)!.pay;
     expect(lines.find((l) => l.seriesId === PAY)!.unattached.map((m) => m.row.id)).toEqual([only]);
     expect(lines.find((l) => l.seriesId === PAY2)!.unattached).toEqual([]);
+  });
+
+  /*
+   * ⛔ …and a payday still inside its days to land rivals the other schedule's as its own page reads it: the rivals are
+   * every CHECKED payday (`unbankedIncomeForSeries`, review of 304c59a4). 🔴 Review of 8aa00da4 (L67): given only their
+   * past-grace days, the rivals passed every test (457 files) — and read on Oct 24, the second schedule's own page
+   * claimed the Oct 22 row the forecast gives the first, one row on two days.
+   */
+  test("…inside its days to land: on Oct 24 the Oct 22 row is the older's on the forecast and its page alone", () => {
+    const only = row("2026-10-22", 114_192, { categoryId: categoryId("Salary", "Income") });
+    const IN_GRACE = "2026-10-24";
+    const forecast = forecastCurrentMonth(bundle.db, IN_GRACE).unbankedIncome;
+    expect(forecast.pastGraceOccurrenceCount).toBe(6);
+    expect((forecast.unattached ?? []).map((m) => m.row.id)).toEqual([only]);
+    const pageRows = (id: string): string[] =>
+      (seriesDetail(bundle.db, id, IN_GRACE).unbankedPaydays!.unattached ?? []).map((m) => m.row.id);
+    expect(pageRows(PAY)).toEqual([only]);
+    expect(pageRows(PAY2)).toEqual([]);
   });
 });

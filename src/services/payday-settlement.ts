@@ -320,7 +320,8 @@ export function stillToCome<T extends { ownDate: string }>(
  * list says.
  *
  * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
- * the day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29).
+ * the day of its own that falls due with its carrier's opening day, the one the carrier's payment of that day pays
+ * (`openingOf`; default built, not asked, 2026-10-29).
  *
  * ⚖️ …and NAMED by the day it falls due (`fallsDueOn`), as its list dates it (`SeriesOccurrence.date`): billed inside
  * another on its carrier's step, the later of its own day and the carrier's day it pairs with (default (B), built,
@@ -334,7 +335,8 @@ export function stillToCome<T extends { ownDate: string }>(
  * The rent typed Nov 16 and paid early on Nov 5 opens the utilities on their Nov 1, paired with it and paid by it: on
  * Nov 10, asked from Nov 2, their Nov 1 still falls due Nov 16. 🔴 Nothing pinned it (review of a456a6fc): stepped as
  * before aa05a56d, 4,585 tests passed while `listSeries`, and so the /recurring render, would hang. Pinned in
- * nearer-due-day.test.ts ("…paid early Nov 5", and the rent's Dec 5 early for its Dec 16), the walk bounded there.
+ * nearer-due-day-paired.test.ts ("…paid early Nov 5", and the rent's Dec 5 early for its Dec 16), the walk bounded
+ * there.
  */
 export function nextStillToCome(
   toCome: StillToCome,
@@ -396,7 +398,7 @@ export interface StillToComeSeries extends SeriesOverrides {
  * `userNextExpectedOn: null` there, every grader test passed (the review counted 1,877), and on his ledger copy
  * 2026-10-29 with that premium on Venture X, Jun 11 paid before his Aug 11, on Sep 1 the calendar drew Sep 11 paid
  * early by Aug 20 while Upcoming, September's forecast, the All tab, the page and the budget tail listed it still to
- * come (nearer-due-day.test.ts pins it).
+ * come (nearer-due-day-catch-up.test.ts pins it).
  */
 export function stillToComeReader(
   db: AppDatabase,

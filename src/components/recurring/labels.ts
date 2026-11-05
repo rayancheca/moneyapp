@@ -186,11 +186,15 @@ export function dueWithPhrase(dueWith: DueWith, cadence: Cadence, once: boolean)
  * What the sentence's date editor calls the date it opens on, and what its Save says it saved: "Next expected date" —
  * or, its day falling due on its carrier's later one (`dueWith`), "Its own next date": ⛔ the date it opens on and
  * saves is its OWN schedule's (`SeriesDetail.nextExpectedOn`), never the day its list names, so a Save with nothing
- * changed never retypes it onto the rent's day — and the field says so beside a list that names another.
+ * changed never retypes it onto the rent's day — and the field says so beside a list that names another. …and what
+ * its "Use detected" says it reset (`reset`). 🔴 Review of 933b29e2 (L78): it toasted "Next date reset to detected"
+ * beside "Its own next date", the one message left that did not say which date it meant.
  */
-export function nextDateWords(dueWith: DueWith | null): { field: string; saved: string } {
-  if (dueWith === null) return { field: "Next expected date", saved: "Next expected" };
-  return { field: "Its own next date", saved: "Its own next date" };
+export function nextDateWords(dueWith: DueWith | null): { field: string; saved: string; reset: string } {
+  if (dueWith === null) {
+    return { field: "Next expected date", saved: "Next expected", reset: "Next date reset to detected" };
+  }
+  return { field: "Its own next date", saved: "Its own next date", reset: "Its own next date reset to detected" };
 }
 
 /**
@@ -661,14 +665,20 @@ export function unsettledReasonWord(reason: UnsettledReason): string {
  * 🔴 Review of de31d22 (HIGH): on his ledger copy (2026-10-29, after the Oct 26 import and before his filing) the
  * calendar said "not yet known — never reached a bank $1,141.92" of Oct 1, 8, 15 and 22 beside the forecast card
  * naming the four payroll rows. Null for a mark with no reason — one that is not "not yet known".
+ *
+ * ⚖️ (B) …and a mark drawn on its carrier's later day (`CalendarEntry.ownDate`) says the row answers its OWN day: "its
+ * own Dec 1 is matched to the cent by a row of $182.21 on Dec 1 that is not attached to it", in the cell of Dec 16.
+ * 🔴 Review of 95cdf198 (L81): it named the Dec 1 row in that cell, fifteen days off, and nothing said why.
  */
 export function unsettledWords(e: {
   unsettledReason: UnsettledReason | null;
   unattached: UnattachedMatch | null;
+  ownDate?: string;
 }): string | null {
   if (e.unsettledReason === null) return null;
   if (e.unsettledReason === "matched_unattached" && e.unattached !== null) {
-    return `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords([e.unattached], formatDayShort)}`;
+    const matched = `${MATCHED_TO_THE_CENT_BY} ${unattachedRowsWords([e.unattached], formatDayShort)}`;
+    return e.ownDate === undefined ? matched : `its own ${formatDayShort(e.ownDate)} is ${matched}`;
   }
   return unsettledReasonWord(e.unsettledReason);
 }
@@ -786,12 +796,21 @@ export function overdueNote(
  * figure, the wider, stood for both (review of 44eb3e7): with the rent's 5 days and the utilities' own 3, their page
  * read "hold no posting within 5 days of it" beside a posting of their own four days off the day, which paid them
  * nothing. Of the same width — his rent and utilities, both 3 — one figure is true of both, and stays.
+ *
+ * ⚖️ (B) …and shown on the carrier's later day it falls due with (`ownDay`, the own day of the day shown), its own
+ * window is said on its OWN day, where a row of its own is graded (`paymentFor`): "of its own within 3 days of Dec 1,
+ * and none of the rent's payments within 3 days of it". 🔴 Review of 95cdf198 (L80, two reviewers): the rent typed Nov
+ * 16 and paid Nov 16, December unpaid, their own −$182.21 of Dec 1 unattached — on Dec 20 the card showed "Dec 16, 2026"
+ * over "…with no posting attached to this bill within 3 days of it; they hold a row of $182.21 on Dec 1 that is not
+ * attached to it, matching it to the cent." — fifteen days from "it" (a temp database; latent on his ledger).
  */
 export function alreadyDueWords(
   reading: ArrearsReading,
   graceDays: number,
   occurrenceCount: number,
   carried: CarriedGrace | null,
+  // the own day of the due day shown when that is another — billed inside another, on its carrier's later day
+  ownDay: string | null = null,
 ): { heading: string; body: string; warning: boolean } {
   const split = arrearsSplit(reading);
   const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
@@ -804,13 +823,14 @@ export function alreadyDueWords(
   const all = one ? "it" : n === 2 ? "both" : `all ${n}`;
   const any = one ? "it" : n === 2 ? "either" : "any of them";
   const ofDay = (grace: number, day: string) => (grace === 0 ? `on ${day}` : `within ${days(grace)} of ${day}`);
-  // "no posting …" of a due day — of its own days and its carrier's when the two differ (`carried`)
-  const noPostingOf = (day: string) =>
-    carried === null || carried.ownDays === carried.carrierDays
+  // "no posting …" of a due day — of its own days and its carrier's when the two differ (`carried`), or when its own
+  // window is on another day than the one shown (`ownDay`): that day by date, of one due day; of several, each one's
+  const noPostingOf = (day: string, ownOn: string) =>
+    carried === null || (ownDay === null && carried.ownDays === carried.carrierDays)
       ? ofDay(graceDays, day)
-      : `of its own ${ofDay(carried.ownDays, day)}, and none of ${carrierWord(carried.carrierName)}'s payments ` +
-        ofDay(carried.carrierDays, day);
-  const within = noPostingOf(any);
+      : `of its own ${ofDay(carried.ownDays, ownDay === null ? day : ownOn)}, and none of ` +
+        `${carrierWord(carried.carrierName)}'s payments ${ofDay(carried.carrierDays, day)}`;
+  const within = noPostingOf(any, ownDay === null || !one ? "each one's own day" : formatDayShort(ownDay));
   /*
    * ⛔ "No posting" only where no row matches to the cent (`lib/unattached-match`): a row that does, sitting unattached,
    * is named by its day and amount, and the bill stays owed. 🔴 His ledger copy 2026-10-29 (before his filing): the Car
@@ -854,7 +874,7 @@ export function alreadyDueWords(
   }
   const pastADueDay = graceDays === 0 ? "a due day" : `${days(graceDays)} past a due day`;
   // said of that one due day
-  const withinIt = noPostingOf("it");
+  const withinIt = noPostingOf("it", "its own day");
   const rest = waitsOnDays ? DAYS_TO_POST_NOT_OVER : "no statement reaches that far yet";
   return {
     heading: `Already due: ${arrearsClause(reading, NOT_POSTED)}`,
@@ -944,14 +964,22 @@ const MONTHS_IN_YEAR = 12;
  * "stops on Aug 1, 2026, inside them" of a window beginning Sep 11. It does not
  * stop inside those twelve months; it stopped before them.
  *
- * ⛔ …and such a series has NO figure to qualify: `annualizedCentsOf` is null for every end before today (a schedule
- * its end has closed is not forecast — `scheduleHasEnded`), and both printers print this only under a figure. So it is
- * silent. 🔴 It kept a sentence for that case — "a year this series no longer bills — it stopped on …" — that 0af5689
- * made unreachable when it took the "~$0.00/yr" away, under a comment promising Car insurance would reach it on
- * 2027-01-12, the day its figure reads "—" (review of the 10-12/13 batches; the grid in recurring.test.ts is the proof).
+ * ⛔ …and such a series has NO figure to qualify: `annualizedCentsOf` is null once the day it stops
+ * (`seriesStopsOn`) is before today (a schedule its end has closed is not forecast — `scheduleHasEnded`), and both
+ * printers print this only under a figure. So it is silent. 🔴 It kept a sentence for that case — "a year this series
+ * no longer bills — it stopped on …" — that 0af5689 made unreachable when it took the "~$0.00/yr" away, under a
+ * comment promising Car insurance would reach it on 2027-01-12, the day its figure reads "—" (review of the 10-12/13
+ * batches; the grid in recurring.test.ts is the proof).
+ *
+ * ⚖️ (B) …and the day it stops is the one every reader dates it by (`seriesStopsOn`): billed inside another, the later
+ * day its last charge inside its end falls due on, which its figure holds until it has come. 🔴 Read off the end
+ * alone (review of 99bd525a), the rent typed Nov 16 and paid Nov 16, the utilities' end typed Dec 10: on Dec 5 and Dec
+ * 10 their page read "this one stops on Dec 10, 2026, inside them" above "Next expected Dec 16, 2026", and on Dec 11
+ * to Dec 16 "~$182.21/yr" under a monthly -$182.21 with nothing saying why (his ledger copy 2026-11-04, the same
+ * what-if). Latent: nothing of his billed inside another has an end.
  */
-export function annualizedCaveat(endsOn: string | null, today: string): string | null {
-  const end = annualizedEnd(endsOn, today);
+export function annualizedCaveat(s: SeriesEndDays, today: string): string | null {
+  const end = annualizedEnd(seriesStopsOn(s), today);
   if (end === null) return null;
   return `the twelve months from today — this one stops on ${longDate(end)}, inside them`;
 }
@@ -967,6 +995,27 @@ function annualizedEnd(endsOn: string | null, today: string): string | null {
   return endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR)) ? endsOn : null;
 }
 
+/** What every reader of a series' end reads of it: the end he typed, and the later day its last charge falls due on. */
+export interface SeriesEndDays {
+  endsOn: string | null;
+  /** ⚖️ (B) billed inside another, the day its last charge inside the end falls due on when after it, else null */
+  lastFallsDueOn: string | null;
+}
+
+/**
+ * ⚖️ (B) The day a series STOPS, as every reader dates its days — by the day each falls due (`SeriesOccurrence.date`):
+ * its end, or, billed inside another on its carrier's step, the later day its last charge inside that end falls due on
+ * (`lastFallsDueOn`), the day its list names that charge by. ONE day for every reader that names it: the end badge
+ * (`seriesEndBadge`), the Annualized qualifier and the All tab's short form (`annualizedCaveat`, `annualizedEndNote`)
+ * and the End dialog's span (`seriesEndInput`). 🔴 Each read its own (review of 99bd525a): the rent typed Nov 16 and
+ * paid Nov 16, the utilities' end typed Dec 10 — on Dec 5 their page read "Ends Dec 10, 2026" and "this one stops on
+ * Dec 10, 2026" above "Next expected Dec 16, 2026" and an End dialog "every charge from Dec 16, 2026 to Dec 16, 2026"
+ * (his ledger copy 2026-11-04, the same what-if).
+ */
+export function seriesStopsOn<End extends string | null>(s: SeriesEndDays & { endsOn: End }): string | End {
+  return s.lastFallsDueOn ?? s.endsOn;
+}
+
 /**
  * `annualizedCaveat`'s short form, for a table cell: "ends Jan 11, 2027".
  *
@@ -977,10 +1026,10 @@ function annualizedEnd(endsOn: string | null, today: string): string | null {
  * figures; the row could not, because it had no end date.
  *
  * ⛔ SAME GATE as the long form (`annualizedEnd`), so a lease ending 2028 is
- * silent here exactly as it is there.
+ * silent here exactly as it is there — on the same day it stops (`seriesStopsOn`).
  */
-export function annualizedEndNote(endsOn: string | null, today: string): string | null {
-  const end = annualizedEnd(endsOn, today);
+export function annualizedEndNote(s: SeriesEndDays, today: string): string | null {
+  const end = annualizedEnd(seriesStopsOn(s), today);
   return end === null ? null : `ends ${longDate(end)}`;
 }
 
@@ -1001,13 +1050,34 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * detected anchor past its end ran out on its last charge, or on the end when that charge settled after it), holds no
  * date: the card says "Its schedule has ended" (`scheduleEnded`, the evidence's `schedule-ended`). 🔴 The badge took
  * the end day's tense and read "Ends Jan 11, 2027" beside it (review of the late-lapse batch; his ledger copy
- * 2026-10-13, Car insurance's anchor typed Feb 11). It ended, before the end it names: "Ended before Jan 11, 2027".
+ * 2026-10-13, Car insurance's anchor typed Feb 11). It ended, before the end it names: "Ended before Jan 11, 2027" —
+ * and so does one opening PAST its end, billed inside another (`openingOf`), which held no date and ran out on none,
+ * past the end too.
+ *
+ * ⚖️ (B) …and billed inside another on its carrier's step, the last charge inside its end falling due with the
+ * carrier's later day (`lastFallsDueOn`, `SeriesDetail.lastFallsDueOn`): the day it stops (`seriesStopsOn`) is that
+ * day, still to come — the day its list names it on and the End dialog's span runs to, before the end he typed and
+ * after it, and whether or not the forecast still carries it (`lastFallsDueAfterItsEnd`); once it has come, "Ended" on
+ * it (`scheduleRanOutOn` dates the day it ran out as every reader dates a day, by when it falls due). 🔴 Review of
+ * 23e9c5d1: the rent typed Nov 16 and paid Nov 16, the utilities' end typed Dec 10 — Dec 11 to Dec 16 their page read
+ * "Ended Dec 10, 2026" beside a list naming Dec 16 and an End dialog "Leaving the forecast: ~$182.21 / yr", and from
+ * Dec 17 "Ended Dec 1, 2026" beside an Already-due card for Dec 16; the rent typed Nov 1 and their end Oct 15, "Ended
+ * Oct 1, 2026", a day they never held. 🔴 Review of 99bd525a: Nov 20 to Dec 10 it read "Ends Dec 10, 2026" above "Next
+ * expected Dec 16, 2026", and on Dec 11, nothing new posted, "Ends Dec 16, 2026" — a day still to come moved
+ * overnight (his ledger copy 2026-11-04, each what-if). Latent: nothing of his billed inside another has an end.
  */
-export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string, scheduleEnded: boolean): string {
+export function seriesEndBadge(
+  endsOn: string,
+  ranOutOn: string | null,
+  today: string,
+  scheduleEnded: boolean,
+  lastFallsDueOn: string | null,
+): string {
   const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
   if (ranOutOn !== null) return `${ended} ${longDate(ranOutOn)}`;
-  if (compareDates(endsOn, today) < 0) return `${ended} ${longDate(endsOn)}`;
-  return `${scheduleEnded ? `${ended} before` : "Ends"} ${longDate(endsOn)}`;
+  if (scheduleEnded) return `${ended} before ${longDate(endsOn)}`;
+  const stops = seriesStopsOn({ endsOn, lastFallsDueOn });
+  return `${compareDates(stops, today) >= 0 ? "Ends" : ended} ${longDate(stops)}`;
 }
 
 /**
