@@ -79,13 +79,16 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   const [active, setActive] = useState(0);
   const [drag, setDrag] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /* the drag on the front card has uncovered the card behind it since it was grabbed, and nothing has stepped since */
+  const [revealed, setRevealed] = useState(false);
   const [height, setHeight] = useState<number | null>(null);
   const reduced = usePrefersReducedMotion();
 
   const deckRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pointer = useRef<{ id: number; x: number; at: number; lastX: number; lastAt: number } | null>(null);
-  /* the wheel fires many times per gesture; one step per burst, not per tick */
+  /* the wheel fires many times per gesture: one step per 320 ms from the tick that stepped, not per tick — ⚠️ not per
+     swipe either, for a swipe that lasts longer (CardDeck.test.ts) */
   const wheelLock = useRef(0);
 
   const count = cards.length;
@@ -102,20 +105,23 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
    * 🔴 Only an arrow key handed it over, from the key handler: a trackpad swipe (the wheel) after a click on Runway's
    * "What Runway means" left the focus on <body> and ← → dead — the review of 04c5fd30, in headless Chromium.
    *
-   * ⛔ …and it closes a provenance panel (`popover="auto"`) left open on the card going behind — AFTER the hand-off,
-   * whoever holds the focus. Hidden first, a panel holding the focus hands it back to whatever held it before it
-   * opened, which on WebKit (it never focuses a button on a click) is the page, and the deck would see no focus of its
-   * own to take. 🔴 It floated over the next card: On your cards' "How what you owe is known — 3 of 3 add up" open,
-   * then →, and Eating out came forward under "$2,624.16 across 3 cards…", in a card now inert (the review of
-   * d27f4f8f, his ledger copy 2026-10-29). An ⓘ's tooltip is not the deck's: its open state is `Tooltip`'s, and it
-   * closes on the blur the hand-off causes and on a pointer leaving it.
+   * ⛔ …and it closes every panel left open on the card going behind — AFTER the hand-off, whoever holds the focus.
+   * Hidden first, a panel holding the focus hands it back to whatever held it before it opened, which on WebKit (it
+   * never focuses a button on a click) is the page, and the deck would see no focus of its own to take. 🔴 It floated
+   * over the next card: On your cards' "How what you owe is known — 3 of 3 add up" open, then →, and Eating out came
+   * forward under "$2,624.16 across 3 cards…", in a card now inert (the review of d27f4f8f, his ledger copy
+   * 2026-10-29). 🔴 …and so did an ⓘ's tooltip (`popover="manual"`), left to `Tooltip`, which closes on a blur or a
+   * pointer leaving it — and a hover opens it with neither: a two-finger swipe moves no pointer, and it stayed over the
+   * card the swipe brought forward until the pointer moved, 8.5 s in a probe of this step (the browser pane's Chromium,
+   * 2026-11-05). Its state is still `Tooltip`'s, which hears this hide as Popover hears a light dismiss.
    */
   const turn = useCallback(
     (to: (current: number) => number) => {
       const deck = deckRef.current;
       const focused = deck?.ownerDocument.activeElement;
       if (deck && focused && focused !== deck && deck.contains(focused)) deck.focus({ preventScroll: true });
-      deck?.querySelectorAll<HTMLElement>('[popover="auto"]:popover-open').forEach((panel) => panel.hidePopover());
+      deck?.querySelectorAll<HTMLElement>("[popover]:popover-open").forEach((panel) => panel.hidePopover());
+      setRevealed(false);
       setActive((current) => to(clampIndex(current, count)));
     },
     [count],
@@ -181,6 +187,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     if ((event.target as HTMLElement).closest("a,button,input,select,textarea,[popover]")) return;
     pointer.current = { id: event.pointerId, x: event.clientX, at: event.timeStamp, lastX: event.clientX, lastAt: event.timeStamp };
     setDragging(true);
+    setRevealed(false);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -190,6 +197,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     p.lastX = event.clientX;
     p.lastAt = event.timeStamp;
     setDrag(event.clientX - p.x);
+    if (dragUncovers(event.clientX - p.x)) setRevealed(true);
   };
 
   /** the pointer let go of and the front card back on the stack — and with it the sheet of the card behind */
@@ -244,9 +252,10 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   const width = deckRef.current?.getBoundingClientRect().width ?? 0;
   const tilt = dragging ? dragTilt(drag, width) : 0;
   const motion = reduced ? "none" : "transform var(--duration-normal) var(--ease-out-expo), opacity var(--duration-normal) ease";
-  // what is on the card a step brings forward fades in on the step's own duration — and at once, as the step moves,
-  // under reduced motion (the slot below)
-  const fadeIn = reduced ? "" : "*:*:transition-opacity *:*:duration-(--duration-normal)";
+  // what is on the card a step brings forward fades in on the step's own duration, and what is on the card a drag
+  // uncovered fades out as it is covered again — and either at once, as the step moves, under reduced motion (the slot
+  // below)
+  const contentFade = reduced ? "" : "*:*:transition-opacity *:*:duration-(--duration-normal)";
   // a drag is on once it has pushed the front card `UNCOVER_SLOP_PX` off the card behind it — not while a press has
   // merely landed, nor for a thumb's drift on a vertical pan the browser is about to take
   const pushed = dragging && dragUncovers(drag);
@@ -302,8 +311,12 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * (`UNCOVER_SLOP_PX`): a press on the front card, or a thumb's drift on a vertical pan the browser is
            * about to take, must not flash the next card into the edge. 🔴 Any push at all did, and a thumb pushed
            * straight up the deck with a pixel of drift flashed The car into Runway's edge until Chromium took the
-           * pointer (the review of 246dcf1e). The sheet comes back the moment the drag ends or the browser takes
-           * it, and the card stays `inert` throughout — the reveal is the eye's.
+           * pointer (the review of 246dcf1e). The sheet comes back as the drag ends or the browser takes it (faded
+           * out, below), and the card stays `inert` throughout — the reveal is the eye's. ⚠️ Either way the drag
+           * goes: a drag RIGHT uncovers that same card, though letting go of it past a step brings the LAST card
+           * forward — a drag right on Runway shows The car's "$1,306.79 a month, all in" and lets go onto "Can you
+           * trust this?", card 12 of 12 (his ledger copy, 2026-11-05). Named for him to decide (the review of
+           * 5b34ee1e); the deck before d27f4f8f showed the same card.
            *
            * …and the card a step brings forward fades what is on it in over the step's own 300 ms
            * (`--duration-normal`, on its opacity alone) rather than popping it in at the start of the move. The
@@ -313,13 +326,26 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * appears at once, as the step does. None of the thirteen cards the page deals puts a transition of its
            * own on a child of its sheet for this one to replace (read 2026-11-05).
            *
+           * ⚖️ default built, not asked (2026-11-05): …and a drag that lets go without a step — short of one, or
+           * taken by the browser — fades what is on the card it uncovered out over the same 300 ms, as the front
+           * card slides back over it. 🔴 It went at once, in the render that ended the drag: a 120 px drag left on
+           * Runway uncovered The car's "$1,052.62", "$254.17" and "$9,128.38", and the frame after the release had
+           * Runway still 120 px off, its slide back not begun, over a bare sheet (the review of 5b34ee1e, at
+           * 1024 px; his ledger copy, 2026-11-05). A step still drops it at once, as it drops the card it sends
+           * behind: past a step back, the card a drag uncovered goes two back, under the card coming forward and
+           * still part-clear.
+           *
            * ⛔ And it is `inert`: out of the pointer and out of the Tab order. 🔴 Only the pointer was kept out,
            * and a Tab walked every link and button behind the front — 16 and 14 behind Runway on his ledger copy,
            * 2026-10-29, each one a focus ring drawn on a card nobody could see.
            */
           const stretched = !isFront && height !== null ? height : undefined;
           const uncovered = pushed && slot.depth === 1;
-          const sheet = uncovered ? "overflow-hidden *:h-full" : "overflow-hidden *:h-full *:*:opacity-0";
+          // the card the drag uncovered, covered again: by the front card's own slide back, once the drag lets go
+          const coveredAgain = revealed && !uncovered && slot.depth === 1;
+          const sheet = uncovered
+            ? "overflow-hidden *:h-full"
+            : `overflow-hidden *:h-full *:*:opacity-0${coveredAgain && contentFade ? ` ${contentFade}` : ""}`;
           return (
             <div
               key={card.id}
@@ -328,7 +354,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
               }}
               aria-current={isFront ? "true" : undefined}
               inert={isFront ? undefined : true}
-              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? fadeIn : sheet}`}
+              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? contentFade : sheet}`}
               style={{
                 height: stretched,
                 zIndex: slot.zIndex,

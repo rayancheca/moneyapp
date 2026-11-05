@@ -440,9 +440,9 @@ export default async function DashboardPage({
    *
    * Every card here is CONDITIONAL — each service returns null on a ledger that
    * cannot answer its question, and a card of zeroes is worse than no card. The
-   * grid therefore counts what actually renders rather than assuming: with a
-   * single card it stays one column, so the runway takes the full width instead
-   * of sitting in a half-width column beside a hole.
+   * grid (DecisionCards) therefore counts the cards it is dealt rather than
+   * assuming: with a single card it stays one column, so the runway takes the
+   * full width instead of sitting in a half-width column beside a hole.
    *
    * ⚠️ `items-start` for the same reason the activity grid has it: a grid item
    * STRETCHES to its row's height by default, so a short card's own white box
@@ -452,21 +452,6 @@ export default async function DashboardPage({
    * the thing the owner objected to.
    */
   const showEatingOut = eatingOut !== null && !eatingOut.isEmpty;
-  const decisionCardCount =
-    1 +
-    [
-      car,
-      showEatingOut ? eatingOut : null,
-      subscriptions,
-      cardsOwed,
-      trust,
-      income,
-      concentration,
-      movers,
-      transfers,
-      performance,
-      fees,
-    ].filter(Boolean).length;
   /*
    * PASS 72-UI. Twelve cards ran the dashboard past three screens, so they are
    * a DECK by default — one card tall whatever it holds, which is what lets a

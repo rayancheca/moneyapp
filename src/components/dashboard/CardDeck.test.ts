@@ -205,13 +205,29 @@ function steppedDeck(count: number, { reducedMotion = false }: { reducedMotion?:
       motion: slot.props.style?.transition,
     }));
 
+  /**
+   * the deck with `front` in front, as it must be drawn: that card whole and live — what is on it fading in as it comes
+   * forward, unless the page asks for less motion — and every other its sheet, inert
+   */
+  const inFront = (front: string): string[] =>
+    ids.map(
+      (id) =>
+        `${id}: ${
+          id !== front
+            ? "behind, inert, clipped to the front, its sheet only"
+            : reducedMotion
+              ? "in front"
+              : "in front, its content fades in"
+        }`,
+    );
+
   // the browser's half of a step: a focus left inside a card that is inert now is dropped to the page
   const settle = () => {
     const { on } = doc.activeElement;
     if (on !== undefined && slotsNow().find((slot) => slot.id === on)?.inert) doc.activeElement = thePage;
   };
 
-  // one gesture a second after the last one ended, so none lands inside the wheel's burst window
+  // one gesture a second after the last one ended, so none lands inside the wheel's 320 ms lock
   let clock = 1_000;
   /** the deck mounted, once, as the page mounts it */
   let mounted = false;
@@ -268,33 +284,31 @@ function steppedDeck(count: number, { reducedMotion = false }: { reducedMotion?:
     /** how each card is drawn now, in deck order */
     drawn: (): string[] =>
       slotsNow().map(({ id, front, inert, classes }) => {
+        const sheetOnly = classes.includes("*:*:opacity-0");
         const marks: [boolean, string][] = [
           [true, front ? "in front" : "behind"],
           [inert, "inert"],
           [classes.includes("overflow-hidden") && classes.includes("*:h-full"), "clipped to the front"],
-          [classes.includes("*:*:opacity-0"), "its sheet only"],
-          [FADE.every((fade) => classes.includes(fade)), "its content fades in"],
+          [sheetOnly, "its sheet only"],
+          // the content's opacity transitions toward what the card shows: none of it on a sheet, all of it otherwise
+          [FADE.every((fade) => classes.includes(fade)), sheetOnly ? "its content fades out" : "its content fades in"],
         ];
         return `${id}: ${marks
           .filter(([on]) => on)
           .map(([, mark]) => mark)
           .join(", ")}`;
       }),
+    inFront,
     /**
-     * the deck with `front` in front, as it must be drawn: that card whole and live — what is on it fading in as it
-     * comes forward, unless the page asks for less motion — and every other its sheet, inert
+     * the deck with `front` in front as a drag that uncovered the card directly behind it lets go without a step: as
+     * `inFront`, but what is on that card fades out as the front slides back over it — at once, under reduced motion
      */
-    inFront: (front: string): string[] =>
-      ids.map(
-        (id) =>
-          `${id}: ${
-            id !== front
-              ? "behind, inert, clipped to the front, its sheet only"
-              : reducedMotion
-                ? "in front"
-                : "in front, its content fades in"
-          }`,
-      ),
+    coveredAgain: (front: string): string[] => {
+      const behind = ids[(ids.indexOf(front) + 1) % ids.length];
+      return inFront(front).map((line) =>
+        line.startsWith(`${behind}: `) && !reducedMotion ? `${line}, its content fades out` : line,
+      );
+    },
     /** one card's slot now: its classes, and the transition the deck's own style gives it */
     slot: (id: string) => {
       const slot = slotsNow().find((s) => s.id === id);
@@ -485,18 +499,24 @@ describe("every way a step is taken from inside the deck hands the focus over", 
 type SteppedDeck = ReturnType<typeof steppedDeck>;
 
 /**
- * ⛔ A horizontal wheel is the deck's alone, and one swipe is one card. A trackpad's two-finger swipe that also reached
- * the browser would scroll the page sideways or swipe back through its history; and a trackpad sends a tick every
- * frame for as long as the fingers move, so a deck that stepped on every tick would spin through the stack.
+ * ⛔ A horizontal wheel is the deck's alone, and it steps one card for the 320 ms after the tick that stepped, however
+ * many ticks come in them. A trackpad's two-finger swipe that also reached the browser would scroll the page sideways
+ * or swipe back through its history; and a trackpad sends a tick every frame for as long as the fingers move, so a deck
+ * that stepped on every tick would spin through the stack.
  *
- * 🔴 Neither was pinned: dropping the wheel's `preventDefault`, or its burst lock, left all 41 tests green (the review
- * of 5b123d41). Only the vertical wheel was asked what it kept from the browser, and every gesture here came a second
- * apart, so no two ticks ever fell inside one burst.
+ * 🔴 Neither was pinned: dropping the wheel's `preventDefault`, or its lock, left all 41 tests green (the review of
+ * 5b123d41). Only the vertical wheel was asked what it kept from the browser, and every gesture here came a second
+ * apart, so no two ticks ever fell inside one lock.
+ *
+ * ⚠️ The 320 ms run from the tick that stepped, not from the last tick, so a swipe is one card only while it lasts
+ * less: this file said "one swipe is one card" of a swipe of 288 ms, and 25 ticks 16 ms apart step two cards, about a
+ * second of them four (the review of 34a96d51). Whether a two-finger swipe on his Mac, momentum included, outlasts
+ * 320 ms was not measured.
  */
 describe("a trackpad swipe over the deck", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  test("is one card however many ticks it sends, and every tick is kept from the browser", () => {
+  test("is one card for the 320 ms after the tick that steps, however many ticks come in them, each kept", () => {
     const deck = steppedDeck(4);
     deck.focusOn("the deck");
     // a frame apart: 19 ticks 16 ms apart are 288 ms of fingers moving
@@ -510,11 +530,21 @@ describe("a trackpad swipe over the deck", () => {
     expect(deck.position()).toBe("card-1 — card 2 of 4");
   });
 
+  test("⚠️ a swipe whose ticks keep coming past those 320 ms steps again: 25 ticks 16 ms apart are two cards", () => {
+    // named, not chosen: a lock run from the LAST tick would make this one card, and would swallow a second swipe made
+    // inside the first one's momentum
+    const deck = steppedDeck(6);
+    deck.focusOn("the deck");
+    const { preventDefault } = deck.swipe(120, 25, 16);
+    expect(deck.position()).toBe("card-2 — card 3 of 6");
+    expect(preventDefault).toHaveBeenCalledTimes(25);
+  });
+
   test.each([
     { apart: 319, to: "card-1 — card 2 of 4" },
     { apart: 320, to: "card-2 — card 3 of 4" },
   ])("a second tick $apart ms after the one that stepped: $to", ({ apart, to }) => {
-    // the burst ends 320 ms after the tick that stepped: at 319 ms a tick is still that swipe's, at 320 a new one's
+    // the lock ends 320 ms after the tick that stepped: at 319 ms a tick is still that step's, at 320 it steps again
     const deck = steppedDeck(4);
     deck.focusOn("the deck");
     deck.swipe(120, 2, apart);
@@ -566,15 +596,20 @@ describe("a panel left open on the front card", () => {
     expect(deck.focused()).toBe("card-2");
   });
 
-  test("⛔ an ⓘ's tooltip is not the deck's to close", () => {
-    // its open state is `Tooltip`'s, which a hide from outside would leave holding it open — it closes on the blur
-    // the hand-off causes, and on a pointer leaving it
+  /*
+   * 🔴 An ⓘ's tooltip was left to `Tooltip`, which closes it on a blur or a pointer leaving it, and a hover opens it
+   * with neither: a two-finger swipe moves no pointer, so it floated over the card the swipe brought forward until the
+   * pointer moved — 8.5 s in a probe of the deck's step, no `mouseleave` and the ⓘ still `:hover` (the browser pane's
+   * Chromium, 2026-11-05). Its state is still `Tooltip`'s, which hears a hide from outside as Popover hears a light
+   * dismiss (Tooltip.test.ts).
+   */
+  test.each(ways)("an ⓘ's tooltip a hover opened is closed by $way too", ({ step }) => {
     const deck = steppedDeck(4);
-    const tip = deck.openPanel("manual");
     deck.focusOn("a link on the front card");
-    deck.press("ArrowRight");
+    const tip = deck.openPanel("manual");
+    step(deck);
     expect(deck.position()).toBe("card-1 — card 2 of 4");
-    expect(tip.open).toBe(true);
+    expect(tip.open).toBe(false);
   });
 });
 
@@ -620,7 +655,9 @@ test("after every step, whichever way it was taken, the card in front is whole a
  * showed The car as an empty card until it let go (the review of d27f4f8f) — "$1,306.79 a month, all in", behind Runway
  * on his ledger copy, 2026-11-05. Only that card, and only while the drag has pushed the front card `UNCOVER_SLOP_PX`
  * off it: Earned vs banked, two back, stays its sheet, and every card behind stays `inert` — the reveal is the eye's,
- * never the Tab key's or find-in-page's.
+ * never the Tab key's or find-in-page's. ⚠️ Whichever way the drag goes: a drag right on Runway shows The car, and
+ * letting go of it past a step brings "Can you trust this?" forward, card 12 of 12 (his ledger copy, 2026-11-05). The
+ * card it shows is not the card it delivers — named for him to decide (the review of 5b34ee1e), not changed.
  */
 describe("a drag uncovers the card directly behind the front", () => {
   /** the deck with card-0 in front and card-1 uncovered beside it: what is on card-1 shows, and it is still inert */
@@ -651,7 +688,8 @@ describe("a drag uncovers the card directly behind the front", () => {
     deck.pull(-80);
     expect(deck.drawn()).toEqual(uncovering);
     deck.pull(0);
-    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+    // …what is on it fading out as the front card comes back over it (the next describe)
+    expect(deck.drawn()).toEqual(deck.coveredAgain("card-0"));
   });
 
   /*
@@ -674,20 +712,82 @@ describe("a drag uncovers the card directly behind the front", () => {
   });
 
   test.each([
-    { ending: "let go short of a step, snapping back", end: "letGo" as const, dx: -60, front: "card-0" },
-    // at the clientX Chromium gives it, 0 — the browser's, never a release (the next describe)
-    { ending: "taken by the browser (pointercancel)", end: "lose" as const, dx: -60, front: "card-0" },
+    // covered again as the front card slides back over it, what is on it fading out (the next describe)
+    { ending: "let go short of a step, snapping back", end: "letGo" as const, dx: -60, front: "card-0", fades: true },
+    // at the clientX Chromium gives it, 0 — the browser's, never a release (the describe after next)
+    { ending: "taken by the browser (pointercancel)", end: "lose" as const, dx: -60, front: "card-0", fades: true },
     // the card it uncovered comes forward already showing: its content never went, so the fade has nothing to fade
-    { ending: "let go past a step", end: "letGo" as const, dx: -200, front: "card-1" },
-    { ending: "let go past a step back", end: "letGo" as const, dx: 200, front: "card-3" },
-  ])("the sheet comes back the moment the drag ends — $ending", ({ end, dx, front }) => {
+    { ending: "let go past a step", end: "letGo" as const, dx: -200, front: "card-1", fades: false },
+    { ending: "let go past a step back", end: "letGo" as const, dx: 200, front: "card-3", fades: false },
+  ])("the sheet comes back as the drag ends — $ending", ({ end, dx, front, fades }) => {
     const deck = steppedDeck(4);
     deck.grab();
     deck.pull(dx);
     expect(deck.drawn()).toEqual(uncovering);
     if (end === "lose") deck.lose();
     else deck.letGo(dx);
-    expect(deck.drawn()).toEqual(deck.inFront(front));
+    expect(deck.drawn()).toEqual(fades ? deck.coveredAgain(front) : deck.inFront(front));
+  });
+});
+
+/**
+ * ⚖️ default built, not asked (2026-11-05): a drag that lets go without a step — short of one, or taken by the
+ * browser — covers the card it uncovered again by fading what is on it out over the step's own 300 ms, as the front
+ * card slides back over it. 🔴 It went at once, in the render that ended the drag: a 120 px drag left on Runway
+ * uncovered The car's "$1,052.62", "$254.17" and "$9,128.38", and in the frame after the release Runway was still
+ * 120 px off, its slide back not begun, over a bare sheet (the review of 5b34ee1e at 1024 px; those three on his
+ * ledger copy, 2026-11-05) — the pop the step's fade took out, back at the release.
+ */
+describe("a drag let go of without a step fades the card it uncovered out as the front slides back", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("on its content's opacity alone, for as long as the front card takes to slide back", () => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(-60);
+    deck.letGo(-60);
+    const behind = deck.slot("card-1");
+    expect(behind.classes).toContain("*:*:opacity-0");
+    expect(behind.classes.filter((c) => c.startsWith("*:*:transition"))).toEqual(["*:*:transition-opacity"]);
+    // the front card slides back by the deck's own style, and the fade runs as long
+    const slide = /transform var\((--duration-[\w-]+)\)/.exec(deck.slot("card-0").motion ?? "")?.[1];
+    expect(slide).toBe("--duration-normal");
+    expect(behind.classes).toContain(`*:*:duration-(${slide})`);
+  });
+
+  test("⛔ a step drops it at once, as it drops the card it sends behind — past a step back, or an arrow after", () => {
+    // past a step back, the card it uncovered goes two back, under the card coming forward and still part-clear:
+    // faded out, it would show through that card, as the front sent behind would
+    const back = steppedDeck(4);
+    back.grab();
+    back.pull(200);
+    back.letGo(200);
+    expect(back.drawn()).toEqual(back.inFront("card-3"));
+    // ← after a drag snapped back sends the front directly behind, where the card the drag uncovered was
+    const arrow = steppedDeck(4);
+    arrow.focusOn("the deck");
+    arrow.grab();
+    arrow.pull(-60);
+    arrow.letGo(-60);
+    arrow.press("ArrowLeft");
+    expect(arrow.drawn()).toEqual(arrow.inFront("card-3"));
+  });
+
+  test("⛔ under reduced motion it is covered again at once", () => {
+    const deck = steppedDeck(4, { reducedMotion: true });
+    deck.grab();
+    deck.pull(-60);
+    deck.letGo(-60);
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+  });
+
+  test("the next press starts from the stack: nothing fades until it uncovers something", () => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(-60);
+    deck.letGo(-60);
+    deck.grab();
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
   });
 });
 
@@ -718,7 +818,8 @@ describe("a pointer the browser takes (pointercancel) ends the drag where it beg
     deck.pull(dx);
     const { focus } = deck.lose(at);
     expect(deck.position()).toBe("card-0 — card 1 of 4");
-    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+    // a push that uncovered the card behind covers it again as the front card slides back, fading it out
+    expect(deck.drawn()).toEqual(dx === 0 ? deck.inFront("card-0") : deck.coveredAgain("card-0"));
     expect(focus).toEqual([]);
     expect(deck.focused()).toBe("card-0's link");
     // …and the next press starts from the stack: nothing uncovered until it is pushed
@@ -819,6 +920,8 @@ function cardOf(literal: ts.ObjectLiteralExpression): { id: string; name: string
  * string `id` and a `node` that is one element of a named component; it is spread in only from
  * `cond ? [card, …] : []`; and the deck is handed `decisionCards` itself. Anything else — a card from a variable, a
  * call or a cast, a list spread in — is unread, because nothing here can say what that card's component returns.
+ * ⛔ So is any other use of the deal — a push after it is written, the deal handed to a deck past <DecisionCards> —
+ * and a page that hands it to no <DecisionCards> deals nothing this sweep can vouch for.
  */
 function readDeal(source: string): { cards: { id: string; name: string }[]; unread: string[] } {
   const file = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -831,8 +934,29 @@ function readDeal(source: string): { cards: { id: string; name: string }[]; unre
     if (card) cards.push(card);
     else unread.push(element.getText(file));
   };
+  /** the element or the statement `node` is written in */
+  const whereIn = (node: ts.Node): string => {
+    let at = node;
+    while (!ts.isStatement(at) && !ts.isJsxOpeningElement(at) && !ts.isJsxSelfClosingElement(at)) at = at.parent;
+    return at.getText(file);
+  };
+  /** `decisionCards` where the deal is handed on: the `cards` of a <DecisionCards> */
+  const handedOn = (name: ts.Identifier): boolean => {
+    const attribute = ts.isJsxExpression(name.parent) ? name.parent.parent : undefined;
+    return (
+      attribute !== undefined &&
+      ts.isJsxAttribute(attribute) &&
+      attribute.name.getText(file) === "cards" &&
+      attribute.parent.parent.tagName.getText(file) === "DecisionCards"
+    );
+  };
   let dealt = false;
+  let handed = 0;
   const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === "decisionCards") {
+      const written = ts.isVariableDeclaration(node.parent) && node.parent.name === node;
+      if (!written && !handedOn(node)) unread.push(whereIn(node));
+    }
     if (ts.isVariableDeclaration(node) && node.name.getText(file) === "decisionCards") {
       const deal = node.initializer && bare(node.initializer);
       if (!deal || !ts.isArrayLiteralExpression(deal)) throw new Error("page.tsx's decisionCards is not written out");
@@ -849,16 +973,42 @@ function readDeal(source: string): { cards: { id: string; name: string }[]; unre
     }
     const jsx = ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node) ? node : null;
     if (jsx?.tagName.getText(file) === "DecisionCards") {
+      handed += 1;
       // the deck is handed the deal itself, never a list built around it
-      const handed = jsx.attributes.properties.find((prop) => prop.name?.getText(file) === "cards");
-      const value = handed && ts.isJsxAttribute(handed) ? handed.initializer : undefined;
+      const attribute = jsx.attributes.properties.find((prop) => prop.name?.getText(file) === "cards");
+      const value = attribute && ts.isJsxAttribute(attribute) ? attribute.initializer : undefined;
       if (value?.getText(file) !== "{decisionCards}") unread.push(jsx.getText(file));
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
   if (!dealt) throw new Error("page.tsx deals no decisionCards");
-  return { cards, unread };
+  // guards the guard: a deal handed on nowhere it reads proves nothing
+  if (!handed) throw new Error("page.tsx hands its decisionCards to no <DecisionCards>");
+  // a list built around the deal where it is handed is caught twice, as the element and as a use of the deal
+  return { cards, unread: [...new Set(unread)] };
+}
+
+/** Every `<tag …>` the app's own source (src/, less its tests) writes, as `file: cards={…}`: what each is handed. */
+function handedTo(tag: string): string[] {
+  const src = path.join(process.cwd(), "src");
+  const files = fs.readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) => /(?<!\.test)\.tsx$/.test(f));
+  return files.sort().flatMap((relative) => {
+    const source = fs.readFileSync(path.join(src, relative), "utf8");
+    if (!source.includes(`<${tag}`)) return [];
+    const file = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const found: string[] = [];
+    const visit = (node: ts.Node): void => {
+      const jsx = ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node) ? node : null;
+      if (jsx?.tagName.getText(file) === tag) {
+        const cards = jsx.attributes.properties.find((prop) => prop.name?.getText(file) === "cards");
+        found.push(`src/${relative.split(path.sep).join("/")}: ${cards?.getText(file) ?? "no cards"}`);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    return found;
+  });
 }
 
 /**
@@ -914,6 +1064,44 @@ describe("every card the dashboard deals is rooted in its sheet", () => {
     const handed = page.replace("cards={decisionCards}", "cards={[...decisionCards, zzCard]}");
     expect(handed, "page.tsx hands the deck no `cards={decisionCards}`").not.toBe(page);
     expect(readDeal(handed).unread).toHaveLength(1);
+  });
+
+  /*
+   * 🔴 Two more ways past it, every test green: a card pushed onto the deal after it is written, and a deck handed the
+   * deal past <DecisionCards> — each read 13 cards and unread nothing (the review of 34a96d51, probes appended to this
+   * file). The deal was read where it is written and where <DecisionCards> is handed it; nothing asked what else
+   * touched it, nor whether a <DecisionCards> was there at all.
+   */
+  test("⛔ a card pushed onto the deal after it is written: caught", () => {
+    const section = "  const decisionsSection = (";
+    const pushed = page.replace(section, `  decisionCards.push(zzCard);\n${section}`);
+    expect(pushed, "page.tsx has no `const decisionsSection`").not.toBe(page);
+    expect(readDeal(pushed).unread).toEqual(["decisionCards.push(zzCard);"]);
+  });
+
+  test("⛔ a deck handed the deal past <DecisionCards>: caught", () => {
+    const past = page.replace(
+      "<DecisionCards cards={decisionCards} state={decisionsView} />",
+      '<CardDeck cards={[...decisionCards, zzCard]} ariaLabel="What this means" />',
+    );
+    expect(past, "page.tsx has no <DecisionCards cards={decisionCards} state={decisionsView} />").not.toBe(page);
+    expect(() => readDeal(past)).toThrow("page.tsx hands its decisionCards to no <DecisionCards>");
+    // …or beside it: the deal is handed on as one deck's `cards`, <DecisionCards>', and no other's
+    const beside = page.replace(
+      "<DecisionCards cards={decisionCards} state={decisionsView} />",
+      '<DecisionCards cards={decisionCards} state={decisionsView} /><CardDeck cards={decisionCards} ariaLabel="zz" />',
+    );
+    expect(readDeal(beside).unread).toEqual(['<CardDeck cards={decisionCards} ariaLabel="zz" />']);
+  });
+
+  /**
+   * ⛔ …and that deal is every card a deck is handed: <CardDeck>'s one caller is <DecisionCards>, handed its own
+   * `cards`, and <DecisionCards>' one caller is the dashboard, handed `decisionCards`. A deck dealt anywhere else would
+   * be handed cards this sweep never read.
+   */
+  test("⛔ no deck is dealt anywhere else", () => {
+    expect(handedTo("CardDeck")).toEqual(["src/components/dashboard/DecisionCards.tsx: cards={cards}"]);
+    expect(handedTo("DecisionCards")).toEqual(["src/app/page.tsx: cards={decisionCards}"]);
   });
 
   test.each(dealt)("$name ($id) returns its SurfaceCard, and only that", ({ name }) => {

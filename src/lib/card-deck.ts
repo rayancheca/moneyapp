@@ -158,8 +158,12 @@ export function dragOutcome(dx: number, deckWidth: number, velocity: number): Dr
  * of 6, in headless Chromium — and one pixel of sideways drift in that travel uncovered The car under Runway until it
  * did (the review of 246dcf1e, CDP touch at 390 and 1024 px, his ledger copy 2026-11-05). Ten pixels sideways over
  * those 18 px is a lean of 29°, past the drift of a thumb pushed straight up, and far short of the quarter of the
- * deck's width a drag travels to step it (`COMMIT_FRACTION`). ⚠️ A pan that leans further can still uncover it for
- * the move or two before the browser takes it, and covers it again the moment the browser does (CardDeck's cancel).
+ * deck's width a drag travels to step it (`COMMIT_FRACTION`). ⚠️ A pan that leans further can uncover it before the
+ * browser takes it, and fades it out again as soon as the browser does (CardDeck's cancel) — in Chromium for less than
+ * that: the move that crosses its slop comes in the same task as the `pointercancel`, so React never paints it, and a
+ * lean of 34° or 45° changed nothing on The car behind Runway. Only a move still inside the slop is painted —
+ * (8, 12) px was, (12, 12) was not — and 10 px sideways inside 17 px is a lean past 36° (the review of 5b34ee1e,
+ * headless Chromium, CDP touch at 390 px, his ledger copy). WebKit was not measured.
  */
 export const UNCOVER_SLOP_PX = 10;
 

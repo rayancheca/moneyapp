@@ -1,9 +1,13 @@
 @import "tailwindcss";
-/* ⛔ A test file is not the app. Tailwind makes CSS of every class-shaped string in every file git keeps, and
-   CardDeck.test.ts's list of what a card behind must never carry put five rules nothing uses on every page (the
-   review of d27f4f8f); other tests' strings put four more, and four theme variables nothing reads — 981 rules
-   compiled, 972 with the tests left out (2026-10-30). Pinned in css-sources.test.ts. */
+/* ⛔ Only the app makes the app's CSS: a test file or a doc is not the app. Tailwind makes CSS of every class-shaped
+   string in every file git keeps, and CardDeck.test.ts's list of what a card behind must never carry put five rules
+   nothing uses on every page (the review of d27f4f8f); other tests' strings put four more, and four theme variables
+   nothing reads — 981 rules compiled, 972 with the tests left out (2026-10-30). 🔴 …and the docs 17 more and 12
+   variables: the design directions' `.@container` and `--font-display`, the Markdown's `xl:max-w-7xl` (the review of
+   34a96d51) — 943 rules, 926 without them (2026-11-05). Pinned in css-sources.test.ts, which compiles src/ alone. */
 @source not "../../**/*.test.ts";
+@source not "../../docs/**";
+@source not "../../**/*.md";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
