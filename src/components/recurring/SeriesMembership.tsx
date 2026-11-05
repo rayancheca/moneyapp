@@ -12,7 +12,7 @@ import { Menu } from "@/components/ui/Menu";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
-import { useAction } from "@/hooks/useAction";
+import { settleAction, useAction } from "@/hooks/useAction";
 import { offerUndoToast } from "@/components/transactions/undo-toast";
 import { transactionSubjects } from "@/lib/row-subject";
 import { seriesPostingWords } from "@/lib/series-evidence";
@@ -150,8 +150,11 @@ export function AttachPanel({
     let live = true;
     setLoading(true);
     const handle = setTimeout(() => {
-      void searchAttachCandidatesAction({ seriesId, query }).then((r) => {
+      // settled: a search that failed, or never reached the server, says why — never only "No matches.", and never a
+      // spinner left on (🔴 a rejected search left `loading` set, with no catch)
+      void settleAction(() => searchAttachCandidatesAction({ seriesId, query })).then((r) => {
         if (!live) return;
+        if (!r.ok) toast({ title: r.error, tone: "negative" });
         setCandidates(r.ok ? r.data : []);
         setLoading(false);
       });

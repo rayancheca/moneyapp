@@ -5,6 +5,7 @@ import { saveDashboardLayoutAction } from "@/app/settings/actions";
 import { Icon } from "@/components/shell/Icon";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { moveItem, normalizeOrder } from "@/lib/reorder";
 
 export interface ArrangeableSection {
@@ -44,7 +45,7 @@ export function ArrangeableSections({ sections }: { sections: readonly Arrangeab
 
   function persist(next: string[], previous: string[]): void {
     setOrder(next);
-    void saveDashboardLayoutAction(next).then((r) => {
+    void settleAction(() => saveDashboardLayoutAction(next)).then((r) => {
       if (!r.ok) {
         setOrder(previous);
         toast({ title: r.error, tone: "negative" });

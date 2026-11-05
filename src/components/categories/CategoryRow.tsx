@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { Disclosure, DisclosureChevron } from "@/components/ui/Disclosure";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { moveItem } from "@/lib/reorder";
 import { categoryCountLabel } from "@/lib/section-notes";
 import type { CategoryTreeNode } from "@/services/category-edit";
@@ -62,7 +63,7 @@ export function CategoryRow({
   function nudge(delta: -1 | 1): void {
     if (index < 0) return;
     const next = moveItem(siblingIds, index, index + delta);
-    void reorderCategoriesAction({ orderedIds: [...next] }).then((r) => {
+    void settleAction(() => reorderCategoriesAction({ orderedIds: [...next] })).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;

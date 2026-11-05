@@ -24,6 +24,7 @@ import type {
   ReviewClusterSampleRow,
   ReviewInboxSummary,
 } from "@/services/review-inbox";
+import { settleAction } from "@/hooks/useAction";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
 import { offerUndoToast } from "./undo-toast";
 
@@ -56,8 +57,11 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
     startTransition(() => router.refresh());
   }
 
+  // every press below is settled (`settleAction`): a refusal, or a call that never reached the server, says why —
+  // 🔴 the four were `void …Action(…).then(…)` with no catch, and a rejected call reached no one (the review of batch
+  // 9 F, 2026-10-30)
   function confirm(cluster: ReviewCluster): void {
-    void confirmClusterAction(cluster.ref).then((r) => {
+    void settleAction(() => confirmClusterAction(cluster.ref)).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;
@@ -70,7 +74,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
 
   function recategorize(cluster: ReviewCluster, categoryId: string): void {
     const option = categories.find((c) => c.id === categoryId);
-    void recategorizeClusterAction({ ref: cluster.ref, categoryId }).then((r) => {
+    void settleAction(() => recategorizeClusterAction({ ref: cluster.ref, categoryId })).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;
@@ -82,7 +86,7 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
   }
 
   function drainBacklog(): void {
-    void markAllReviewedBeforeAction(data.amnestyCutoff).then((r) => {
+    void settleAction(() => markAllReviewedBeforeAction(data.amnestyCutoff)).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;
@@ -94,7 +98,9 @@ export function ReviewInbox({ data, categories }: ReviewInboxProps) {
   }
 
   function markAll(): void {
-    void bulkApplyByFilterAction({ params: { view: "review" }, patch: { markReviewed: true } }).then(
+    void settleAction(() =>
+      bulkApplyByFilterAction({ params: { view: "review" }, patch: { markReviewed: true } }),
+    ).then(
       (r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });

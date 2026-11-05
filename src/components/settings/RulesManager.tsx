@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { toast } from "@/components/ui/Toast";
-import { offerUndoToast } from "@/components/transactions/undo-toast";
-import { settleAction, useAction } from "@/hooks/useAction";
+import { offerUndoToast, offerUndoToastWith } from "@/components/transactions/undo-toast";
+import { useAction } from "@/hooks/useAction";
 import {
   deleteRuleAction,
   moveRuleAction,
@@ -98,25 +98,11 @@ export function RulesManager({ rules }: { rules: readonly RuleView[] }) {
         if (focus) focusAfterRef.current = focus;
         refresh();
         // delete gets the same Undo safety as every other mutation — the snapshot
-        // re-creates the rule's conditions, actions, precedence, and history
-        toast({
-          title: `Deleted "${rule.name}"`,
-          action: snapshot
-            ? {
-                // inside a toast action we settle and RETURN: the card reports the
-                // failure and stays alive, so this snapshot is still restorable
-                label: "Undo",
-                onAction: async () => {
-                  const result = await settleAction(
-                    () => restoreRuleAction(snapshot),
-                    `Couldn’t restore "${rule.name}" — try again`,
-                  );
-                  if (result.ok) refresh();
-                  return result;
-                },
-              }
-            : undefined,
-        });
+        // re-creates the rule's conditions, actions, precedence, and history. The shared Undo card: a failed undo
+        // keeps it, so this snapshot is still restorable, and says what every Undo card says — 🔴 it said its own once,
+        // `Couldn’t restore "…" — try again` (the review of batch 9 F, 2026-10-30)
+        if (snapshot) offerUndoToastWith(`Deleted "${rule.name}"`, () => restoreRuleAction(snapshot), refresh);
+        else toast({ title: `Deleted "${rule.name}"` });
       },
       onError: failed(rule.id),
     });

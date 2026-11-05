@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToastOptions } from "@/components/ui/Toast";
 import type { UndoPatch } from "@/app/transactions/action-types";
@@ -93,5 +95,33 @@ describe("offerUndoToast", () => {
     expect(second).toMatchObject({ ok: true });
     expect(undo).toHaveBeenNthCalledWith(2, PATCH, undefined);
     expect(onUndone).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+ * 🔴 Review of batch 9 F (2026-10-30): `UNDO_FAILED` was "ONE sentence for every Undo card", and three of the six said
+ * their own — a merchant's default ("Couldn’t put the default back — try again"), a deleted rule and a split each
+ * hand-rolled this card with a sentence of its own, so an undo refused with nothing readable read two ways. A source
+ * gate, as /imports' page.test.ts is: an Undo card is this one (`offerUndoToast`, `offerUndoToastWith`), or one of the
+ * two that must do more on their press — a category's Move re-reads the page on a failure, and an inline edit rolls
+ * its field back — each of which says `UNDO_FAILED`, pinned by its own test (CategoryMoveMenu.test.ts,
+ * useInlineEdit.test.ts).
+ */
+describe("every Undo card is this one, or says what it says", () => {
+  const root = path.join(process.cwd(), "src");
+  const sources = fs
+    .readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => f.split(path.sep).join("/"));
+  const read = (f: string) => fs.readFileSync(path.join(root, f), "utf8");
+
+  it("no card raises its own Undo but the shared one, a category's Move and an inline edit", () => {
+    const own = sources.filter((f) => /label: "Undo"/.test(read(f))).sort();
+    expect(own).toEqual([
+      "components/categories/CategoryMoveMenu.tsx",
+      "components/transactions/undo-toast.ts",
+      "hooks/useInlineEdit.ts",
+    ]);
+    for (const f of own) expect(read(f), f).toMatch(/\bUNDO_FAILED\b/);
   });
 });

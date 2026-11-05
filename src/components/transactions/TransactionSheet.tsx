@@ -20,6 +20,7 @@ import {
   renameMerchantAction,
   setFlagsAction,
 } from "@/app/transactions/actions";
+import { settleAction } from "@/hooks/useAction";
 import { loadSheetPanel, type SheetPanel } from "@/app/transactions/sheet-actions";
 import type { CategorySuggestion } from "@/services/txn-detail";
 import type { UndoPatch } from "@/app/transactions/action-types";
@@ -91,6 +92,24 @@ export function historyLine(h: { count: number; outCount: number; avgCents: numb
   return `${scope} · avg ${formatCents(h.avgCents)} · ${formatCents(h.totalCents)} spent`;
 }
 
+/**
+ * The notes box's save, on blur. Settled (`settleAction`): a refused save, or one that never reached the server, says
+ * why as every press does — and his words stay in the box, so blurring it again saves them again. 🔴 Review of batch 9
+ * F (2026-10-30): it said nothing even when refused (`if (r.ok) afterMutation();`), his words left on screen as if
+ * saved, and a call that never reached the server rejected unhandled.
+ */
+export function pressSaveNotes(transactionId: string, notes: string, afterSaved: () => void): Promise<void> {
+  return settleAction(() => setFlagsAction({ transactionId, flags: { notes: notes === "" ? null : notes } })).then(
+    (r) => {
+      if (!r.ok) {
+        toast({ title: r.error, tone: "negative" });
+        return;
+      }
+      afterSaved();
+    },
+  );
+}
+
 export function TransactionSheet({
   txn,
   categories,
@@ -144,10 +163,10 @@ export function TransactionSheet({
     });
   }
 
-  /** "Recategorize all N" — the whole same-name group, past & future (§3.2.5). */
+  /** "Recategorize all N" — the whole same-name group, past & future (§3.2.5). Settled, as every press is. */
   function recategorizeAll(categoryId: string): void {
     const option = categories.find((c) => c.id === categoryId);
-    void recategorizeGroupAction({ transactionId: txn.id, categoryId }).then((r) => {
+    void settleAction(() => recategorizeGroupAction({ transactionId: txn.id, categoryId })).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;
@@ -165,7 +184,7 @@ export function TransactionSheet({
   }
 
   function toggleFlag(flag: "transfer" | "exclude" | "reviewed", value: boolean): void {
-    void setFlagsAction({ transactionId: txn.id, flags: { [flag]: value } }).then((r) => {
+    void settleAction(() => setFlagsAction({ transactionId: txn.id, flags: { [flag]: value } })).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;
@@ -177,9 +196,7 @@ export function TransactionSheet({
 
   function saveNotes(): void {
     if ((txn.notes ?? "") === notes) return;
-    void setFlagsAction({ transactionId: txn.id, flags: { notes: notes === "" ? null : notes } }).then((r) => {
-      if (r.ok) afterMutation();
-    });
+    void pressSaveNotes(txn.id, notes, afterMutation);
   }
 
   return (

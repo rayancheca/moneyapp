@@ -18,6 +18,7 @@ import {
   type TransferLinkPanelData,
 } from "@/app/transactions/sheet-actions";
 import { filedToastTitle } from "@/components/recurring/labels";
+import { settleAction } from "@/hooks/useAction";
 import { offerUndoToast, offerUndoToastWith } from "./undo-toast";
 
 /**
@@ -28,7 +29,12 @@ import { offerUndoToast, offerUndoToastWith } from "./undo-toast";
  * Every mutation returns a lossless UndoPatch through the shared undo toast.
  */
 
-const NETWORK_ERROR = "Network error — nothing was changed";
+/*
+ * Every press and load below is settled (`settleAction`): a refusal says the server's message, and a call that never
+ * reached the server says what it threw — as a category's Move, an inline save and every `useAction` press say it.
+ * 🔴 Review of batch 9 F (2026-10-30): these said "Network error — nothing was changed" of any throw, and the catch
+ * caught a throw after the change had landed too — "nothing was changed" of a change made.
+ */
 
 export function TransferLinkPanel({
   txnId,
@@ -46,23 +52,18 @@ export function TransferLinkPanel({
 
   async function disclose(): Promise<void> {
     setOpen(true);
-    try {
-      const r = await loadTransferLinkPanel(txnId);
-      if (r.ok) setPanel(r.data);
-      else {
-        setOpen(false); // the button stays as the retry affordance
-        toast({ title: r.error, tone: "negative" });
-      }
-    } catch {
-      setOpen(false);
-      toast({ title: NETWORK_ERROR, tone: "negative" });
+    const r = await settleAction(() => loadTransferLinkPanel(txnId));
+    if (r.ok) setPanel(r.data);
+    else {
+      setOpen(false); // the button stays as the retry affordance
+      toast({ title: r.error, tone: "negative" });
     }
   }
 
   function link(counterpartId: string): void {
     if (busy) return;
     setBusy(true);
-    void linkTransferAction({ aId: txnId, bId: counterpartId })
+    void settleAction(() => linkTransferAction({ aId: txnId, bId: counterpartId }))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });
@@ -73,14 +74,13 @@ export function TransferLinkPanel({
         offerUndoToast("Linked as transfer", r.data.undo, onChanged);
         onChanged();
       })
-      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
       .finally(() => setBusy(false));
   }
 
   function unlink(groupId: string): void {
     if (busy) return;
     setBusy(true);
-    void unlinkTransferAction({ groupId })
+    void settleAction(() => unlinkTransferAction({ groupId }))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });
@@ -91,7 +91,6 @@ export function TransferLinkPanel({
         offerUndoToast("Transfer unlinked", r.data.undo, onChanged);
         onChanged();
       })
-      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
       .finally(() => setBusy(false));
   }
 
@@ -196,7 +195,7 @@ export interface SeriesPanelAfter {
 
 /** "Attach" on a candidate: its undo toast names what attaching filed (§6A 47), in the merge toast's own clause. */
 export function pressSheetAttach(txnId: string, seriesId: string, name: string, after: SeriesPanelAfter): Promise<void> {
-  return attachToSeriesAction({ seriesId, transactionIds: [txnId] })
+  return settleAction(() => attachToSeriesAction({ seriesId, transactionIds: [txnId] }))
     .then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
@@ -212,9 +211,6 @@ export function pressSheetAttach(txnId: string, seriesId: string, name: string, 
         after.onChanged();
       });
       after.onChanged();
-    })
-    .catch(() => {
-      toast({ title: NETWORK_ERROR, tone: "negative" });
     });
 }
 
@@ -226,7 +222,7 @@ export function pressSheetAttach(txnId: string, seriesId: string, name: string, 
  * undo keeps it, says why on it, and can be pressed again.
  */
 export function pressMakeRecurring(txnId: string, after: SeriesPanelAfter): Promise<void> {
-  return createSeriesFromTxnAction({ transactionId: txnId })
+  return settleAction(() => createSeriesFromTxnAction({ transactionId: txnId }))
     .then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
@@ -244,9 +240,6 @@ export function pressMakeRecurring(txnId: string, after: SeriesPanelAfter): Prom
         },
       );
       after.onChanged();
-    })
-    .catch(() => {
-      toast({ title: NETWORK_ERROR, tone: "negative" });
     });
 }
 
@@ -274,16 +267,11 @@ export function SeriesLinkPanel({
 
   async function disclose(): Promise<void> {
     setOpen(true);
-    try {
-      const r = await loadSeriesLinkPanel(txnId);
-      if (r.ok) setPanel(r.data);
-      else {
-        setOpen(false);
-        toast({ title: r.error, tone: "negative" });
-      }
-    } catch {
+    const r = await settleAction(() => loadSeriesLinkPanel(txnId));
+    if (r.ok) setPanel(r.data);
+    else {
       setOpen(false);
-      toast({ title: NETWORK_ERROR, tone: "negative" });
+      toast({ title: r.error, tone: "negative" });
     }
   }
 
@@ -313,7 +301,7 @@ export function SeriesLinkPanel({
   function detach(name: string): void {
     if (busy) return;
     setBusy(true);
-    void detachFromSeriesAction({ transactionId: txnId })
+    void settleAction(() => detachFromSeriesAction({ transactionId: txnId }))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });
@@ -328,7 +316,6 @@ export function SeriesLinkPanel({
         });
         onChanged();
       })
-      .catch(() => toast({ title: NETWORK_ERROR, tone: "negative" }))
       .finally(() => setBusy(false));
   }
 

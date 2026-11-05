@@ -5,6 +5,8 @@ import type { DuplicatePairRow, DuplicatePairSideRow } from "@/services/duplicat
 import type { DuplicateResolution } from "@/db/schema/duplicate-candidates";
 import { formatCents } from "@/lib/money";
 import { resolveDuplicateAction, undoDuplicateAction } from "@/app/transactions/actions";
+import type { ActionResult } from "@/app/transactions/action-types";
+import { settleAction } from "@/hooks/useAction";
 import { Button } from "@/components/ui/Button";
 import { countPhrase } from "@/components/ui/blast-radius";
 import { Money } from "@/components/ui/Money";
@@ -105,11 +107,12 @@ function PairCard({ pair }: { pair: DuplicatePairRow }) {
   const [error, setError] = useState<string | null>(null);
   const resolved = pair.resolution !== "unresolved";
 
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>): void => {
+  // settled, as every press is: a refusal, or a call that never reached the server, says why on the card
+  const run = (fn: () => Promise<ActionResult<unknown>>): void => {
     setError(null);
     startTransition(() => {
-      void fn().then((r) => {
-        if (!r.ok) setError(r.error ?? "That did not work");
+      void settleAction(fn).then((r) => {
+        if (!r.ok) setError(r.error);
       });
     });
   };

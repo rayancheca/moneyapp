@@ -16,6 +16,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { CATEGORY_KIND_JARGON } from "@/lib/jargon";
 import { CategoryRow } from "./CategoryRow";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import type { CategoryTreeNode, MoveDestination } from "@/services/category-edit";
 import { CREATABLE_CATEGORY_KINDS, KIND_ORDER, type CreatableCategoryKind } from "@/lib/category-kinds";
 
@@ -74,11 +75,13 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
     event.preventDefault();
     if (busy || name.trim() === "") return;
     setBusy(true);
-    void createCategoryAction({
-      name,
-      parentId: isTopLevel ? null : parentId,
-      ...(isTopLevel ? { kind } : {}),
-    })
+    void settleAction(() =>
+      createCategoryAction({
+        name,
+        parentId: isTopLevel ? null : parentId,
+        ...(isTopLevel ? { kind } : {}),
+      }),
+    )
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });
@@ -95,7 +98,7 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
     if (busy) return;
     setBusy(true);
     const run = archived ? archiveCategoryAction : unarchiveCategoryAction;
-    void run({ categoryId: node.id })
+    void settleAction(() => run({ categoryId: node.id }))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });

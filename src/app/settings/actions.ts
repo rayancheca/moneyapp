@@ -176,15 +176,14 @@ const dashboardLayoutSchema = z
   .refine((ids) => new Set(ids).size === ids.length, "Duplicate sections");
 
 /** Persist the dashboard section order (S7 "movable") — value-returning. */
-export async function saveDashboardLayoutAction(
-  order: readonly string[],
-): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function saveDashboardLayoutAction(order: readonly string[]): Promise<ActionResult<null>> {
   const parsed = dashboardLayoutSchema.safeParse(order);
   if (!parsed.success) return { ok: false, error: "Invalid section order" };
   try {
     writeSetting(getDb(), "dashboardLayout", normalizeOrder(parsed.data, DASHBOARD_SECTION_IDS) as typeof parsed.data);
     revalidatePath("/");
-    return { ok: true };
+    // the shared result (`ActionResult`), so the arrange press settles as every press does (`settleAction`)
+    return { ok: true, data: null };
   } catch (error: unknown) {
     return { ok: false, error: actionErrorMessage(error, SETTINGS_LABELS, "Could not save the layout") };
   }

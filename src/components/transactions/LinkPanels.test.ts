@@ -23,6 +23,7 @@ const { attachToSeriesAction, createSeriesFromTxnAction, undoCreateSeriesAction 
 const { undoAction } = await import("@/app/transactions/actions");
 const { settleToastAction, toast } = await import("@/components/ui/Toast");
 const { offerUndoToast, UNDO_FAILED } = await import("./undo-toast");
+const { ACTION_FAILED } = await import("@/hooks/useAction");
 type ToastActionResult = import("@/components/ui/Toast").ToastActionResult;
 
 const undo = { rows: [] };
@@ -89,6 +90,29 @@ describe("the transaction sheet's attach, as SeriesLinkPanel makes it", () => {
     expect(offerUndoToast).not.toHaveBeenCalled();
     expect(after.linked).not.toHaveBeenCalled();
   });
+
+  /*
+   * 🔴 Review of batch 9 F (2026-10-30): a forward press that threw said "Network error — nothing was changed" here,
+   * where a category's Move, an inline save and every `useAction` press say what the call threw — and the catch caught
+   * a throw after the attach had landed too, saying nothing was changed of a change made. Settled (`settleAction`), it
+   * says what every press says.
+   */
+  test("an attach that never reached the server says what it threw, as every press does", async () => {
+    vi.mocked(attachToSeriesAction).mockRejectedValue(new Error("Failed to fetch"));
+
+    await pressSheetAttach("t1", "s1", "FPL", after);
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith({ title: "Failed to fetch", tone: "negative" });
+    expect(after.linked).not.toHaveBeenCalled();
+  });
+
+  test("…and with nothing readable, what every press says", async () => {
+    vi.mocked(attachToSeriesAction).mockRejectedValue("nope");
+
+    await pressSheetAttach("t1", "s1", "FPL", after);
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith({ title: ACTION_FAILED, tone: "negative" });
+  });
 });
 
 describe("the transaction sheet's Make recurring, as SeriesLinkPanel makes it", () => {
@@ -112,6 +136,15 @@ describe("the transaction sheet's Make recurring, as SeriesLinkPanel makes it", 
     await pressMakeRecurring("t1", after);
 
     expect(vi.mocked(toast).mock.calls[0]![0].title).toBe('Marked "FPL" as recurring');
+  });
+
+  test("a Make recurring that never reached the server says what it threw, as every press does", async () => {
+    vi.mocked(createSeriesFromTxnAction).mockRejectedValue(new Error("Failed to fetch"));
+
+    await pressMakeRecurring("t1", after);
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith({ title: "Failed to fetch", tone: "negative" });
+    expect(after.linked).not.toHaveBeenCalled();
   });
 
   /*

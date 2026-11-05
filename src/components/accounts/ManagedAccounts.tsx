@@ -12,6 +12,7 @@ import { Money } from "@/components/ui/Money";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
 import { Sparkline, type SparklineTone } from "@/components/ui/Sparkline";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { asOfSpanTerm } from "@/lib/day-change-label";
 import { formatCentsSigned } from "@/lib/money";
 import { EditAccountSheet, type EditableAccount } from "./EditAccountSheet";
@@ -67,7 +68,7 @@ export function ManagedAccounts({
   const dragRef = useRef<{ institution: string; index: number } | null>(null);
 
   function commitOrder(orderedIds: string[]): void {
-    void reorderAccountsAction(orderedIds).then((r) => {
+    void settleAction(() => reorderAccountsAction(orderedIds)).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;

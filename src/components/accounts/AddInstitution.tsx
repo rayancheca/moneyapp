@@ -6,6 +6,7 @@ import { createInstitutionAction } from "@/app/accounts/actions";
 import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Field";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 
 /**
  * Inline "add institution" (ux-overhaul-plan §7.2): a new bank without leaving
@@ -20,7 +21,7 @@ export function AddInstitution() {
   function add(): void {
     const trimmed = name.trim();
     if (trimmed === "") return;
-    void createInstitutionAction(trimmed).then((r) => {
+    void settleAction(() => createInstitutionAction(trimmed)).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;

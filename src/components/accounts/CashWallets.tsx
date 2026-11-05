@@ -8,6 +8,7 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { InlineEditableAmount } from "@/components/ui/InlineEditableAmount";
 import { addManualTransactionAction } from "@/app/transactions/actions";
 import { createCashWalletAction, setCashWalletOpeningAction } from "@/app/accounts/cash-actions";
@@ -210,7 +211,9 @@ function NewWalletForm({
   function submit(): void {
     if (!canSubmit) return;
     setBusy(true);
-    void createCashWalletAction({ name: name.trim(), openingOn, openingBalanceCents: openingCents }).then((r) => {
+    void settleAction(() =>
+      createCashWalletAction({ name: name.trim(), openingOn, openingBalanceCents: openingCents }),
+    ).then((r) => {
       setBusy(false);
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
@@ -318,14 +321,16 @@ function AddTransactionSheet({
   function submit(): void {
     if (!canSubmit) return;
     setBusy(true);
-    void addManualTransactionAction({
-      accountId: wallet.id,
-      postedOn,
-      amountCents: direction === "spent" ? -cents : cents,
-      description: description.trim(),
-      ...(categoryId ? { categoryId } : {}),
-      ...(notes.trim() !== "" ? { notes: notes.trim() } : {}),
-    }).then((r) => {
+    void settleAction(() =>
+      addManualTransactionAction({
+        accountId: wallet.id,
+        postedOn,
+        amountCents: direction === "spent" ? -cents : cents,
+        description: description.trim(),
+        ...(categoryId ? { categoryId } : {}),
+        ...(notes.trim() !== "" ? { notes: notes.trim() } : {}),
+      }),
+    ).then((r) => {
       setBusy(false);
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });

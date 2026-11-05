@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -81,5 +83,61 @@ describe("createRunGuard", () => {
     b.begin();
     // b starting a run must not supersede a's
     expect(runA()).toBe(true);
+  });
+});
+
+/** The head of the promise a `.then(` at `at` hangs off: `settleAction` for `settleAction(…).then(` */
+function receiverHead(text: string, at: number): string {
+  let i = at - 1;
+  for (;;) {
+    while (i >= 0 && /\s/.test(text[i]!)) i--;
+    if (text[i] === ")") {
+      for (let depth = 0; i >= 0; i--) {
+        if (text[i] === ")") depth++;
+        else if (text[i] === "(" && --depth === 0) break;
+      }
+      i--;
+      continue;
+    }
+    const end = i + 1;
+    while (i >= 0 && /[\w$]/.test(text[i]!)) i--;
+    let j = i;
+    while (j >= 0 && /\s/.test(text[j]!)) j--;
+    if (text[j] !== ".") return text.slice(i + 1, end);
+    i = j - 1;
+  }
+}
+
+/*
+ * 🔴 Review of batch 9 F (2026-10-30): a65e948c settled a correction (`runCategoryCorrection`) — "a correction that
+ * never reached the server says so" — and left the rule's siblings in the old shape, `void xAction(…).then(…)` with no
+ * catch: the transaction sheet's Recategorize all, flags and notes (a refused notes save said nothing at all), the
+ * review inbox's four presses, and more. A call that never reaches the server (restarted, wifi down) rejected
+ * unhandled, and nothing reached him; a press that cleared its busy flag inside the `.then` stayed busy. A source gate,
+ * as /imports' page.test.ts is: in a client file, every promise a `.then(` hangs off is settled (`settleAction`), so
+ * what it says on a failure is the server's message or what the call threw, as `useAction` says it. A load is no press
+ * (`load…`): it changes nothing, and is left as it is.
+ */
+describe("every press a client file makes is settled", () => {
+  const root = path.join(process.cwd(), "src");
+  const clientFiles = fs
+    .readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => [f.split(path.sep).join("/"), fs.readFileSync(path.join(root, f), "utf8")] as const)
+    .filter(([, text]) => text.startsWith('"use client"'));
+
+  it("no `.then(` hangs off a call that was not settled", () => {
+    const unsettled = clientFiles.flatMap(([file, text]) =>
+      [...text.matchAll(/\.then\(/g)].flatMap(({ index }) => {
+        const line = text.slice(text.lastIndexOf("\n", index) + 1, text.indexOf("\n", index));
+        if (/^\s*(\*|\/\/)/.test(line)) return [];
+        const head = receiverHead(text, index);
+        // settled where it is made, or bound to a settled call (`const kept = settleAction(…)`)
+        if (head === "settleAction" || new RegExp(`\\b(?:const|let) ${head} = settleAction\\(`).test(text)) return [];
+        if (/^load[A-Z]/.test(head)) return [];
+        return [`${file}:${text.slice(0, index).split("\n").length} ${head}`];
+      }),
+    );
+    expect(unsettled).toEqual([]);
   });
 });

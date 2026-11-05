@@ -1,5 +1,12 @@
-import { describe, expect, test } from "vitest";
-import { accountHistoryLine, historyLine } from "./TransactionSheet";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { setFlagsAction } from "@/app/transactions/actions";
+import { toast } from "@/components/ui/Toast";
+import { ACTION_FAILED } from "@/hooks/useAction";
+import { accountHistoryLine, historyLine, pressSaveNotes } from "./TransactionSheet";
+
+// the notes box's save is made where the sheet makes it, its toasts read as raised
+vi.mock("@/app/transactions/actions", async (actual) => ({ ...(await actual<object>()), setFlagsAction: vi.fn() }));
+vi.mock("@/components/ui/Toast", async (actual) => ({ ...(await actual<object>()), toast: vi.fn() }));
 
 describe("historyLine — the mean's denominator is named", () => {
   /*
@@ -70,5 +77,62 @@ describe("accountHistoryLine — the count and the figure are one population", (
     expect(accountHistoryLine({ accountName: "Discover", count: 1, outCount: 1 })).toBe(
       "Discover · 1 transaction",
     );
+  });
+});
+
+/*
+ * 🔴 Review of batch 9 F (2026-10-30): the notes box saved through `void setFlagsAction(…).then((r) => { if (r.ok)
+ * afterMutation(); })` — a refused save said nothing, and his words stayed in the box as if saved; a call that never
+ * reached the server rejected unhandled. Settled (`settleAction`), a failure says why, as every press does, and his
+ * words stay in the box: blurring it again saves them again.
+ */
+describe("the sheet's notes save, as the notes box makes it", () => {
+  const saved = { ok: true as const, data: { affected: 1, undo: { rows: [] } } };
+  const afterSaved = vi.fn();
+
+  beforeEach(() => {
+    vi.mocked(setFlagsAction).mockReset();
+    vi.mocked(toast).mockClear();
+    afterSaved.mockClear();
+  });
+
+  test("it saves his words, and the sheet is re-read", async () => {
+    vi.mocked(setFlagsAction).mockResolvedValue(saved);
+
+    await pressSaveNotes("t1", "for the trip", afterSaved);
+
+    expect(setFlagsAction).toHaveBeenLastCalledWith({ transactionId: "t1", flags: { notes: "for the trip" } });
+    expect(afterSaved).toHaveBeenCalledOnce();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  test("an emptied box clears the note", async () => {
+    vi.mocked(setFlagsAction).mockResolvedValue(saved);
+
+    await pressSaveNotes("t1", "", afterSaved);
+
+    expect(setFlagsAction).toHaveBeenLastCalledWith({ transactionId: "t1", flags: { notes: null } });
+  });
+
+  test("a save refused says why — nothing re-read as if it had landed", async () => {
+    vi.mocked(setFlagsAction).mockResolvedValue({ ok: false, error: "Transaction not found" });
+
+    await pressSaveNotes("t1", "for the trip", afterSaved);
+
+    expect(toast).toHaveBeenCalledExactlyOnceWith({ title: "Transaction not found", tone: "negative" });
+    expect(afterSaved).not.toHaveBeenCalled();
+  });
+
+  test("a save that never reached the server says what it threw — or what every press says", async () => {
+    vi.mocked(setFlagsAction).mockRejectedValueOnce(new Error("Failed to fetch")).mockRejectedValueOnce("nope");
+
+    await pressSaveNotes("t1", "for the trip", afterSaved);
+    await pressSaveNotes("t1", "for the trip", afterSaved);
+
+    expect(vi.mocked(toast).mock.calls.map(([t]) => t)).toEqual([
+      { title: "Failed to fetch", tone: "negative" },
+      { title: ACTION_FAILED, tone: "negative" },
+    ]);
+    expect(afterSaved).not.toHaveBeenCalled();
   });
 });

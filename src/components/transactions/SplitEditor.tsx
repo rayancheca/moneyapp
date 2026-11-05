@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { Money } from "@/components/ui/Money";
-import { toast } from "@/components/ui/Toast";
 import { Icon } from "@/components/shell/Icon";
 import { formatCents, MoneyParseError, parseAmountToCents } from "@/lib/money";
 import {
@@ -19,9 +18,10 @@ import {
   setSplitsAction,
 } from "@/app/transactions/actions";
 import { loadSplitPanel, type SplitPanelData } from "@/app/transactions/sheet-actions";
-import { settleAction, useAction } from "@/hooks/useAction";
+import { useAction } from "@/hooks/useAction";
 import type { SplitSnapshot } from "@/services/transaction-splits";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
+import { offerUndoToastWith } from "./undo-toast";
 
 /**
  * Split editor (RocketMoney-style) for the transaction sheet: re-attribute one
@@ -65,23 +65,11 @@ function parseMagnitude(text: string): number | null {
  * The undo settles and RETURNS its result: the card reports the failure in
  * place and keeps itself alive, so `snapshot` — the only copy of the parts as
  * they were — is still there to try again with. The old shape dismissed the
- * card on click and dropped the snapshot with it.
+ * card on click and dropped the snapshot with it. It is the shared Undo card, which says what every Undo card says —
+ * 🔴 it said its own once, "Couldn’t restore the split — try again" (the review of batch 9 F, 2026-10-30).
  */
 function offerSplitUndo(title: string, snapshot: SplitSnapshot, onChanged: () => void): void {
-  toast({
-    title,
-    action: {
-      label: "Undo",
-      onAction: async () => {
-        const result = await settleAction(
-          () => restoreSplitsAction(snapshot),
-          "Couldn’t restore the split — try again",
-        );
-        if (result.ok) onChanged();
-        return result;
-      },
-    },
-  });
+  offerUndoToastWith(title, () => restoreSplitsAction(snapshot), onChanged);
 }
 
 export function SplitEditor({ txnId, refreshKey, categories, onChanged }: SplitEditorProps) {

@@ -9,8 +9,10 @@ export const ACTION_FAILED = "Couldn’t do that — try again";
 
 /**
  * What a failed undo says when nothing readable came back: the patch is still here, the change still stands. ONE
- * sentence for every Undo card (`offerUndoToast`, a category's Move, an inline edit) — 🔴 the review of 43a66c99
- * (2026-10-30) found three: this, "Couldn’t move it back — try again", and the inline edit's save sentence.
+ * sentence for every Undo card — the shared one (`offerUndoToast`, `offerUndoToastWith`), a category's Move and an
+ * inline edit; undo-toast.test.ts holds every card in src to it. 🔴 The review of 43a66c99 (2026-10-30) found three:
+ * this, "Couldn’t move it back — try again", and the inline edit's save sentence — and the review of batch 9 F
+ * (2026-10-30) three more, hand-rolled: a merchant's default, a deleted rule and a split each said its own.
  */
 export const UNDO_FAILED = "Couldn’t undo that — the change is still in place";
 
