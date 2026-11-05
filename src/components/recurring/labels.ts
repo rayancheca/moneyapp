@@ -955,14 +955,22 @@ const MONTHS_IN_YEAR = 12;
  * "stops on Aug 1, 2026, inside them" of a window beginning Sep 11. It does not
  * stop inside those twelve months; it stopped before them.
  *
- * ⛔ …and such a series has NO figure to qualify: `annualizedCentsOf` is null for every end before today (a schedule
- * its end has closed is not forecast — `scheduleHasEnded`), and both printers print this only under a figure. So it is
- * silent. 🔴 It kept a sentence for that case — "a year this series no longer bills — it stopped on …" — that 0af5689
- * made unreachable when it took the "~$0.00/yr" away, under a comment promising Car insurance would reach it on
- * 2027-01-12, the day its figure reads "—" (review of the 10-12/13 batches; the grid in recurring.test.ts is the proof).
+ * ⛔ …and such a series has NO figure to qualify: `annualizedCentsOf` is null once the day it stops
+ * (`seriesStopsOn`) is before today (a schedule its end has closed is not forecast — `scheduleHasEnded`), and both
+ * printers print this only under a figure. So it is silent. 🔴 It kept a sentence for that case — "a year this series
+ * no longer bills — it stopped on …" — that 0af5689 made unreachable when it took the "~$0.00/yr" away, under a
+ * comment promising Car insurance would reach it on 2027-01-12, the day its figure reads "—" (review of the 10-12/13
+ * batches; the grid in recurring.test.ts is the proof).
+ *
+ * ⚖️ (B) …and the day it stops is the one every reader dates it by (`seriesStopsOn`): billed inside another, the later
+ * day its last charge inside its end falls due on, which its figure holds until it has come. 🔴 Read off the end
+ * alone (review of 99bd525a), the rent typed Nov 16 and paid Nov 16, the utilities' end typed Dec 10: on Dec 5 and Dec
+ * 10 their page read "this one stops on Dec 10, 2026, inside them" above "Next expected Dec 16, 2026", and on Dec 11
+ * to Dec 16 "~$182.21/yr" under a monthly -$182.21 with nothing saying why (his ledger copy 2026-11-04, the same
+ * what-if). Latent: nothing of his billed inside another has an end.
  */
-export function annualizedCaveat(endsOn: string | null, today: string): string | null {
-  const end = annualizedEnd(endsOn, today);
+export function annualizedCaveat(s: SeriesEndDays, today: string): string | null {
+  const end = annualizedEnd(seriesStopsOn(s), today);
   if (end === null) return null;
   return `the twelve months from today — this one stops on ${longDate(end)}, inside them`;
 }
@@ -978,6 +986,27 @@ function annualizedEnd(endsOn: string | null, today: string): string | null {
   return endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR)) ? endsOn : null;
 }
 
+/** What every reader of a series' end reads of it: the end he typed, and the later day its last charge falls due on. */
+export interface SeriesEndDays {
+  endsOn: string | null;
+  /** ⚖️ (B) billed inside another, the day its last charge inside the end falls due on when after it, else null */
+  lastFallsDueOn: string | null;
+}
+
+/**
+ * ⚖️ (B) The day a series STOPS, as every reader dates its days — by the day each falls due (`SeriesOccurrence.date`):
+ * its end, or, billed inside another on its carrier's step, the later day its last charge inside that end falls due on
+ * (`lastFallsDueOn`), the day its list names that charge by. ONE day for every reader that names it: the end badge
+ * (`seriesEndBadge`), the Annualized qualifier and the All tab's short form (`annualizedCaveat`, `annualizedEndNote`)
+ * and the End dialog's span (`seriesEndInput`). 🔴 Each read its own (review of 99bd525a): the rent typed Nov 16 and
+ * paid Nov 16, the utilities' end typed Dec 10 — on Dec 5 their page read "Ends Dec 10, 2026" and "this one stops on
+ * Dec 10, 2026" above "Next expected Dec 16, 2026" and an End dialog "every charge from Dec 16, 2026 to Dec 16, 2026"
+ * (his ledger copy 2026-11-04, the same what-if).
+ */
+export function seriesStopsOn<End extends string | null>(s: SeriesEndDays & { endsOn: End }): string | End {
+  return s.lastFallsDueOn ?? s.endsOn;
+}
+
 /**
  * `annualizedCaveat`'s short form, for a table cell: "ends Jan 11, 2027".
  *
@@ -988,10 +1017,10 @@ function annualizedEnd(endsOn: string | null, today: string): string | null {
  * figures; the row could not, because it had no end date.
  *
  * ⛔ SAME GATE as the long form (`annualizedEnd`), so a lease ending 2028 is
- * silent here exactly as it is there.
+ * silent here exactly as it is there — on the same day it stops (`seriesStopsOn`).
  */
-export function annualizedEndNote(endsOn: string | null, today: string): string | null {
-  const end = annualizedEnd(endsOn, today);
+export function annualizedEndNote(s: SeriesEndDays, today: string): string | null {
+  const end = annualizedEnd(seriesStopsOn(s), today);
   return end === null ? null : `ends ${longDate(end)}`;
 }
 
@@ -1016,14 +1045,17 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * and so does one opening PAST its end, billed inside another (`openingOf`), which held no date and ran out on none,
  * past the end too.
  *
- * ⚖️ (B) …and billed inside another on its carrier's step, its end gone by while the last charge inside it still falls
- * due with the carrier's later day (`lastFallsDueOn`, `SeriesDetail.lastFallsDueOn`): that day, still to come — the
- * day its list names it on and the End dialog's span runs to; once it has come, "Ended" on it (`scheduleRanOutOn`
- * dates the day it ran out as every reader dates a day, by when it falls due). 🔴 Review of 23e9c5d1: the rent typed
- * Nov 16 and paid Nov 16, the utilities' end typed Dec 10 — Dec 11 to Dec 16 their page read "Ended Dec 10, 2026"
- * beside a list naming Dec 16 and an End dialog "Leaving the forecast: ~$182.21 / yr", and from Dec 17 "Ended Dec 1,
- * 2026" beside an Already-due card for Dec 16; the rent typed Nov 1 and their end Oct 15, "Ended Oct 1, 2026", a day
- * they never held (his ledger copy 2026-11-04, both what-ifs). Latent: nothing of his billed inside another has an end.
+ * ⚖️ (B) …and billed inside another on its carrier's step, the last charge inside its end falling due with the
+ * carrier's later day (`lastFallsDueOn`, `SeriesDetail.lastFallsDueOn`): the day it stops (`seriesStopsOn`) is that
+ * day, still to come — the day its list names it on and the End dialog's span runs to, before the end he typed and
+ * after it, and whether or not the forecast still carries it (`lastFallsDueAfterItsEnd`); once it has come, "Ended" on
+ * it (`scheduleRanOutOn` dates the day it ran out as every reader dates a day, by when it falls due). 🔴 Review of
+ * 23e9c5d1: the rent typed Nov 16 and paid Nov 16, the utilities' end typed Dec 10 — Dec 11 to Dec 16 their page read
+ * "Ended Dec 10, 2026" beside a list naming Dec 16 and an End dialog "Leaving the forecast: ~$182.21 / yr", and from
+ * Dec 17 "Ended Dec 1, 2026" beside an Already-due card for Dec 16; the rent typed Nov 1 and their end Oct 15, "Ended
+ * Oct 1, 2026", a day they never held. 🔴 Review of 99bd525a: Nov 20 to Dec 10 it read "Ends Dec 10, 2026" above "Next
+ * expected Dec 16, 2026", and on Dec 11, nothing new posted, "Ends Dec 16, 2026" — a day still to come moved
+ * overnight (his ledger copy 2026-11-04, each what-if). Latent: nothing of his billed inside another has an end.
  */
 export function seriesEndBadge(
   endsOn: string,
@@ -1035,8 +1067,8 @@ export function seriesEndBadge(
   const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
   if (ranOutOn !== null) return `${ended} ${longDate(ranOutOn)}`;
   if (scheduleEnded) return `${ended} before ${longDate(endsOn)}`;
-  if (compareDates(endsOn, today) >= 0) return `Ends ${longDate(endsOn)}`;
-  return lastFallsDueOn === null ? `${ended} ${longDate(endsOn)}` : `Ends ${longDate(lastFallsDueOn)}`;
+  const stops = seriesStopsOn({ endsOn, lastFallsDueOn });
+  return `${compareDates(stops, today) >= 0 ? "Ends" : ended} ${longDate(stops)}`;
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   type SeriesStatusForCopy,
 } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
-import { annualizedFigure, longDate } from "./labels";
+import { annualizedFigure, longDate, seriesStopsOn } from "./labels";
 
 /**
  * What ending a series actually costs — the lines under "End this series".
@@ -141,7 +141,8 @@ export function seriesEndInput(
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
     oneChargeOn: data.oneChargeOn,
-    endsOn: data.lastFallsDueOn ?? data.endsOn,
+    // the day it stops as its list dates it — its badge's and its Annualized qualifier's (`seriesStopsOn`)
+    endsOn: seriesStopsOn(data),
     linkedCount: data.linkedTxns.length,
   };
 }

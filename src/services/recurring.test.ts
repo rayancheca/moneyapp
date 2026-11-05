@@ -717,6 +717,9 @@ describe("seriesStaleness", () => {
  * a figure. 🔴 The qualifier kept a "stopped" sentence for that case — "a year this series no longer bills — it
  * stopped on …" — which 0af5689 made unreachable when it took the "~$0.00/yr" away, and its comment still promised Car
  * insurance would reach it on 2027-01-12 (review of the 10-12/13 batches). This grid is the proof the branch was dead.
+ * ⚖️ (B) Of a series billed on its own, as these rows are: billed inside another, its figure holds its last charge
+ * until the carrier's later day it falls due on, past its end — the day it stops, which both qualifiers name
+ * (`seriesStopsOn`; pinned in SeriesDetail-carried-end.test.ts, review of 99bd525a).
  */
 describe("annualizedCentsOf — no year ahead of a series whose end has passed", () => {
   const row = {

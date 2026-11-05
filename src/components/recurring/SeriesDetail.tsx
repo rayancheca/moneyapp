@@ -115,8 +115,8 @@ export function SeriesDetail({
   });
   const amountsAsTable = isTableLens(state);
   // the year the ANNUALIZED figure is a year OF — qualified only when the
-  // series stops inside it; see `annualizedCaveat`
-  const annualizedNote = annualizedCaveat(data.endsOn, today);
+  // series stops inside it, on the day it stops (`seriesStopsOn`); see `annualizedCaveat`
+  const annualizedNote = annualizedCaveat(data, today);
   // a year at today's amounts, or its one charge (§6A 56) — `annualizedFigure`, the All tab's and the End dialog's too
   const yearFigure = annualizedFigure(data);
   // the ± hangs off the figure it is the spread of — see `postedSpreadReading`
@@ -217,7 +217,10 @@ export function SeriesDetail({
                 that the series is evidenced only to 2027-01-11. */}
             {/* the same date the caveat below may name, spelled the same way —
                 a raw ISO string here would have the page printing one day two
-                ways, two inches apart */}
+                ways, two inches apart. ⚖️ (B) One day: both read the day it stops (`seriesStopsOn`) — billed
+                inside another, the later day its last charge falls due on. 🔴 The caveat read the end alone: "this
+                one stops on Dec 10, 2026" above "Next expected Dec 16, 2026", and from Dec 11 nothing under
+                "~$182.21/yr" while this badge read "Ends Dec 16, 2026" (review of 99bd525a). */}
             {/* ⛔ …and in the tense of its day, worn in the evidence's tone once its schedule has ended — the All
                 tab's "Ended", the subscriptions card's "already ended". 🔴 "Ends Nov 11, 2026" in amber, a month past
                 that day (review of 0af5689, his ledger copy asked about 2026-12-12). ⛔ The tense is the card's

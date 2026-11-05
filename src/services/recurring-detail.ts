@@ -265,7 +265,8 @@ export interface SeriesDetail {
   /**
    * The day this series stops, or null when it runs on — `userEndsOn`, the only
    * end day the ledger holds and the one `projectOccurrences` clamps its walk
-   * on.
+   * on. ⚖️ (B) Billed inside another, its last charge can fall due after it: the day every reader names it stopping
+   * on is then that one (`lastFallsDueOn` below, `seriesStopsOn`).
    *
    * 🔴 It was on no surface a reader would go looking. Measured 2026-09-02:
    * `/recurring/<car insurance>` showed "ANNUALIZED ~$4,337.88/yr", three
@@ -284,10 +285,12 @@ export interface SeriesDetail {
   scheduleRanOutOn: string | null;
   /**
    * ⚖️ (B) Billed inside another on its carrier's step, the day its last charge inside its end FALLS DUE on when that is
-   * after the end itself (`lastFallsDueAfterItsEnd`) — else null. Where the End dialog's span runs to
-   * (`seriesEndInput`), and the day the end badge names, still to come, once the end has gone by (`seriesEndBadge`).
-   * 🔴 Review of 933b29e2 (L74): the rent typed Nov 16 and paid Nov 16, the utilities ending Dec 10, on Nov 20 the
-   * dialog read "every charge from Dec 16, 2026 to Dec 10, 2026" (his ledger copy 2026-11-04).
+   * after the end itself (`lastFallsDueAfterItsEnd`) — else null. The day it stops (`seriesStopsOn`): where the End
+   * dialog's span runs to (`seriesEndInput`), the day the end badge names, still to come, before the end and after it
+   * (`seriesEndBadge`), and the Annualized qualifier's (`annualizedCaveat`). 🔴 Review of 933b29e2 (L74): the rent typed
+   * Nov 16 and paid Nov 16, the utilities ending Dec 10, on Nov 20 the dialog read "every charge from Dec 16, 2026 to
+   * Dec 10, 2026"; 🔴 review of 99bd525a: the badge "Ends Dec 10, 2026" and the qualifier "this one stops on Dec 10,
+   * 2026" above "Next expected Dec 16, 2026" (his ledger copy 2026-11-04, the same what-if).
    */
   lastFallsDueOn: string | null;
   /**
@@ -754,7 +757,8 @@ export function seriesDetail(
     billedWith: s.billedWith,
     endsOn: s.userEndsOn ?? null,
     scheduleRanOutOn: scheduleRanOutOn(s, today),
-    lastFallsDueOn: projects ? lastFallsDueAfterItsEnd(projectable, today) : null,
+    // off its status, as the All tab reads it — never the forecast's lapse (`lastFallsDueAfterItsEnd`)
+    lastFallsDueOn: lastFallsDueAfterItsEnd(s, today),
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,

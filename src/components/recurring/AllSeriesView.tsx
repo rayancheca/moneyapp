@@ -312,7 +312,9 @@ function SeriesRow({
   const avgNotes = postedAvgNotes(s, s.cadence, today);
   // a year at today's amounts, or its one charge (§6A 56), and when a year stops inside it — only under a year
   const yearFigure = annualizedFigure(s);
-  const endNote = yearFigure === null || yearFigure.once ? null : annualizedEndNote(s.endsOn, today);
+  // …on the day it stops, as the series page says it (`seriesStopsOn`) — 🔴 "Monthly -$182.21 Dec 16 ~$182.21/yr ends
+  // Dec 10, 2026", a Next after the row's own end, read off the end alone (review of 99bd525a)
+  const endNote = yearFigure === null || yearFigure.once ? null : annualizedEndNote(s, today);
   return (
     <tr className="border-b border-line last:border-b-0">
       <th scope="row" className="px-4 py-3 text-left font-medium">

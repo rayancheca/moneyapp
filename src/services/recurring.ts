@@ -916,7 +916,8 @@ export interface SeriesView {
   /** effective per-occurrence amount × occurrences/year (magnitude) */
   annualizedCents: number | null;
   /**
-   * The day the series stops (`userEndsOn`), or null when it runs on.
+   * The day the series stops (`userEndsOn`), or null when it runs on — ⚖️ (B) unless, billed inside another, its last
+   * charge falls due after it (`lastFallsDueOn` below; the day every reader names, `seriesStopsOn`).
    *
    * 🔴 Without it the All tab could not qualify its annualized figure: on
    * 2026-09-15 it printed "Car insurance | Monthly | -$357.58 | ~$715.16/yr"
@@ -924,6 +925,14 @@ export interface SeriesView {
    * own page said so through `annualizedCaveat`.
    */
   endsOn: string | null;
+  /**
+   * ⚖️ (B) Billed inside another on its carrier's step, the day its last charge inside its end falls due on when that
+   * is after the end (`lastFallsDueAfterItsEnd`) — else null: the day the row's "ends …" names, the series page's own
+   * (`seriesStopsOn`). 🔴 Without it the row read "Monthly -$182.21 Dec 16 ~$182.21/yr ends Dec 10, 2026", a Next
+   * after its own end, and from Dec 11 "~$182.21/yr" with nothing saying why (review of 99bd525a; his ledger copy
+   * 2026-11-04, the rent retyped Nov 16 and paid Nov 16, the utilities' end typed Dec 10).
+   */
+  lastFallsDueOn: string | null;
   /**
    * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null — what makes its
    * cadence slot read "Once" (`cadenceLabel`) or "once · Nov 11". ⚖️ Owner decision 2026-10-08 (§6A 56).
@@ -1127,6 +1136,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),
         endsOn: s.userEndsOn ?? null,
+        lastFallsDueOn: lastFallsDueAfterItsEnd(s, today),
         oneChargeOn: oneCharge.get(s.id) ?? null,
         billedWith: s.billedWith,
       } satisfies SeriesView;
@@ -1904,10 +1914,24 @@ export function scheduleRanOutOn(
  * `walkOccurrences`), due with the carrier's later day it pairs with (`fallsDueOn`) — else null: billed on its own, the
  * end is never before its last charge. Null with no end, nothing paired, or that charge already past today. Where the
  * End dialog's span runs to (`SeriesDetail.lastFallsDueOn`), so it never runs back from the day its list names first.
+ *
+ * ⛔ …and the day it stops wherever that is named (`seriesStopsOn`): its end badge, still to come, and the Annualized
+ * qualifier on its page and the All tab (`SeriesView.lastFallsDueOn`) — so read off its STATUS, never the forecast's
+ * lapse: the day a schedule's last charge falls due is the schedule's, as its end is, and a series he has not ended or
+ * dismissed (`seriesIsOver`) still has one. 🔴 Read only while the forecast carried it (the fix of 99bd525a's review,
+ * measured before it was built), the rent typed Nov 16 and its last row Oct 2, read through Jan 19, the utilities' end
+ * typed Jan 10: their badge read "Ends Jan 16, 2027" to Jan 3, "Ends Jan 10, 2027" from Jan 4, the day the rent
+ * lapsed, "Ended Jan 10, 2027" from Jan 11 and "Ended Jan 16, 2027" from Jan 17 (his ledger copy 2026-11-04, the same
+ * what-if) — one end, three days.
  */
-export function lastFallsDueAfterItsEnd(series: ProjectableSeries, today: string): string | null {
-  const end = series.userEndsOn;
-  if (!end || !series.pairedWith) return null;
+export function lastFallsDueAfterItsEnd(
+  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind; status: SeriesStatus } & CarriedBy,
+  today: string,
+): string | null {
+  const end = s.userEndsOn;
+  if (!end || seriesIsOver(s.status)) return null;
+  const series = toProjectable(s);
+  if (!series.pairedWith) return null;
   // the carrier's day an own day on or before the end pairs with lies within a step of it
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
   const last = projectOccurrences(series, today, stepFrom(end, plan, 1)).at(-1);

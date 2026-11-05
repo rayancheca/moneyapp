@@ -985,39 +985,64 @@ describe("futureDateLabel — a Next date that is next year says so", () => {
  */
 describe("annualizedCaveat — a year is qualified only when the series stops inside it", () => {
   const TODAY = "2026-09-11";
+  // a series billed on its own: it stops on its end
+  const ends = (endsOn: string | null) => ({ endsOn, lastFallsDueOn: null });
 
   test("a lease ending 704 days out bills the whole year, so nothing is said", () => {
     // Car lease, ends 2028-08-15: 12 × $695.04 = $8,340.48 in the twelve months
     // from today — the annualized figure to the cent. It read "a full year —
     // this one is scheduled only to 2028-08-15".
-    expect(annualizedCaveat("2028-08-15", TODAY)).toBeNull();
+    expect(annualizedCaveat(ends("2028-08-15"), TODAY)).toBeNull();
   });
 
   test("a policy ending inside the year names the window and the day it stops", () => {
     // Car insurance, ends 2027-01-11, against an annualized $4,337.88
-    expect(annualizedCaveat("2027-01-11", TODAY)).toBe(
+    expect(annualizedCaveat(ends("2027-01-11"), TODAY)).toBe(
       "the twelve months from today — this one stops on Jan 11, 2027, inside them",
     );
   });
 
   test("a series with no end date is never qualified", () => {
-    expect(annualizedCaveat(null, TODAY)).toBeNull();
+    expect(annualizedCaveat(ends(null), TODAY)).toBeNull();
   });
 
   /* The All tab's short form reads the same gate — measured 2026-09-15, its
      "~$715.16/yr" and "~$72.74/yr" had no end date on the row at all. */
   test("the table's short form says the same thing on the same days", () => {
-    expect(annualizedEndNote("2027-01-11", TODAY)).toBe("ends Jan 11, 2027");
-    expect(annualizedEndNote("2026-11-11", TODAY)).toBe("ends Nov 11, 2026");
-    expect(annualizedEndNote("2026-08-01", TODAY)).toBeNull();
+    expect(annualizedEndNote(ends("2027-01-11"), TODAY)).toBe("ends Jan 11, 2027");
+    expect(annualizedEndNote(ends("2026-11-11"), TODAY)).toBe("ends Nov 11, 2026");
+    expect(annualizedEndNote(ends("2026-08-01"), TODAY)).toBeNull();
     for (const endsOn of [null, "2028-08-15", "2027-09-11", "2027-09-10", "2026-08-01", "2027-01-11"]) {
-      expect(annualizedEndNote(endsOn, TODAY) === null, String(endsOn)).toBe(annualizedCaveat(endsOn, TODAY) === null);
+      expect(annualizedEndNote(ends(endsOn), TODAY) === null, String(endsOn)).toBe(
+        annualizedCaveat(ends(endsOn), TODAY) === null,
+      );
     }
   });
 
   test("the year's far end is EXCLUSIVE — a series ending on it runs the whole year", () => {
-    expect(annualizedCaveat("2027-09-11", TODAY)).toBeNull();
-    expect(annualizedCaveat("2027-09-10", TODAY)).not.toBeNull();
+    expect(annualizedCaveat(ends("2027-09-11"), TODAY)).toBeNull();
+    expect(annualizedCaveat(ends("2027-09-10"), TODAY)).not.toBeNull();
+  });
+
+  /*
+   * ⚖️ (B) Billed inside another on its carrier's step, it stops on the day its last charge inside its end FALLS DUE
+   * on, the carrier's later day, when that lies past the end (`SeriesDetail.lastFallsDueOn`) — the day its list, its
+   * end badge and its End dialog name (`seriesStopsOn`), and the charge its figure holds until it has come. 🔴 Review
+   * of 99bd525a: the rent typed Nov 16 and paid Nov 16, the utilities' end typed Dec 10 — on Dec 5 and Dec 10 their
+   * page read "~$182.21/yr the twelve months from today — this one stops on Dec 10, 2026, inside them" above "Next
+   * expected Dec 16, 2026", and the All tab "Monthly -$182.21 Dec 16 ~$182.21/yr ends Dec 10, 2026"; on Dec 11 and Dec
+   * 16 both fell silent under "~$182.21/yr" (his ledger copy 2026-11-04, the same what-if).
+   */
+  test("⛔ billed with the rent, its last charge due after its end: the qualifiers name the day it falls due", () => {
+    const util = { endsOn: "2026-12-10", lastFallsDueOn: "2026-12-16" };
+    for (const today of ["2026-11-20", "2026-12-05", "2026-12-10", "2026-12-11", "2026-12-16"]) {
+      expect(annualizedCaveat(util, today), today).toBe(
+        "the twelve months from today — this one stops on Dec 16, 2026, inside them",
+      );
+      expect(annualizedEndNote(util, today), today).toBe("ends Dec 16, 2026");
+    }
+    // …and once that day has gone by, no year is left ahead of it to qualify (the next test's rule)
+    expect(annualizedCaveat(util, "2026-12-17")).toBeNull();
   });
 
   /*
@@ -1033,16 +1058,16 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
    */
   test("a series that has ALREADY stopped is not qualified — it has no year ahead, and no figure to qualify", () => {
     for (const endsOn of ["2026-08-01", "2026-09-10"]) {
-      expect(annualizedCaveat(endsOn, TODAY), endsOn).toBeNull();
-      expect(annualizedEndNote(endsOn, TODAY), endsOn).toBeNull();
+      expect(annualizedCaveat(ends(endsOn), TODAY), endsOn).toBeNull();
+      expect(annualizedEndNote(ends(endsOn), TODAY), endsOn).toBeNull();
     }
   });
 
   test("the near end is TODAY, and a series ending today still has a year to say something about", () => {
-    expect(annualizedCaveat(TODAY, TODAY)).toBe(
+    expect(annualizedCaveat(ends(TODAY), TODAY)).toBe(
       "the twelve months from today — this one stops on Sep 11, 2026, inside them",
     );
-    expect(annualizedEndNote(TODAY, TODAY)).toBe("ends Sep 11, 2026");
+    expect(annualizedEndNote(ends(TODAY), TODAY)).toBe("ends Sep 11, 2026");
   });
 });
 
@@ -1088,12 +1113,13 @@ describe("seriesEndBadge — the end in the tense of the schedule", () => {
    * ⚖️ (B) Billed inside another on its carrier's step, the last charge inside its end can fall due AFTER it, with the
    * carrier's later day (`SeriesDetail.lastFallsDueOn`). 🔴 Review of 23e9c5d1: the utilities ending Dec 10, their Dec 1
    * due with the rent's Dec 16 — from Dec 11 their page read "Ended Dec 10, 2026" beside a list still naming Dec 16.
-   * The end gone by and that charge still to come: its day, in the future tense; the end itself while it is ahead.
+   * 🔴 Review of 99bd525a: "Ends Dec 10, 2026" while the end was ahead, above "Next expected Dec 16, 2026" — and on Dec
+   * 11, nothing new posted, "Ends Dec 16, 2026", a future day moved overnight. ONE day, before the end and after it.
    */
-  test("its end gone by, a charge inside it still to fall due with the rent: 'Ends' the day it falls due", () => {
-    expect(seriesEndBadge("2026-12-10", null, "2026-12-11", false, "2026-12-16")).toBe("Ends Dec 16, 2026");
-    expect(seriesEndBadge("2026-12-10", null, "2026-12-16", false, "2026-12-16")).toBe("Ends Dec 16, 2026");
-    expect(seriesEndBadge("2026-12-10", null, "2026-12-05", false, "2026-12-16")).toBe("Ends Dec 10, 2026");
+  test("'Ends' the day its last charge falls due with the rent, past its end — before the end and after", () => {
+    for (const today of ["2026-11-20", "2026-12-05", "2026-12-10", "2026-12-11", "2026-12-16"]) {
+      expect(seriesEndBadge("2026-12-10", null, today, false, "2026-12-16"), today).toBe("Ends Dec 16, 2026");
+    }
   });
 
   /*
