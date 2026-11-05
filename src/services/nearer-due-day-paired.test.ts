@@ -448,9 +448,10 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     expect(seriesDetail(bundle.db, UTIL, DEC20)!.overdue!.unattached!.map((m) => m.row.postedOn)).toEqual([
       "2026-12-01",
     ]);
+    // …its row "not attached to them", the bills the runway sums (`billsPronoun`, review of ffb1b2d3)
     expect(arrearsSentence(committedBook(bundle.db, DEC20))).toBe(
       "A further $2,473.42 came due earlier this month and $182.21 is matched to the cent by a row of $182.21 " +
-        "on Dec 1 that is not attached to it, and $2,291.21 has not posted.",
+        "on Dec 1 that is not attached to them, and $2,291.21 has not posted.",
     );
     // …and December draws it "?" on the rent's Dec 16 it falls due with, naming the row — never a ✕ beside it
     const mark = recurringCalendar(bundle.db, "2026-12", DEC20).entriesByDay["2026-12-16"]!.find(
@@ -578,7 +579,7 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
     const NOV20 = "2026-11-20";
     expect(arrearsSentence(committedBook(bundle.db, NOV20))).toBe(
       "A further $2,655.63 came due earlier this month: $182.21 is matched to the cent by a row of $182.21 on Nov 1 " +
-        "that is not attached to it, and no statement has covered the other $2,473.42 yet.",
+        "that is not attached to them, and no statement has covered the other $2,473.42 yet.",
     );
     const late = arrearsThisMonth(bundle.db, new Set([RENT, UTIL, WATER]), NOV20).series;
     expect(late.map((s) => [s.id, s.nextDate, s.unattached.map((m) => [m.date, m.row.postedOn])])).toEqual([

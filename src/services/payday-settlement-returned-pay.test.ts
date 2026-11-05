@@ -232,7 +232,7 @@ describe("⚖️ decision 75 — a payroll returned the same day banked nothing"
   });
 
   // read through Sep 24, past its days to land: it never reached a bank — the dashboard's words (`paydayLandingIsRead`)
-  test("the calendar keeps Sep 17 unpaid — it never reached a bank, on a day Wells Fargo is read through", () => {
+  test("the calendar keeps Sep 17 unpaid — it never reached an account, on a day Wells Fargo is read through", () => {
     const payday = entriesOn("2026-09-17").filter((e) => e.transactionId === null);
     const drawn = payday.map((e) => [e.state, e.unsettledReason, e.amountCents]);
     expect(drawn).toEqual([["unsettled", "never_banked", WEEK]]);

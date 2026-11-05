@@ -124,7 +124,7 @@ const notesFor = (from: string, to: string, today = TODAY) =>
   });
 
 describe("/spending — a window whose read paydays were not banked inside it", () => {
-  test("a shortfall a later deposit paid: that payday is named with its deposit, the rest never reached a bank", () => {
+  test("a shortfall a later deposit paid: that payday is named with its deposit, the rest never reached one", () => {
     coverThrough("2026-09-12");
     expect(notesFor("2026-08-01", "2026-08-31")).toEqual([
       {
@@ -740,5 +740,38 @@ describe("/spending — money that paid a payday no window has read is named wit
         "several paydays at once, so the surplus is earlier pay arriving late — read it as a backlog clearing rather " +
         "than as a period that earned more.",
     ]);
+  });
+});
+
+/*
+ * ⛔ The paydays a note's money paid, a short day each, their year said once (`formatDaysYearOnce`) — as every list of
+ * days a pay sentence names: the rows, the days to land, the paydays paid early. 🔴 Review of ffb1b2d3 (LOW): weekly
+ * $1,000.00 into Wells Fargo, Dec 24 and Dec 31 paid by Thu Jan 7, 2027's $3,000.00, Jan 14 unpaid, checked through Jan
+ * 20 and read that day, January and Q1 said "…another $2,000.00 banked inside the window, from the deposit of Thu, Jan
+ * 7, 2027, paid the paydays of Dec 24, 2026 and Dec 31, 2026." Latent on his ledger: it needs a January lump paying two
+ * December paydays, the shape of Sep 23's $4,567.68 that paid Sep 3, 10 and 17.
+ */
+describe("/spending — the paydays a January lump paid in December say their year once", () => {
+  const READ_ON = "2027-01-20";
+
+  beforeEach(() => {
+    const paid: (readonly [string, number])[] = [];
+    for (let day = "2026-09-10"; day <= "2026-12-17"; day = addDays(day, 7)) paid.push([day, 100_000]);
+    onlyDeposits([["2026-09-03", 100_000], ...paid, ["2027-01-07", 300_000]]);
+    coverThrough(READ_ON, "2026-09-01");
+  });
+
+  test("January and Q1 name Dec 24 and Dec 31 with 2026 said once", () => {
+    for (const [from, to] of [
+      ["2027-01-01", "2027-01-31"],
+      ["2027-01-01", "2027-03-31"],
+    ] as const) {
+      const said = notesFor(from, to, READ_ON).map((n) => n.body).join(" ");
+      expect(said).toContain(
+        "another $2,000.00 banked inside the window, from the deposit of Thu, Jan 7, 2027, paid the paydays of " +
+          "Dec 24 and Dec 31, 2026.",
+      );
+      expect(said).not.toContain("Dec 24, 2026");
+    }
   });
 });

@@ -217,7 +217,7 @@ export function CashFlowView({
           emptyLabel="No money flow to chart in this period."
         />
       ) : active === "graph" ? (
-        <CashFlowGraph data={cashFlow} projection={projection} />
+        <CashFlowGraph data={cashFlow} projection={projection} periodLabel={periodLabel} />
       ) : (
         <CashFlowChart data={cashFlow} projection={projection} />
       )}

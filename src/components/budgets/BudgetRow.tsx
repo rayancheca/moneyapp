@@ -11,7 +11,15 @@ import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { NumberRoll } from "@/components/ui/NumberRoll";
 import { InfoTip } from "@/components/ui/InfoTip";
 import { Popover, usePopover } from "@/components/ui/Popover";
-import { arrearsAlarms, arrearsTail, HAS_NOT_POSTED, NOT_POSTED } from "@/lib/arrears-reading";
+import {
+  arrearsAlarms,
+  arrearsTail,
+  billsPronoun,
+  HAS_NOT_POSTED,
+  NOT_POSTED,
+  overdueBillsOf,
+  type NotPostedWords,
+} from "@/lib/arrears-reading";
 import { formatDayShort } from "@/lib/format-date";
 import {
   budgetCoverageLine,
@@ -145,7 +153,15 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
     inGraceCents: status.overdueInGraceCents,
     unattached: status.overdueUnattached,
   };
-  const arrearsLine = `${formatCents(status.overdueCents)} expected by now${arrearsTail(arrears, NOT_POSTED)}`;
+  /*
+   * ⛔ …its rows "not attached to them" of several bills, as /budgets' page note says them (`billsPronoun`, counted by
+   * payment, `overdueBillsOf`) — the line's own "it" is its figure, "no statement has covered it yet". 🔴 Review of
+   * ffb1b2d3 (LOW): the row said two bills' rows "are not attached to it" under the note's "them".
+   */
+  const overdueBills = overdueBillsOf(status.overdue);
+  const tailIn = (notPosted: NotPostedWords): string =>
+    arrearsTail(arrears, notPosted, "it", billsPronoun(overdueBills));
+  const arrearsLine = `${formatCents(status.overdueCents)} expected by now${tailIn(NOT_POSTED)}`;
 
   // The elapsed fraction is what the today mark encodes, and the mark is
   // `aria-hidden` — so without this clause the spoken row is strictly poorer
@@ -179,7 +195,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
       : ""
   }${
     status.overdueCents > 0
-      ? ` ${formatCents(status.overdueCents)} was expected by now${arrearsTail(arrears, HAS_NOT_POSTED)}.`
+      ? ` ${formatCents(status.overdueCents)} was expected by now${tailIn(HAS_NOT_POSTED)}.`
       : ""
   }`;
 
@@ -435,6 +451,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
                   // ⚖️ …and a floor said as one, as the bar speaks it (2026-10-30, `floorFigure`)
                   spentIsAFloor: verdict.floors,
                   overdueCents: status.overdueCents,
+                  overdueBills,
                   overdueUnreadCents: status.overdueUnreadCents,
                   overdueInGraceCents: status.overdueInGraceCents,
                   overdueUnattached: status.overdueUnattached,

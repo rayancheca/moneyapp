@@ -243,7 +243,7 @@ describe("settledVerdict", () => {
    * checked through its days to land, no deposit can still answer it — it never reached a bank; checked on its day but
    * not through them, not yet. Still never `missed`: cash he was handed is no bank's to see.
    */
-  test("THE BOUNDARY: through its days to land it never reached a bank; on its day but short of them, not yet", () => {
+  test("THE BOUNDARY: through its days to land it never reached an account; short of them, not yet", () => {
     expect(settledVerdict("income", "2026-09-03", pay("2026-09-05"), true).reason).toBe("unbanked");
     expect(settledVerdict("income", "2026-09-03", pay("2026-09-06"), true)).toEqual({
       state: "unsettled",

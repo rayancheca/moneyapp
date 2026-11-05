@@ -128,8 +128,10 @@ export function dayWindowLabel(from: string, to: string): string {
 
 /**
  * A window that IS a calendar month, quarter or year by that period's name — "October 2026", "Q4 2026", "2026", the
- * label `resolvePeriod` titles the page of those very days with — and any other by its own two ends (`dayWindowLabel`).
- * ⛔ Still the window measured: a name is used only for exactly its days, never for a window inside it.
+ * label `resolvePeriod` titles that period's own page with (`?period=`) — and any other by its own two ends
+ * (`dayWindowLabel`). ⛔ Still the window measured: a name is used only for exactly its days, never for a window inside
+ * it. ⛔ …and never for a page's own window, which its page names (`windowLabelOn`): a custom window of a whole month
+ * is titled by its two ends.
  *
  * ⚖️ Default built, not asked (2026-10-30). 🔴 His ledger copy 2026-10-29, `/spending?period=2026-Q4&cash=graph`: the
  * running total's hover named October "Oct 1 – 31, 2026" beside the Income card's "Q4 2026", the chart lens's "the
@@ -143,6 +145,18 @@ export function calendarWindowLabel(from: string, to: string): string {
     yearPeriod(year, from),
   ];
   return named.find((p) => p.from === from && p.to === to)?.label ?? dayWindowLabel(from, to);
+}
+
+/**
+ * Days named on a page: its own window by the label `resolvePeriod` titles it with — "Nov 1 – 30, 2026" of a custom
+ * window that is a whole month, "2026 to date", "All time" — and any other by `calendarWindowLabel`. ⛔ One name for one
+ * window on one page: the page's title, its Income card's note (`noIncomeDayCheckedWindowNote`) and /spending's graph
+ * say the same days alike. 🔴 Review of ffb1b2d3 (LOW): `?from=2026-11-01&to=2026-11-30`, 30 unread days, was titled
+ * "Nov 1 – 30, 2026" and carded "Not one day of Nov 1 – 30, 2026 has been checked …", while the graph's caption and
+ * its last point's hover said "…not one day of November 2026 …".
+ */
+export function windowLabelOn(page: { from: string; to: string; label: string }, from: string, to: string): string {
+  return from === page.from && to === page.to ? page.label : calendarWindowLabel(from, to);
 }
 
 function monthPeriod(year: number, month: number, today: string): ResolvedPeriod {

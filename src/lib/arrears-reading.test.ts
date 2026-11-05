@@ -4,6 +4,7 @@ import {
   arrearsClause,
   arrearsSplit,
   arrearsTail,
+  billsPronoun,
   DAYS_TO_POST_NOT_OVER,
   HAS_NOT_POSTED,
   NO_STATEMENT_YET,
@@ -182,6 +183,34 @@ describe("the rows a read half is matched by, said of the bills the sentence sum
     expect(arrearsTail(reading, HAS_NOT_POSTED)).toBe(
       " and is matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it",
     );
+  });
+
+  /*
+   * ⛔ …and a sentence whose own pronoun is the money — the runway's "A further $X came due … and no statement has
+   * covered it yet", a budget row's "$X expected by now …" — still says its rows of the bills it sums: rows are
+   * attached to bills, never to money (`rowsPronoun`, counted as /budgets counts bills, `billsPronoun`). 🔴 Review of
+   * ffb1b2d3 (LOW): with Breezeline's −$50.00 due Oct 8 and its row on Oct 10 beside the lease's Oct 15 row, read Oct
+   * 29, the runway read "A further $745.04 came due earlier this month and is matched to the cent by rows of $50.00 on
+   * Oct 10 and $695.04 on Oct 15 that are not attached to it", while /budgets' page note said "them".
+   */
+  test("the rows are said of the bills, and the unread words of the sentence's own subject", () => {
+    expect(arrearsTail(reading, HAS_NOT_POSTED, "it", "them")).toBe(
+      " and is matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to them",
+    );
+    expect(arrearsTail({ ...reading, owedCents: 84_504, unreadCents: 10_000 }, HAS_NOT_POSTED, "it", "them")).toBe(
+      ": $745.04 is matched to the cent by rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to " +
+        "them, and no statement has covered the other $100.00 yet",
+    );
+    // the unread half keeps the sentence's own: "it", the money
+    const unread = { owedCents: 229_121, unreadCents: 229_121 };
+    expect(arrearsTail(unread, HAS_NOT_POSTED, "it", "them")).toBe(" and no statement has covered it yet");
+    expect(arrearsTail({ ...unread, inGraceCents: 229_121 }, HAS_NOT_POSTED, "it", "them")).toBe(
+      ` and ${DAYS_TO_POST_NOT_OVER}`,
+    );
+  });
+
+  test("billsPronoun: one payment 'it', several 'them'", () => {
+    expect([1, 2, 8].map(billsPronoun)).toEqual(["it", "them", "them"]);
   });
 });
 

@@ -61,6 +61,16 @@ export const LAST_CHECKED_DAY = "the last day every account that pay lands in ha
 /** What a sentence says of pay whose landing accounts are not all checked — `LAST_CHECKED_DAY`'s counterpart. */
 export const NOT_CHECKED = "the ledger has not checked every account that pay could land in";
 
+/**
+ * Where passed paydays the ledger has looked for fall: "fall on days already checked" — the forecast's words for them
+ * (`unbankedIncomeFrontierClause`, "1 falls on a day already checked"), Earned vs banked's stale verdict's and
+ * /spending's note for the same schedule-wide silence. ⛔ One spelling for the three. 🔴 Review of ffb1b2d3 (LOW): on the
+ * e2e seed read Jul 8 the card said "3 of them fall on days already checked — …" and /spending's year note, of the
+ * same three paydays, "…and 3 of them fall on days the records cover, through Tue, Jun 30, 2026 — …", the card's
+ * wording 87a440d0 retired.
+ */
+export const ON_DAYS_ALREADY_CHECKED = "on days already checked";
+
 // the accounts the ledger reads, in the words every pay sentence says them in (`lib/ledger-reads`)
 export { ACCOUNT_NOT_READ, ACCOUNT_READ, NEVER_REACHED } from "./ledger-reads";
 
@@ -183,7 +193,8 @@ export interface NamedWindow {
  * and of a window ONE day long "Sep 25, 2026 has not been checked …", the table's words for one day
  * (`noIncomeDayCheckedOf`) with the day named. /spending's graph hovers it of the days a running total sums
  * (`runningIncomeUnreadDays`): "not one day of Oct 1 – 14, 2026 …", and captions it of the whole run — a whole month
- * by its name, "October 2026" (`calendarWindowLabel`, 2026-10-30). 🔴 The hover built it from the point's axis label
+ * by its name, "October 2026" (`calendarWindowLabel`, 2026-10-30), the page's own window by the page's own label
+ * (`windowLabelOn`). 🔴 The hover built it from the point's axis label
  * until 2026-10-29 ("not one day through 14 …"), which read only for a day: his ledger copy hovered "… through Sep
  * 26–30 …" and "… through Oct …" over `?from=2026-09-26&to=2026-12-31`, "… through Oct '26 …" over a window of years.
  */
@@ -254,10 +265,24 @@ function everyOneFalls(paydays: number): string {
  * (MEDIUM): read Jan 8, 2027, the card's verdict said "…a row of $1,141.92 on Dec 31 that is not attached to it" in
  * this spelling, one line over the difference's "…on Dec 31, 2026…" and the verdict's own "since the last deposit on
  * Dec 24, 2026".
+ *
+ * ⛔ Asked only of these rows' own days, so the newest of them and the day asked is the newest row: no fallback for a
+ * list with no rows, which no sentence formats a day of. 🔴 Review of ffb1b2d3 (LOW): `newest ?? iso` could never run,
+ * one uncovered branch in src/lib's 100% gate.
  */
 function rowDaysOf(matched: readonly UnattachedMatch[]): (iso: string) => string {
-  const newest = matched.map((m) => m.row.postedOn).sort(compareDates).at(-1);
-  return (iso) => formatDayShortIn(iso, newest ?? iso);
+  const days = matched.map((m) => m.row.postedOn);
+  return (iso) => formatDayShortIn(iso, [iso, ...days].sort(compareDates).at(-1)!);
+}
+
+/**
+ * "the other one", "the other 3" — the paydays left after the ones a sentence has just named: the clause below ("for
+ * the other one, …"), Earned vs banked's stale verdict ("and for the other one the pay did not reach …") and
+ * `theOtherFall`, one spelling. 🔴 Review of ffb1b2d3 (LOW): the verdict said "for the other 1" one clause before "the
+ * other one falls after Oct 26".
+ */
+export function theOther(paydays: number): string {
+  return paydays === 1 ? "the other one" : `the other ${paydays}`;
 }
 
 /**
@@ -265,7 +290,7 @@ function rowDaysOf(matched: readonly UnattachedMatch[]): (iso: string) => string
  * days: the clause below and Earned vs banked's stale verdict, one spelling (review of 0c9bc8d).
  */
 export function theOtherFall(paydays: number): string {
-  return paydays === 1 ? "the other one falls" : `the other ${paydays} fall`;
+  return `${theOther(paydays)} ${paydays === 1 ? "falls" : "fall"}`;
 }
 
 /**
@@ -316,13 +341,13 @@ export function unbankedIncomeFrontierClause(
   const checkedPart =
     checked === 0
       ? null
-      : `${checked} ${checked === 1 ? "falls on a day" : "fall on days"} already checked, ${noDeposit}${rows}`;
-  const other = unread === 1 ? "the other one" : `the other ${unread}`;
+      : `${checked} ${checked === 1 ? "falls on a day already checked" : `fall ${ON_DAYS_ALREADY_CHECKED}`}, ` +
+        `${noDeposit}${rows}`;
 
   if (r.frontier.kind === "unchecked") {
     return checkedPart === null
       ? `The ledger has not checked every account that pay could land in, so it cannot say whether any of it arrived.`
-      : `${checkedPart}; for ${other}, ${NOT_CHECKED}.`;
+      : `${checkedPart}; for ${theOther(unread)}, ${NOT_CHECKED}.`;
   }
 
   const after =
@@ -510,7 +535,10 @@ export interface PaydaysLeftOut {
  * deposit for them, and the forecast's fixed income opens on today — named under it in the forecast's words for the
  * same paydays (`passedPaydaysWords`), laid out as the pay series' own page heads its list (`PassedPaydaysCard`):
  * "1 payday worth $1,141.92 already passed this month — not in Free to spend. It falls after Oct 26, the last day …
- * — so the ledger has not looked for its deposit." Null when no payday passed unbanked.
+ * — so the ledger has not looked for its deposit." Null when no payday passed unbanked. ⚠️ Its rows are dated in the
+ * caller's day (`formatRowDay`) — the tile's, against today, as Earned vs banked's beside it — where the forecast's
+ * note dates them against the newest row: in January a December row reads "Dec 31, 2026" here and "Dec 31" there
+ * (review of ffb1b2d3, L89, open — his call).
  *
  * ⚖️ Named, never counted: passed pay is reported, never projected (`unbankedIncomeForSeries`, "NOT a forecast leg,
  * and it never becomes one"), so the figure keeps what it measured — decision 72's rule for a total over days not every

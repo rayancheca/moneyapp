@@ -1,4 +1,4 @@
-import { arrearsTail, NOT_POSTED } from "./arrears-reading";
+import { arrearsTail, billsPronoun, NOT_POSTED, overdueBillsOf } from "./arrears-reading";
 import {
   countedDepositWords,
   matchedRowsWords,
@@ -20,7 +20,7 @@ import { formatCents } from "./money";
 import { dayWindowLabel } from "./period";
 import { STALE_PERIODS, type CashEarningsBasis } from "./cash-earnings";
 import { compareDates } from "./dates";
-import { formatDayShortIn } from "./format-date";
+import { formatDaysYearOnce, formatDayShortIn } from "./format-date";
 import { depositsOf } from "./paid-by-another-month";
 import type { PaidAcross, PaidOutside, PayShortfall } from "./pay-shortfall";
 import { wentBackOutPhrase, windowOwnCents } from "./pay-window-money";
@@ -31,6 +31,7 @@ import {
   daysToLandRunPast,
   LAST_CHECKED_DAY,
   notLookedForDeposits,
+  ON_DAYS_ALREADY_CHECKED,
   paidEarlyAside,
   payNotBankedYet,
 } from "./unbanked-income";
@@ -158,8 +159,8 @@ export function budgetNoteRow(s: BudgetNoteStatus): BudgetNoteRow {
     categoryPath: s.categoryPath,
     overdueCents: s.overdueCents,
     // occurrences, not series — the same rows `overdueCents` was summed from, so the count and the money it describes
-    // cannot drift apart
-    overdueBills: s.overdue.reduce((n, o) => n + o.occurrenceCount, 0),
+    // cannot drift apart (`overdueBillsOf`, the row's count too)
+    overdueBills: overdueBillsOf(s.overdue),
     // …and how far the ledger has read it, so the note says "not posted" only where the row does
     overdueUnreadCents: s.overdueUnreadCents,
     overdueInGraceCents: s.overdueInGraceCents,
@@ -214,7 +215,7 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
     const said = arrearsTail(
       { owedCents: total, unreadCents: unread, inGraceCents: inGrace, unattached: overdue.flatMap((r) => r.overdueUnattached ?? []) },
       NOT_POSTED,
-      bills === 1 ? "it" : "them",
+      billsPronoun(bills),
     );
     /*
      * ⚖️ §6A 64: a row not one elapsed day of whose window is read prints "Left —", so there is no room left on it to
@@ -940,9 +941,15 @@ export function cashEarningsSectionNotes(input: CashEarningsNoteInput): SectionN
               `${unread === 1 ? "the other payday falls" : `the other ${unread} paydays fall`} after that, ` +
               `${LAST_CHECKED_DAY}${after}.`;
 
+      /*
+       * ⛔ The silence's checked paydays in Earned vs banked's words for them (`ON_DAYS_ALREADY_CHECKED`) — the verdict
+       * counts this very silence — and the checked day after them, the one place this sentence names it. 🔴 Review of
+       * ffb1b2d3 (LOW): on the e2e seed read Jul 8, the year said "…and 3 of them fall on days the records cover,
+       * through Tue, Jun 30, 2026 — …" beside the card's "3 of them fall on days already checked — …".
+       */
       const readPart =
         measuredRead && through !== null && readSilence < r.periodsSinceBanked
-          ? `, and ${readSilence} of them fall on days the records cover, through ${through}`
+          ? `, and ${readSilence} of them fall ${ON_DAYS_ALREADY_CHECKED}, through ${through}`
           : "";
       const silence =
         r.lastBankedOn === null
@@ -1234,7 +1241,9 @@ function unattachedAmong(
 /**
  * "$1,141.92 (Oct 1) was paid early, by the deposit of Wed, Sep 30, 2026" — what each deposit day OUTSIDE a period put
  * into its read paydays (`PayShortfall.paidOutside`), "early" when it landed before the period (§6A 29). ⛔ One spelling
- * for the shortfall note and the note for a stale schedule (review of 337baa7).
+ * for the shortfall note and the note for a stale schedule (review of 337baa7). ⛔ …its paydays' year said once
+ * (`formatDaysYearOnce`), as every list of days a pay sentence names: 🔴 review of ffb1b2d3 (LOW), "(Dec 24, 2026 and
+ * Dec 31, 2026)" of a window whose last read payday is in 2027.
  */
 function paidOutsidePhrases(
   parts: readonly PaidOutside[],
@@ -1243,8 +1252,8 @@ function paidOutsidePhrases(
 ): string[] {
   return parts.map(
     (p) =>
-      `${formatCents(p.cents)} (${AND_LIST.format(p.paydays.map(payday))}) was paid ${p.early ? "early, " : ""}by ` +
-      `the ${depositsOf([p.depositOn], formatDay)}`,
+      `${formatCents(p.cents)} (${AND_LIST.format(formatDaysYearOnce(p.paydays, payday))}) was paid ` +
+      `${p.early ? "early, " : ""}by the ${depositsOf([p.depositOn], formatDay)}`,
   );
 }
 
@@ -1380,9 +1389,15 @@ function anotherBankedInside(parts: readonly { cents: number; words: string }[],
   );
 }
 
-/** "Oct 1's payday", "the paydays of Oct 1 and Oct 8" — one spelling for the surplus note and the shortfall note. */
+/**
+ * "Oct 1's payday", "the paydays of Oct 1 and Oct 8" — one spelling for the surplus note and the shortfall note, the
+ * year said once (`formatDaysYearOnce`). 🔴 Review of ffb1b2d3 (LOW): with Thu Jan 7, 2027's $3,000.00 paying Dec 24 and
+ * Dec 31, January read "…paid the paydays of Dec 24, 2026 and Dec 31, 2026".
+ */
 const paydaysNamed = (days: readonly string[], payday: (iso: string) => string): string =>
-  days.length === 1 ? `${payday(days[0]!)}'s payday` : `the paydays of ${AND_LIST.format(days.map(payday))}`;
+  days.length === 1
+    ? `${payday(days[0]!)}'s payday`
+    : `the paydays of ${AND_LIST.format(formatDaysYearOnce(days, payday))}`;
 
 /**
  * What a period's surplus was, read off the settlement (`payShortfall`), as the sentences after the surplus note's

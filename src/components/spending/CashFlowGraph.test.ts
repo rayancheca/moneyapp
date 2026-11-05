@@ -31,6 +31,9 @@ const point = (key: string, label: string): CashCumulativePoint => ({
   ghostWhole: false,
 });
 
+/** the page the hovers below sit on — Q4 2026, a window none of their runs is, so each is named as any window is */
+const Q4_PAGE = { from: "2026-10-01", to: "2026-12-31", label: "Q4 2026" };
+
 function render(
   p: CashCumulativePoint,
   unreached: Parameters<typeof RunningTotalTooltip>[0]["unreached"],
@@ -38,7 +41,14 @@ function render(
 ): string {
   return textOf(
     renderToStaticMarkup(
-      createElement(RunningTotalTooltip, { point: p, unreached, incomeUnread, hasRefunds: false, priorLabel: null }),
+      createElement(RunningTotalTooltip, {
+        point: p,
+        unreached,
+        incomeUnread,
+        hasRefunds: false,
+        priorLabel: null,
+        page: Q4_PAGE,
+      }),
     ),
   );
 }
@@ -148,6 +158,7 @@ describe("CashFlowGraph's tooltip — a running total is only as far as the ledg
         incomeUnread: null,
         hasRefunds: false,
         priorLabel: "August 2026",
+        page: { from: "2026-09-01", to: "2026-09-30", label: "September 2026" },
       }),
     );
     expect(textOf(text)).toContain("Spent by here, August 2026");
@@ -234,7 +245,7 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
       spendingUnaccounted: null,
       incomeUnread: false,
     };
-    return linesIn(CashFlowGraph({ data, projection: null }));
+    return linesIn(CashFlowGraph({ data, projection: null, periodLabel: "Q3 2026" }));
   };
 
   // the SHAPE of the fixture's `?period=2026-Q3`; the cents are constructed
@@ -278,22 +289,23 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
     spendingUnaccounted: null,
     incomeUnread: true,
   });
-  const caption = (d: CashFlow) =>
-    textOf(renderToStaticMarkup(createElement(CashFlowGraph, { data: d, projection: null })));
+  /** the graph's caption on the page `periodLabel` titles — the buckets' window, as `resolvePeriod` labels it */
+  const caption = (d: CashFlow, periodLabel: string) =>
+    textOf(renderToStaticMarkup(createElement(CashFlowGraph, { data: d, projection: null, periodLabel })));
 
   test("a window whose income nobody has looked for draws Spent alone, and its caption says why", () => {
     const data = graphOf([unreadDay("2026-10-01", 21_661), unreadDay("2026-10-02", 19_758)]);
-    const tree = CashFlowGraph({ data, projection: null });
+    const tree = CashFlowGraph({ data, projection: null, periodLabel: "Oct 1 – 2, 2026" });
     const plotted = chartDataIn(tree);
     expect(plotted.map((p) => [p.earnedCum, p.netCum])).toEqual([[null, null], [null, null]]);
     expect(plotted.map((p) => p.spentCum)).toEqual([21_661, 41_419]);
     // ⚖️ …of the days the lines leave undrawn, in the hover's words for them (`noIncomeDayCheckedIn`, 2026-10-30)
-    expect(caption(data)).toContain(
+    expect(caption(data, "Oct 1 – 2, 2026")).toContain(
       "Income and Net are not drawn while not one day of Oct 1 – 2, 2026 has been checked in the accounts that pay " +
         "lands in.",
     );
     // a window read as before carries no such caption
-    expect(caption({ ...data, buckets: quarter, incomeUnread: false })).not.toContain("pay lands in");
+    expect(caption({ ...data, buckets: quarter, incomeUnread: false }, "Q3 2026")).not.toContain("pay lands in");
   });
 
   /*
@@ -303,7 +315,7 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
    * pay lands in" and an Income card saying the same, so the page's two lens captions followed two rules.
    */
   test("a window one day long: the caption says that day has not been checked, as its hover and card do", () => {
-    const said = caption(graphOf([unreadDay("2026-09-25", 5_863)]));
+    const said = caption(graphOf([unreadDay("2026-09-25", 5_863)]), "Sep 25, 2026");
     expect(said).toContain(
       "Income and Net are not drawn while Sep 25, 2026 has not been checked in the accounts that pay lands in.",
     );
@@ -322,7 +334,7 @@ describe("CashFlowGraph — a line with one point read still shows that point", 
       { ...monthBucket("2026-11", 0, 0, "future"), to: "2026-11-30" },
       { ...monthBucket("2026-12", 0, 0, "future"), to: "2026-12-31" },
     ];
-    const said = caption(graphOf(q4));
+    const said = caption(graphOf(q4), "Q4 2026");
     expect(said).toContain(
       "Income and Net are not drawn while not one day of October 2026 has been checked in the accounts that pay " +
         "lands in.",
@@ -414,7 +426,7 @@ describe("CashFlowGraph — each hover is handed the days its running Income sum
       spendingUnaccounted: null,
       incomeUnread: true,
     };
-    const hover = hoverOf(CashFlowGraph({ data, projection: null }));
+    const hover = hoverOf(CashFlowGraph({ data, projection: null, periodLabel: "Sep 26 – Dec 31, 2026" }));
     expect(hover("2026-09")).toContain(
       "not one day of Sep 26 – 30, 2026 has been checked in the accounts that pay lands in",
     );
@@ -424,5 +436,43 @@ describe("CashFlowGraph — each hover is handed the days its running Income sum
     for (const key of ["2026-09", "2026-10"]) expect(hover(key)).not.toMatch(/through (Sep 26–30|Oct) has/);
     // a month not reached says its own world, and no running total
     expect(hover("2026-11")).toContain("has not happened yet");
+  });
+
+  /*
+   * ⛔ ONE WINDOW, ONE NAME ON ONE PAGE: a run that IS the page's window is called by the page's own label
+   * (`windowLabelOn`), as its title and its Income card call it — a custom window that is a whole month by its two
+   * ends, the year to date as "2026 to date". 🔴 Review of ffb1b2d3 (LOW): `?from=2026-11-01&to=2026-11-30` with 30
+   * unread days was titled "Nov 1 – 30, 2026" and carded "Not one day of Nov 1 – 30, 2026 has been checked …", while
+   * the caption and the last point's hover said "…not one day of November 2026 …".
+   */
+  test("a run that is the page's own window is called by the page's label — a custom month by its two ends", () => {
+    const november = Array.from({ length: 30 }, (_, i) => {
+      const day = `2026-11-${String(i + 1).padStart(2, "0")}`;
+      return month(day, day, day, String(i + 1), { spendingCents: 1_000, netCents: -1_000, incomeUnread: true });
+    });
+    const data: CashFlow = {
+      buckets: november,
+      incomeSeries: [],
+      spendingSeries: [],
+      totals: {} as CashFlow["totals"],
+      pace: null,
+      spendingUnaccounted: null,
+      incomeUnread: true,
+    };
+    const custom = { data, projection: null, periodLabel: "Nov 1 – 30, 2026" };
+    const said = textOf(renderToStaticMarkup(createElement(CashFlowGraph, custom)));
+    expect(said).toContain(
+      "Income and Net are not drawn while not one day of Nov 1 – 30, 2026 has been checked in the accounts that pay " +
+        "lands in.",
+    );
+    expect(said).not.toContain("November 2026");
+    expect(hoverOf(CashFlowGraph(custom))("2026-11-30")).toContain("not one day of Nov 1 – 30, 2026 has been checked");
+    // …a point short of the window is not the page's, and keeps its own two ends
+    expect(hoverOf(CashFlowGraph(custom))("2026-11-14")).toContain("not one day of Nov 1 – 14, 2026 has been checked");
+    // …and the month's own page, titled by the month's name, says it so
+    const monthPage = { ...custom, periodLabel: "November 2026" };
+    expect(textOf(renderToStaticMarkup(createElement(CashFlowGraph, monthPage)))).toContain(
+      "while not one day of November 2026 has been checked",
+    );
   });
 });

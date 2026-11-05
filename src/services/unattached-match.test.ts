@@ -272,9 +272,48 @@ describe("the bills: no surface says the Car lease's Oct 15 'has not posted' bes
     bundle.db.update(transactions).set({ postedOn: "2026-10-19" }).where(eq(transactions.postedOn, "2026-10-18")).run();
     expect(leaseSurfaces().runway).toBe("A further $695.04 came due earlier this month and has not posted.");
   });
+
+  /*
+   * ⛔ Two bills' rows are "not attached to them": rows are attached to bills, never to the money the runway's sentence
+   * is said of — which keeps "it" where it has one, "no statement has covered it yet" (`rowsPronoun`). 🔴 Review of
+   * ffb1b2d3 (LOW): with Breezeline's −$50.00 due Oct 8 and its row on Oct 10 beside the lease's Oct 15 row, read Oct
+   * 29, the runway read "…rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it", while /budgets'
+   * page note said "them" of the same rows. Latent on his ledger copy 2026-11-05: its two arrears, the rent and what
+   * it carries, no statement has covered.
+   */
+  test("two bills' rows on the runway are not attached to them", () => {
+    bundle.db
+      .insert(recurringSeries)
+      .values({
+        id: "series-internet",
+        name: "Breezeline",
+        kind: "bill",
+        cadence: "monthly",
+        intervalDaysAvg: 30,
+        accountId: WF,
+        amountCentsAvg: -5_000,
+        toleranceDays: 3,
+        nextExpectedOn: "2026-10-08",
+        nextExpectedAmountCents: -5_000,
+        userAmountCents: -5_000,
+        anchorDay: 8,
+        lastMatchedOn: "2026-09-08",
+        status: "confirmed",
+        createdAt: now(),
+        updatedAt: now(),
+      })
+      .run();
+    for (const day of ["2026-07-08", "2026-08-08", "2026-09-08"]) row(day, -5_000, { seriesId: "series-internet" });
+    row("2026-10-10", -5_000);
+    importUnattached([]);
+    expect(leaseSurfaces().runway).toBe(
+      "A further $745.04 came due earlier this month and is matched to the cent by rows of $50.00 on Oct 10 and " +
+        "$695.04 on Oct 15 that are not attached to them.",
+    );
+  });
 });
 
-describe("the pay: no surface says his October paydays did not reach a bank beside their unattached payroll rows", () => {
+describe("the pay: no surface says his October paydays never arrived beside their unattached payroll rows", () => {
   const spendingNote = () =>
     cashEarningsSectionNotes({
       rows: cashEarningsReadings(bundle.db, { from: "2026-10-01", to: "2026-10-31", today: TODAY, withChecked: true }),
@@ -373,11 +412,20 @@ describe("the pay: no surface says his October paydays did not reach a bank besi
     );
   });
 
-  test("three of four rows: the fourth payday is still the one that did not reach a bank", () => {
+  // ⛔ "the other one" of one, as the clause after it says its own (`theOther`) — 🔴 "for the other 1" (review of ffb1b2d3)
+  test("three of four rows: the fourth payday is still the one that did not reach an account the ledger reads", () => {
     importUnattached(PAYDAYS.slice(0, 3), false);
     expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toContain(
       "— 3 of them are matched to the cent by rows of $1,141.92 on Oct 1, Oct 8, and Oct 15 that are not attached to " +
-        "it, and for the other 1 the pay did not reach an account the ledger reads",
+        "it, and for the other one the pay did not reach an account the ledger reads.",
+    );
+  });
+
+  test("two of four rows: for the other 2 the pay did not reach an account the ledger reads", () => {
+    importUnattached(PAYDAYS.slice(0, 2), false);
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toContain(
+      "— 2 of them are matched to the cent by rows of $1,141.92 on Oct 1 and Oct 8 that are not attached to it, and " +
+        "for the other 2 the pay did not reach an account the ledger reads.",
     );
   });
 });
@@ -395,7 +443,7 @@ describe("the calendar: no ✕ and no 'never reached' beside a row matching the 
   const markOn = (day: string, seriesId: string) =>
     october().entriesByDay[day]?.find((e) => e.seriesId === seriesId && e.transactionId === null);
 
-  test("without the rows: each payday never reached a bank, and the lease's Oct 15 is missed", () => {
+  test("without the rows: each payday never reached an account, and the lease's Oct 15 is missed", () => {
     for (const day of PAYDAYS) expect(markOn(day, PAY)).toMatchObject({ state: "unsettled", unsettledReason: "never_banked" });
     expect(markOn("2026-10-15", LEASE)).toMatchObject({ state: "missed", unsettledReason: null });
   });
@@ -1373,7 +1421,8 @@ describe("two bills of one amount due one day, one row: it answers one of them, 
     expect(book.overdueCents).toBe(69_504 + 2 * 1_599);
     expect(book.overdueUnattached.map((m) => m.row.id)).toEqual([only]);
     const runway = arrearsSentence(book)!;
-    expect(runway).toContain("$15.99 is matched to the cent by a row of $15.99 on Oct 10 that is not attached to it");
+    // …a row of the three bills the sentence sums, "not attached to them" (`billsPronoun`, as /budgets' note says it)
+    expect(runway).toContain("$15.99 is matched to the cent by a row of $15.99 on Oct 10 that is not attached to them");
     expect(runway).toContain("$711.03 has not posted");
     expect(runway).not.toContain("$31.98");
   });

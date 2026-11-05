@@ -19,8 +19,8 @@
  *
  * ⛔ After the write — on the rehearsal copy and on the ledger — exactly one series row differs, in exactly two columns
  * (`user_amount_history`, `updated_at`); every transaction, every daily balance and the status counts are identical;
- * the app reads every stored history; the income card's implied pay and its checked gap ("never reached a bank") each
- * fall by exactly $1,139.04; and the monthly basis the runway and /budgets read stays $4,948.32.
+ * the app reads every stored history; the income card's implied pay and its checked gap ("never reached an account the
+ * ledger reads") each fall by exactly $1,139.04; and the monthly basis the runway and /budgets read stays $4,948.32.
  */
 import { eq } from "drizzle-orm";
 import type { DbBundle } from "@/db/client";
@@ -241,7 +241,7 @@ export function applyHistory(bundle: DbBundle): void {
 export interface Figures {
   /** his line's implied pay; null when the income card has no line for him */
   impliedCents: number | null;
-  /** his line's "never reached a bank" — the card's own figure (`Gap.neverCents`): not unread, not banked yet */
+  /** his line's "never reached an account the ledger reads" — the card's own (`Gap.neverCents`): not unread, not yet */
   checkedGapCents: number | null;
   totalImpliedCents: number | null;
   totalCheckedGapCents: number | null;
@@ -325,7 +325,9 @@ export function compareStates(before: WriteState, after: WriteState): string[] {
   const b = before.figures;
   const a = after.figures;
   failures.push(...fall("his implied pay", b.impliedCents, a.impliedCents));
-  failures.push(...fall("his checked gap (never reached a bank)", b.checkedGapCents, a.checkedGapCents));
+  failures.push(
+    ...fall("his checked gap (never reached an account the ledger reads)", b.checkedGapCents, a.checkedGapCents),
+  );
   failures.push(...fall("the income card's total implied", b.totalImpliedCents, a.totalImpliedCents));
   failures.push(...fall("the income card's total checked gap", b.totalCheckedGapCents, a.totalCheckedGapCents));
   if (b.basisCents !== BASIS_CENTS || a.basisCents !== BASIS_CENTS) {

@@ -17,6 +17,7 @@ describe("budgetDeactivateLines", () => {
     spentIsAFloor: false,
     overdueCents: 229_121,
     // his ledger 2026-10-08: rent and its utilities, both Oct 1, on days no checked statement has reached
+    overdueBills: 2,
     overdueUnreadCents: 229_121,
     // …waiting for a statement, not for days still to come
     overdueInGraceCents: 0,
@@ -87,6 +88,7 @@ describe("budgetDeactivateLines", () => {
         spentCents: 0,
         spentIsAFloor: false,
         overdueCents: 36_149 + 69_504,
+        overdueBills: 2,
         overdueUnreadCents: 36_149 + 69_504,
         overdueInGraceCents: 0,
         expectedTailCents: 0,
@@ -107,6 +109,7 @@ describe("budgetDeactivateLines", () => {
         spentCents: 0,
         spentIsAFloor: false,
         overdueCents: 499,
+        overdueBills: 1,
         overdueUnreadCents: 499,
         overdueInGraceCents: 0,
         expectedTailCents: 600,
@@ -128,6 +131,7 @@ describe("budgetDeactivateLines", () => {
         spentCents: 4_200,
         spentIsAFloor: false,
         overdueCents: 0,
+        overdueBills: 0,
         overdueUnreadCents: 0,
         overdueInGraceCents: 0,
         expectedTailCents: 0,
@@ -175,5 +179,31 @@ describe("budgetDeactivateLines", () => {
   test("says the days a payment has to post are not over when no statement keeps it unread", () => {
     const lines = budgetDeactivateLines({ ...HOUSING, overdueInGraceCents: 229_121 }, formatCents);
     expect(lines[2]!.label).toBe("Due this period by today, the days a payment has to post are not over yet");
+  });
+
+  /*
+   * ⛔ The rows matched to several bills' due days are "not attached to them" (`billsPronoun`, by payment), the row's
+   * own pronoun for its figure kept: "no statement has covered it yet". 🔴 Review of ffb1b2d3 (LOW): /budgets' page
+   * note said "them" of two bills' rows, the row and its dialog "it".
+   */
+  test("rows matched to two bills' due days are not attached to them; one bill's to it", () => {
+    const rowOf = (day: string, cents: number) => ({ date: day, row: { id: day, postedOn: day, amountCents: -cents } });
+    const read = {
+      ...HOUSING,
+      overdueUnreadCents: 0,
+      overdueUnattached: [rowOf("2026-10-01", 210_900), rowOf("2026-10-01", 18_221)],
+    };
+    expect(budgetDeactivateLines(read, formatCents)[2]!.label).toBe(
+      "Due this period by today, matched to the cent by rows of $2,109.00 on Oct 1 and $182.21 on Oct 1 that are " +
+        "not attached to them",
+    );
+    const one = { ...read, overdueBills: 1, overdueCents: 210_900, overdueUnattached: [rowOf("2026-10-01", 210_900)] };
+    expect(budgetDeactivateLines(one, formatCents)[2]!.label).toBe(
+      "Due this period by today, matched to the cent by a row of $2,109.00 on Oct 1 that is not attached to it",
+    );
+    // …and the unread words keep the figure's own pronoun
+    expect(budgetDeactivateLines(HOUSING, formatCents)[2]!.label).toBe(
+      "Due this period by today, no statement has covered it yet",
+    );
   });
 });
