@@ -4,12 +4,14 @@ import {
   FLING_VELOCITY,
   LAYER_OFFSET_PX,
   MAX_TILT_DEGREES,
+  UNCOVER_SLOP_PX,
   VISIBLE_DEPTH,
   clampIndex,
   deckDepth,
   deckSlot,
   dragOutcome,
   dragTilt,
+  dragUncovers,
   stepIndex,
   deckHeight,
 } from "./card-deck";
@@ -133,6 +135,25 @@ describe("what releasing a drag does", () => {
     // it has not been measured yet; acting on a fraction of zero would flip the
     // card on the first pixel of movement
     expect(dragOutcome(-500, 0, -1)).toBe("stay");
+  });
+});
+
+/**
+ * 🔴 Any push at all uncovered the card behind the front: a thumb pushed straight up the deck drifted a pixel sideways
+ * before Chromium took the pointer for the page's scroll, and The car flashed into Runway's edge (the review of
+ * 246dcf1e, headless Chromium, CDP touch, his ledger copy 2026-11-05).
+ */
+describe("how far a drag pushes the front card before the card behind shows what is on it", () => {
+  test("a thumb's drift does not uncover it — anything short of the slop, either way", () => {
+    for (const dx of [0, 1, -1, UNCOVER_SLOP_PX - 1, -(UNCOVER_SLOP_PX - 1)]) {
+      expect(dragUncovers(dx), `pushed ${dx} px`).toBe(false);
+    }
+  });
+
+  test("a push of the slop or more does, either way", () => {
+    for (const dx of [UNCOVER_SLOP_PX, -UNCOVER_SLOP_PX, 200, -200]) {
+      expect(dragUncovers(dx), `pushed ${dx} px`).toBe(true);
+    }
   });
 });
 

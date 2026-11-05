@@ -6,6 +6,7 @@ import ts from "typescript";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { findElement, HookSlots } from "@/hooks/hook-slots.harness";
+import { UNCOVER_SLOP_PX } from "@/lib/card-deck";
 import { CardDeck, type DeckCard } from "./CardDeck";
 
 /*
@@ -314,9 +315,15 @@ function steppedDeck(count: number, { reducedMotion = false }: { reducedMotion?:
     /** the held pointer let go at `dx`, where it last moved to — so the distance alone decides, never a fling */
     letGo: (dx: number) =>
       gesture(() => handler("onPointerUp")({ pointerId: 1, clientX: 200 + dx, timeStamp: clock + 200 })),
-    /** the held pointer taken by the browser at `dx` — a vertical pan it claims, a touch it cancels */
-    lose: (dx: number) =>
-      gesture(() => handler("onPointerCancel")({ pointerId: 1, clientX: 200 + dx, timeStamp: clock + 200 })),
+    /**
+     * the held pointer taken by the browser (`pointercancel`) — a vertical pan it claims, a touch it cancels — and
+     * where the browser says it was: ⚠️ Chromium says clientX 0, wherever it was (the review of 246dcf1e, headless
+     * Chromium with CDP touch), so that is the default; a `dx` is a browser that says where it last moved
+     */
+    lose: (dx?: number, pointerId = 1) =>
+      gesture(() =>
+        handler("onPointerCancel")({ pointerId, clientX: dx === undefined ? 0 : 200 + dx, timeStamp: clock + 200 }),
+      ),
     /** a key, pressed where the focus is: with the focus on the page, or on a pip, the deck never hears it */
     press: (key: string) =>
       gesture((preventDefault) => {
@@ -611,8 +618,9 @@ test("after every step, whichever way it was taken, the card in front is whole a
  * ⚖️ default built, not asked (2026-11-05): a drag uncovers the card directly behind — his 2026-08-27 ask, "a swipe
  * like in tinder", is a swipe that uncovers the next card. 🔴 Since d27f4f8f it uncovered a bare sheet: a drag on Runway
  * showed The car as an empty card until it let go (the review of d27f4f8f) — "$1,306.79 a month, all in", behind Runway
- * on his ledger copy, 2026-11-05. Only that card, and only while the drag is on: Earned vs banked, two back, stays its
- * sheet, and every card behind stays `inert` — the reveal is the eye's, never the Tab key's or find-in-page's.
+ * on his ledger copy, 2026-11-05. Only that card, and only while the drag has pushed the front card `UNCOVER_SLOP_PX`
+ * off it: Earned vs banked, two back, stays its sheet, and every card behind stays `inert` — the reveal is the eye's,
+ * never the Tab key's or find-in-page's.
  */
 describe("a drag uncovers the card directly behind the front", () => {
   /** the deck with card-0 in front and card-1 uncovered beside it: what is on card-1 shows, and it is still inert */
@@ -635,8 +643,8 @@ describe("a drag uncovers the card directly behind the front", () => {
   });
 
   test("⛔ a press that has not moved uncovers nothing, and a drag brought back to its start covers it again", () => {
-    // a click on the front card's text, or a vertical pan the browser claims before the pointer moves sideways, must
-    // not flash the next card's content into the stack's edge
+    // a click on the front card's text must not flash the next card's content into the stack's edge (nor a thumb's
+    // drift on a vertical pan — the slop, next)
     const deck = steppedDeck(4);
     deck.grab();
     expect(deck.drawn()).toEqual(deck.inFront("card-0"));
@@ -646,8 +654,28 @@ describe("a drag uncovers the card directly behind the front", () => {
     expect(deck.drawn()).toEqual(deck.inFront("card-0"));
   });
 
+  /*
+   * 🔴 Any push at all uncovered it: a thumb pushed straight up the deck drifted a pixel sideways, pointermove(196,97),
+   * and The car flashed into Runway's edge before Chromium took the pointer for the page's scroll (the review of
+   * 246dcf1e, headless Chromium, CDP touch, his ledger copy 2026-11-05).
+   */
+  test.each([
+    { dx: 1, push: "a thumb's drift on a vertical pan", uncovers: false },
+    { dx: -1, push: "the same drift, left", uncovers: false },
+    { dx: UNCOVER_SLOP_PX - 1, push: "a pixel short of the slop", uncovers: false },
+    { dx: -(UNCOVER_SLOP_PX - 1), push: "a pixel short of it, left", uncovers: false },
+    { dx: UNCOVER_SLOP_PX, push: "the slop", uncovers: true },
+    { dx: -UNCOVER_SLOP_PX, push: "the slop, left", uncovers: true },
+  ])("⛔ the front card pushed $dx px ($push) uncovers the card behind: $uncovers", ({ dx, uncovers }) => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(dx);
+    expect(deck.drawn()).toEqual(uncovers ? uncovering : deck.inFront("card-0"));
+  });
+
   test.each([
     { ending: "let go short of a step, snapping back", end: "letGo" as const, dx: -60, front: "card-0" },
+    // at the clientX Chromium gives it, 0 — the browser's, never a release (the next describe)
     { ending: "taken by the browser (pointercancel)", end: "lose" as const, dx: -60, front: "card-0" },
     // the card it uncovered comes forward already showing: its content never went, so the fade has nothing to fade
     { ending: "let go past a step", end: "letGo" as const, dx: -200, front: "card-1" },
@@ -657,8 +685,69 @@ describe("a drag uncovers the card directly behind the front", () => {
     deck.grab();
     deck.pull(dx);
     expect(deck.drawn()).toEqual(uncovering);
-    deck[end](dx);
+    if (end === "lose") deck.lose();
+    else deck.letGo(dx);
     expect(deck.drawn()).toEqual(deck.inFront(front));
+  });
+});
+
+/**
+ * ⛔ A pointer the browser takes back (`pointercancel`) abandons the drag: no step, and the front card back on the
+ * stack. 🔴 It was read as a release where the browser said the pointer was, and Chromium says clientX 0: a thumb
+ * pushed straight up from the middle of the deck — pointerdown(195,109), three moves up at x 195, pointercancel(0,0) —
+ * was a drag of 195 px left at a fling's speed, so the page scrolled 72 px AND Runway went behind The car, "The car —
+ * card 2 of 12" (the review of 246dcf1e, headless Chromium with CDP touch at 390 and 1024 px; Runway, The car and
+ * twelve cards on his ledger copy, 2026-11-05). This file fired its cancel where the pointer last moved, which
+ * Chromium never does, and saw no step.
+ */
+describe("a pointer the browser takes (pointercancel) ends the drag where it began", () => {
+  test.each(
+    [
+      { drag: "a thumb pushed straight up, no sideways travel", dx: 0 },
+      { drag: "a push short of a step", dx: -60 },
+      { drag: "a push past a step", dx: -200 },
+      { drag: "a push past a step back", dx: 200 },
+    ].flatMap((row) => [
+      { ...row, browser: "Chromium, at clientX 0", at: undefined },
+      { ...row, browser: "where it last moved", at: row.dx },
+    ]),
+  )("$drag, taken by the browser ($browser): no step, nothing uncovered, the focus left alone", ({ dx, at }) => {
+    const deck = steppedDeck(4);
+    deck.focusOn("a link on the front card");
+    deck.grab();
+    deck.pull(dx);
+    const { focus } = deck.lose(at);
+    expect(deck.position()).toBe("card-0 — card 1 of 4");
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+    expect(focus).toEqual([]);
+    expect(deck.focused()).toBe("card-0's link");
+    // …and the next press starts from the stack: nothing uncovered until it is pushed
+    deck.grab();
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+  });
+
+  test("🔴 the review's thumb, pushed up the deck with a pixel of drift or none: nothing uncovered, no step", () => {
+    for (const drift of [0, 1]) {
+      const deck = steppedDeck(4);
+      deck.grab();
+      for (let move = 1; move <= 3; move += 1) {
+        deck.pull(drift);
+        expect(deck.drawn(), `drift ${drift}, move ${move}`).toEqual(deck.inFront("card-0"));
+      }
+      deck.lose();
+      expect(deck.position(), `drift ${drift}`).toBe("card-0 — card 1 of 4");
+      expect(deck.drawn(), `drift ${drift}`).toEqual(deck.inFront("card-0"));
+    }
+  });
+
+  test("a cancel of another pointer — a second finger the browser takes — leaves the drag on", () => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(-120);
+    deck.lose(undefined, 2);
+    expect(deck.drawn()[1]).toBe("card-1: behind, inert, clipped to the front");
+    deck.letGo(-120);
+    expect(deck.position()).toBe("card-1 — card 2 of 4");
   });
 });
 

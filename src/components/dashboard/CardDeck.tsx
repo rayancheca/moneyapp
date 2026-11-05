@@ -11,6 +11,7 @@ import {
   deckSlot,
   dragOutcome,
   dragTilt,
+  dragUncovers,
   stepIndex,
 } from "@/lib/card-deck";
 
@@ -191,6 +192,13 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     setDrag(event.clientX - p.x);
   };
 
+  /** the pointer let go of and the front card back on the stack — and with it the sheet of the card behind */
+  const dropPointer = () => {
+    pointer.current = null;
+    setDragging(false);
+    setDrag(0);
+  };
+
   const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     const p = pointer.current;
     if (!p || p.id !== event.pointerId) return;
@@ -199,11 +207,21 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
     const velocity = (event.clientX - p.lastX) / elapsed;
     const width = deckRef.current?.getBoundingClientRect().width ?? 0;
     const outcome = dragOutcome(dx, width, velocity);
-    pointer.current = null;
-    setDragging(false);
-    setDrag(0);
+    dropPointer();
     if (outcome === "next") go(1);
     else if (outcome === "previous") go(-1);
+  };
+
+  /*
+   * ⛔ A pointer the browser takes back (`pointercancel`) abandons the drag: the card snaps back and the deck never
+   * steps, as ScrubChart drops its scrub. The browser took it — a vertical pan it claims (`touch-pan-y`, below), a
+   * touch the system interrupts — so where it says the pointer was is not where anyone let go. 🔴 It was read as a
+   * release there, and Chromium says clientX 0: a thumb pushed straight up from the middle of the deck was a drag of
+   * 195 px left at a fling's speed, and the page scrolled 72 px AND Runway went behind The car (the review of
+   * 246dcf1e, headless Chromium with CDP touch at 390 and 1024 px, his ledger copy 2026-11-05).
+   */
+  const abandonDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointer.current?.id === event.pointerId) dropPointer();
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -229,8 +247,9 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   // what is on the card a step brings forward fades in on the step's own duration — and at once, as the step moves,
   // under reduced motion (the slot below)
   const fadeIn = reduced ? "" : "*:*:transition-opacity *:*:duration-(--duration-normal)";
-  // a drag is on once the front card has moved off the card behind it, not while a press has merely landed
-  const pushed = dragging && drag !== 0;
+  // a drag is on once it has pushed the front card `UNCOVER_SLOP_PX` off the card behind it — not while a press has
+  // merely landed, nor for a thumb's drift on a vertical pan the browser is about to take
+  const pushed = dragging && dragUncovers(drag);
 
   return (
     <div className="space-y-3">
@@ -244,7 +263,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerCancel={abandonDrag}
         className="relative touch-pan-y select-none rounded-(--radius-card) outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
         style={{
           height: height === null ? undefined : height + VISIBLE_DEPTH * LAYER_OFFSET_PX,
@@ -279,9 +298,12 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * card — and since d27f4f8f a drag on Runway uncovered The car as an empty sheet until it let go (the
            * review of d27f4f8f); it uncovers "$1,306.79 a month, all in" and its rows now (his ledger copy,
            * 2026-11-05). That card only: Earned vs banked, two back, stays its sheet, or its text would show
-           * through The car, drawn at 0.8. Only once the pointer has moved: a press on the front card, or a
-           * vertical pan the browser claims, must not flash the next card into the edge. The sheet comes back the
-           * moment the drag ends or is cancelled, and the card stays `inert` throughout — the reveal is the eye's.
+           * through The car, drawn at 0.8. Only once the drag has pushed the front card 10 px off it
+           * (`UNCOVER_SLOP_PX`): a press on the front card, or a thumb's drift on a vertical pan the browser is
+           * about to take, must not flash the next card into the edge. 🔴 Any push at all did, and a thumb pushed
+           * straight up the deck with a pixel of drift flashed The car into Runway's edge until Chromium took the
+           * pointer (the review of 246dcf1e). The sheet comes back the moment the drag ends or the browser takes
+           * it, and the card stays `inert` throughout — the reveal is the eye's.
            *
            * …and the card a step brings forward fades what is on it in over the step's own 300 ms
            * (`--duration-normal`, on its opacity alone) rather than popping it in at the start of the move. The

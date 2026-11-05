@@ -150,6 +150,25 @@ export function dragOutcome(dx: number, deckWidth: number, velocity: number): Dr
 }
 
 /**
+ * How far a drag must push the front card sideways, px, before the card directly behind it shows what is on it
+ * (CardDeck: at rest, and under any push shorter than this, every card behind is its sheet only).
+ *
+ * 🔴 It was any push at all, and a thumb pushed straight up the deck flashed the next card into the stack's edge. The
+ * browser lets a pan travel before it takes the pointer for the page's own scroll (`touch-pan-y`) — 18 px, three moves
+ * of 6, in headless Chromium — and one pixel of sideways drift in that travel uncovered The car under Runway until it
+ * did (the review of 246dcf1e, CDP touch at 390 and 1024 px, his ledger copy 2026-11-05). Ten pixels sideways over
+ * those 18 px is a lean of 29°, past the drift of a thumb pushed straight up, and far short of the quarter of the
+ * deck's width a drag travels to step it (`COMMIT_FRACTION`). ⚠️ A pan that leans further can still uncover it for
+ * the move or two before the browser takes it, and covers it again the moment the browser does (CardDeck's cancel).
+ */
+export const UNCOVER_SLOP_PX = 10;
+
+/** Whether a drag `dx` px sideways (signed) has pushed the front card far enough off the card behind to uncover it. */
+export function dragUncovers(dx: number): boolean {
+  return Math.abs(dx) >= UNCOVER_SLOP_PX;
+}
+
+/**
  * The tilt a dragged card takes, in degrees.
  *
  * This is the whole "like Tinder" feel and it is one line: the card pivots as
