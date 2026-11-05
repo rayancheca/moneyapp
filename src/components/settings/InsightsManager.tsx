@@ -1,6 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import {
+  clearInsightSelectionsAction,
+  runInsightSelectionAction,
+  stopInsightSelectionAction,
+  updateInsightSettingsAction,
+} from "@/app/settings/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
+import { settleAction } from "@/hooks/useAction";
 import { formatIsoInstantLong } from "@/lib/format-instant";
 import type { InsightSelectRunResult } from "@/services/insight-selection";
 import { INSIGHT_SURFACES } from "@/lib/insight-surfaces";
@@ -16,10 +24,12 @@ export interface InsightsManagerProps {
   lastRun: (InsightSelectRunResult & { at: string }) | null;
   isRunning: boolean;
   estPerPoolUsd: number;
-  save: (formData: FormData) => Promise<void>;
-  run: () => Promise<{ ok: true; data: InsightSelectRunResult } | { ok: false; error: string }>;
-  stop: () => Promise<{ ok: true }>;
-  clear: () => Promise<{ ok: true; data: { removed: number } }>;
+  /**
+   * The refusal the page shows (`?error=`), or null: while one shows, its form's save, landing, takes it away
+   * (`RefusalShownField`, `landBack`). It imports its actions, as every client file does, so each press is read where
+   * it is made (useAction.test.ts).
+   */
+  refusal: string | null;
 }
 
 /**
@@ -37,6 +47,10 @@ export function InsightsManager(props: InsightsManagerProps) {
   const [note, setNote] = useState<string | null>(null);
   const renderedSurfaces = INSIGHT_SURFACES.map((s) => s.id).join(",");
 
+  /* Each press settles its call (`settleAction`), so one that never reached the server says what it threw on the note
+     line. 🔴 Review of 7b7443b2 (2026-11-05): they awaited it with no catch inside this transition, and React chains an
+     async transition's rejection into its pending state, thrown on the next render to the page's error boundary
+     (react-dom's `startTransition`, read 2026-11-05) — "Settings didn't load." for a press the server never saw. */
   const act = (fn: () => Promise<string | null>): void => {
     startTransition(async () => {
       setNote(await fn());
@@ -54,7 +68,8 @@ export function InsightsManager(props: InsightsManagerProps) {
         </p>
       </div>
 
-      <form action={props.save} className="space-y-3">
+      <form action={updateInsightSettingsAction} className="space-y-3">
+        <RefusalShownField error={props.refusal} />
         <input type="hidden" name="renderedSurfaces" value={renderedSurfaces} />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" name="insightsEnabled" defaultChecked={props.enabled} className="size-4" />
@@ -108,7 +123,7 @@ export function InsightsManager(props: InsightsManagerProps) {
             disabled={pending || props.isRunning || !props.modelEnabled || !props.hasApiKey || props.overCap}
             onClick={() =>
               act(async () => {
-                const result = await props.run();
+                const result = await settleAction(() => runInsightSelectionAction());
                 if (!result.ok) return result.error;
                 if (!result.data.ran) return "Nothing to order.";
                 return `${result.data.selected} ordered, ${result.data.cached} already known · $${result.data.estCostUsd.toFixed(4)}`;
@@ -122,7 +137,12 @@ export function InsightsManager(props: InsightsManagerProps) {
             <button
               type="button"
               disabled={pending}
-              onClick={() => act(async () => ((await props.stop()), "Stop requested."))}
+              onClick={() =>
+                act(async () => {
+                  const result = await settleAction(() => stopInsightSelectionAction());
+                  return result.ok ? "Stop requested." : result.error;
+                })
+              }
               className="rounded-md border border-hairline px-3 py-1.5 text-sm"
             >
               Stop
@@ -133,7 +153,8 @@ export function InsightsManager(props: InsightsManagerProps) {
             disabled={pending || props.storedOrders === 0}
             onClick={() =>
               act(async () => {
-                const result = await props.clear();
+                const result = await settleAction(() => clearInsightSelectionsAction());
+                if (!result.ok) return result.error;
                 return `${result.data.removed} forgotten — every page is back to the app's own order.`;
               })
             }

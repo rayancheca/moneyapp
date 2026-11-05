@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { getDb } from "@/db/client";
 import {
   acceptGap,
@@ -13,7 +12,7 @@ import {
 } from "@/services/import/service";
 import type { ImportFiling } from "@/services/recurring-links";
 import { actionErrorMessage, type ActionResult } from "@/app/transactions/action-types";
-import { REFUSAL_SHOWN } from "@/components/ui/ErrorBanner";
+import { landBack } from "@/app/refusal-landing";
 
 const REVALIDATE = ["/", "/imports", "/accounts", "/transactions", "/spending", "/budgets", "/recurring"];
 
@@ -47,7 +46,7 @@ function archivedCopyRefusal(inputs: readonly ImportInput[]): string | null {
  * cannot be returned from one without breaking its call site. The validating
  * `*ResultAction` twin carries the real message, and the void adapter routes a
  * failure to `?error=` (the /budgets pattern) instead of throwing — and a success, on a page showing a refusal,
- * to /imports with none (`backToImports`).
+ * to /imports with none (`landBack`).
  *
  * Each twin also carries back what its import filed under a series he confirmed (`filed`, `fileImportedLinks`) — the
  * import's report, as the scripts print it; /imports names it under the read from the ledger (`importFilingsByRead`),
@@ -71,22 +70,15 @@ export async function uploadStatementsResultAction(formData: FormData): Promise<
   }
 }
 
-/**
- * Where each form on /imports lands: a refusal on `?error=` (the /budgets pattern); a press that lands stays where it
- * is — but where the page shows a refusal (the form carries `REFUSAL_SHOWN`), back on /imports with none.
+/*
+ * Where each form on /imports lands (`landBack`, the rule every form that stays on its page lands by): a refusal on
+ * `?error=`; a press that lands stays where it is — but where the page shows a refusal, back on /imports with none.
  * 🔴 Measured on a dev server over a copy of his ledger (2026-11-05): an upload refused with nothing picked left
  * `?error=Pick at least one statement file`, and the next upload, which landed (Imported files 454 → 455), kept the
  * banner on screen — each adapter returned on a success, and the page re-rendered under the URL the refusal had left.
- * Not a redirect after every press, as /budgets does: it scrolled the page to its top (1,200px to 0, the same server).
- * ⛔ redirect() throws NEXT_REDIRECT by design — it must stay outside any catch.
  */
-function backToImports(formData: FormData, result: ActionResult<unknown>): void {
-  if (!result.ok) redirect(`/imports?error=${encodeURIComponent(result.error)}`);
-  if (formData.get(REFUSAL_SHOWN) !== null) redirect("/imports");
-}
-
 export async function uploadStatementsAction(formData: FormData): Promise<void> {
-  backToImports(formData, await uploadStatementsResultAction(formData));
+  landBack("/imports", formData, await uploadStatementsResultAction(formData));
 }
 
 export async function unimportFileResultAction(
@@ -105,7 +97,7 @@ export async function unimportFileResultAction(
 }
 
 export async function unimportFileAction(formData: FormData): Promise<void> {
-  backToImports(formData, await unimportFileResultAction(formData));
+  landBack("/imports", formData, await unimportFileResultAction(formData));
 }
 
 export async function acceptGapResultAction(
@@ -124,5 +116,5 @@ export async function acceptGapResultAction(
 }
 
 export async function acceptGapAction(formData: FormData): Promise<void> {
-  backToImports(formData, await acceptGapResultAction(formData));
+  landBack("/imports", formData, await acceptGapResultAction(formData));
 }

@@ -37,12 +37,14 @@ const {
   backUpNowAction,
   downloadSnapshotAction,
   restoreSnapshotAction,
+  updateInsightSettingsAction,
   updateInsightSettingsResultAction,
   updateSettingsAction,
   updateSettingsResultAction,
 } = await import("./actions");
 const { insightSelections } = await import("@/db/schema/insights");
 const { INSIGHT_SURFACES } = await import("@/lib/insight-surfaces");
+const { refusalShownFields } = await import("@/components/ui/ErrorBanner");
 
 beforeAll(() => {
   seedDatabase(getDbBundle().db);
@@ -66,6 +68,12 @@ const VALID = {
 function form(overrides: Partial<typeof VALID> = {}): FormData {
   const fd = new FormData();
   for (const [k, v] of Object.entries({ ...VALID, ...overrides })) fd.set(k, v);
+  return fd;
+}
+
+/** a form on the page while it shows a refusal (`refusalShownFields`) */
+function shown(fd: FormData): FormData {
+  for (const [name, value] of Object.entries(refusalShownFields("Price staleness window: Too small"))) fd.set(name, value);
   return fd;
 }
 
@@ -126,6 +134,40 @@ describe("updateSettingsAction (the <form action> adapter)", () => {
     redirects.length = 0;
     await expect(updateSettingsAction(form())).resolves.toBeUndefined();
     expect(redirects).toEqual([]);
+  });
+
+  /*
+   * 🔴 The review of 425ae02c (2026-11-05, a dev server over his ledger copy 10-29b): a cleared "Price staleness
+   * (hours)" refused to `/settings?error=Price staleness window: Too small: expected number to be >=1`; the next Save
+   * landed (4 → 6) and the banner stayed beside the saved 6 — the adapter returned, and the page re-rendered under the
+   * URL the refusal had left (`landBack`).
+   */
+  test("…and one that lands while a refusal shows goes back to /settings with none — its banner gone", async () => {
+    redirects.length = 0;
+    await expect(updateSettingsAction(shown(form({ priceStalenessHours: "6" })))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(redirects).toEqual(["/settings"]);
+    expect(readSettings(getDb()).priceStalenessHours).toBe(6);
+  });
+});
+
+describe("updateInsightSettingsAction (the insights form's adapter)", () => {
+  const rendered = (): FormData => {
+    const fd = new FormData();
+    fd.set("renderedSurfaces", INSIGHT_SURFACES.map((s) => s.id).join(","));
+    fd.set("insightsEnabled", "on");
+    return fd;
+  };
+
+  test("a save that lands stays where it is", async () => {
+    redirects.length = 0;
+    await expect(updateInsightSettingsAction(rendered())).resolves.toBeUndefined();
+    expect(redirects).toEqual([]);
+  });
+
+  test("…and one that lands while a refusal shows goes back to /settings with none", async () => {
+    redirects.length = 0;
+    await expect(updateInsightSettingsAction(shown(rendered()))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(redirects).toEqual(["/settings"]);
   });
 });
 

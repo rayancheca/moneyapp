@@ -204,7 +204,7 @@ function ClusterCard({ cluster, categories, onConfirm, onRecategorize }: Cluster
   function expand(): void {
     setExpanding(true);
     startTransition(async () => {
-      const result = await clusterRowsAction(cluster.ref);
+      const result = await settleAction(() => clusterRowsAction(cluster.ref));
       setExpanding(false);
       if (result.ok) setExpanded(result.data);
       else toast({ title: result.error, tone: "negative" });
@@ -213,7 +213,7 @@ function ClusterCard({ cluster, categories, onConfirm, onRecategorize }: Cluster
 
   function onPickRow(row: ReviewClusterSampleRow, categoryId: string): void {
     startTransition(async () => {
-      const result = await bulkApplyAction({ ids: [row.id], patch: { categoryId } });
+      const result = await settleAction(() => bulkApplyAction({ ids: [row.id], patch: { categoryId } }));
       if (!result.ok) {
         toast({ title: result.error, tone: "negative" });
         return;

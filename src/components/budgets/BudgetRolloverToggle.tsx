@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { setBudgetRolloverAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { rolloverToggleTitle, rolloverToggleToast } from "@/lib/rollover-held-back";
 
 interface BudgetRolloverToggleProps {
@@ -40,7 +41,7 @@ export function BudgetRolloverToggle({
     setOn(next);
     onChange?.(next);
     startTransition(async () => {
-      const result = await setBudgetRolloverAction({ budgetId, enabled: next });
+      const result = await settleAction(() => setBudgetRolloverAction({ budgetId, enabled: next }));
       if (!result.ok) {
         setOn(!next);
         onChange?.(!next);

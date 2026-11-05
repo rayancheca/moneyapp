@@ -6,6 +6,7 @@ import { createPredictedBudgetsAction, predictBudgetsAction } from "@/app/budget
 import { Icon } from "@/components/shell/Icon";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { formatCents } from "@/lib/money";
 import type { PredictedBudget } from "@/services/category-forecast";
 
@@ -27,7 +28,7 @@ export function PredictBudgets() {
 
   function load(): void {
     startTransition(async () => {
-      const result = await predictBudgetsAction();
+      const result = await settleAction(() => predictBudgetsAction());
       if (!result.ok) {
         toast({ title: result.error, tone: "negative" });
         return;
@@ -55,8 +56,8 @@ export function PredictBudgets() {
     const picked = (predictions ?? []).filter((p) => checked.has(p.categoryId));
     if (picked.length === 0) return;
     startTransition(async () => {
-      const result = await createPredictedBudgetsAction(
-        picked.map((p) => ({ categoryId: p.categoryId, amountCents: p.amountCents })),
+      const result = await settleAction(() =>
+        createPredictedBudgetsAction(picked.map((p) => ({ categoryId: p.categoryId, amountCents: p.amountCents }))),
       );
       if (!result.ok) {
         toast({ title: result.error, tone: "negative" });

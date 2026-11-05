@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { calleeName, lineOf, nodesUnder, scanServerActions } from "@/lib/server-action-scan";
 
 /**
  * The two pure halves of the action runner. `useAction` itself is React and is
@@ -139,5 +141,80 @@ describe("every press a client file makes is settled", () => {
       }),
     );
     expect(unsettled).toEqual([]);
+  });
+
+  /*
+   * 🔴 Review of 7b7443b2 (2026-11-05): the test above reads only what a `.then(` hangs off, so a press AWAITED with no
+   * catch walked round it green — the cadence sentence's three editors on /recurring/[id] (`async function save`, its
+   * promise dropped by every caller: on a dev server over his ledger copy 10-29b, HBO Max's cadence menu picked Monthly
+   * with the server down rejected "Failed to fetch" unhandled, no toast, and the sentence still read "charges annual"),
+   * and the review inbox's row pick awaited inside `startTransition(async …)`, whose rejection a transition throws to
+   * the page's error boundary. So every server action is read where it is used, in the parsed file
+   * (`scanServerActions`): a call is settled — inside `settleAction`, a run (`useAction`'s, or a card's own that settles
+   * what it is handed), an Undo card (`offerUndoToastWith`), an inline edit's `onSave` (`useInlineEdit` settles it) or
+   * a toast's `onAction` (`settleToastAction`) — or caught (`.catch(`, awaited inside a `try` that catches, or bound to
+   * a name every use of which is), or a load (`load…`, as above).
+   */
+  const scan = scanServerActions();
+  const SETTLERS = new Set(["settleAction", "run", "offerUndoToastWith"]);
+
+  /** Is the promise `node` stands for settled where it is: handed to a settler, caught, or awaited in a `try`? */
+  function settledAt(node: ts.Node): boolean {
+    let awaited = false;
+    for (let at: ts.Node = node; at.parent !== undefined; at = at.parent) {
+      const up = at.parent;
+      if (ts.isPropertyAccessExpression(up) && up.expression === at && up.name.text === "catch") return true;
+      if (ts.isAwaitExpression(up)) awaited = true;
+      if (ts.isTryStatement(up) && up.tryBlock === at && up.catchClause !== undefined && awaited) return true;
+      if (ts.isFunctionLike(at)) {
+        if (ts.isCallExpression(up) && up.arguments.some((a) => a === at) && SETTLERS.has(calleeName(up) ?? "")) return true;
+        if (ts.isJsxExpression(up) && ts.isJsxAttribute(up.parent) && up.parent.name.getText() === "onSave") return true;
+        if (ts.isPropertyAssignment(up) && up.name.getText() === "onAction") return true;
+        // an await outside a function does not await what the function makes
+        awaited = false;
+      }
+    }
+    return false;
+  }
+
+  function settledCall(call: ts.CallExpression): boolean {
+    if (settledAt(call)) return true;
+    const bound = call.parent;
+    if (!ts.isVariableDeclaration(bound) || bound.initializer !== call || !ts.isIdentifier(bound.name)) return false;
+    const name = bound.name;
+    const scope = ts.findAncestor(bound.parent, ts.isFunctionLike) ?? call.getSourceFile();
+    const uses = nodesUnder(scope, ts.isIdentifier).filter((id) => id.text === name.text && id !== name);
+    return uses.length > 0 && uses.every(settledAt);
+  }
+
+  /** Every use of a server action a file outside `"use server"` makes: the identifier, and the action it names. */
+  const uses = scan.files
+    .filter((scanned) => scanned.directive !== "use server")
+    .flatMap((scanned) => {
+      const bound = scan.bindingsIn(scanned);
+      return nodesUnder(scanned.ast, ts.isIdentifier)
+        .filter((id) => bound.has(id.text) && !ts.isImportSpecifier(id.parent) && ts.findAncestor(id, ts.isTypeNode) === undefined)
+        .map((id) => ({ scanned, id }));
+    });
+
+  it("a server action a client file calls is settled where it is called — awaited, or in a transition", () => {
+    const unsettled = uses.flatMap(({ scanned, id }) => {
+      const call = id.parent;
+      if (!ts.isCallExpression(call) || call.expression !== id || /^load[A-Z]/.test(id.text)) return [];
+      return settledCall(call) ? [] : [`${lineOf(scanned, call)} ${id.text}`];
+    });
+    expect(unsettled).toEqual([]);
+  });
+
+  it("…and one is handed on only as a form's `action` or to a settler, so every call is read where it is imported", () => {
+    const handed = uses.flatMap(({ scanned, id }) => {
+      const up = id.parent;
+      // a load handed to the month pager (`useMonthPaging` runs it), as a load is called anywhere
+      if (/^load[A-Z]/.test(id.text)) return [];
+      if (ts.isCallExpression(up) && (up.expression === id || SETTLERS.has(calleeName(up) ?? ""))) return [];
+      if (ts.isJsxExpression(up) && ts.isJsxAttribute(up.parent) && up.parent.name.getText() === "action") return [];
+      return [`${lineOf(scanned, id)} ${id.text}`];
+    });
+    expect(handed).toEqual([]);
   });
 });

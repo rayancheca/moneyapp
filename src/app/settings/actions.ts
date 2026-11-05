@@ -3,7 +3,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { defaultBackupsDir, getDb, getDbBundle, type DbBundle } from "@/db/client";
 import { filesWithoutPrintedLines, recordImportedFiles } from "@/services/import/import-records";
@@ -28,6 +27,7 @@ import {
   firstIssueMessage,
   type ActionResult,
 } from "@/app/transactions/action-types";
+import { landBack } from "@/app/refusal-landing";
 
 const formSchema = z.object({
   aiMonthlyCapUsd: z.coerce.number().min(0).max(1_000),
@@ -78,11 +78,13 @@ export async function updateSettingsResultAction(
   return { ok: true, data: parsed.data };
 }
 
+/**
+ * A refusal on `?error=`; a save that lands while the page shows one goes back to /settings with none (`landBack`).
+ * 🔴 The review of 425ae02c (2026-11-05, his ledger copy 10-29b): a refused "Price staleness (hours)" left its banner
+ * beside the 6 the next Save stored.
+ */
 export async function updateSettingsAction(formData: FormData): Promise<void> {
-  const result = await updateSettingsResultAction(formData);
-  if (result.ok) return;
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(`/settings?error=${encodeURIComponent(result.error)}`);
+  landBack("/settings", formData, await updateSettingsResultAction(formData));
 }
 
 /* ── PASS 72d — insights: the kill switch, and the model that orders them ── */
@@ -138,9 +140,7 @@ export async function updateInsightSettingsResultAction(
 }
 
 export async function updateInsightSettingsAction(formData: FormData): Promise<void> {
-  const result = await updateInsightSettingsResultAction(formData);
-  if (result.ok) return;
-  redirect(`/settings?error=${encodeURIComponent(result.error)}`);
+  landBack("/settings", formData, await updateInsightSettingsResultAction(formData));
 }
 
 /** Fill the selection cache. Value-returning so the button can report honestly. */
@@ -156,10 +156,11 @@ export async function runInsightSelectionAction(): Promise<
   }
 }
 
-export async function stopInsightSelectionAction(): Promise<{ ok: true }> {
+// the shared result (`ActionResult`), so the Stop press settles as every press does (`settleAction`)
+export async function stopInsightSelectionAction(): Promise<ActionResult<null>> {
   requestInsightSelectStop(getDb());
   revalidatePath("/settings");
-  return { ok: true };
+  return { ok: true, data: null };
 }
 
 /** Forget every stored order — the app returns to its own editorial sequence. */

@@ -1,6 +1,7 @@
 "use client";
 
 import { addAnchorAction } from "@/app/accounts/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { Field, Input } from "@/components/ui/Field";
 import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
 
@@ -8,11 +9,14 @@ interface AnchorFormProps {
   accountId: string;
   isCredit: boolean;
   defaultDate: string;
+  /** the refusal the page shows (`?error=`), or null: while one shows, a balance that lands takes it away (`landBack`) */
+  refusal: string | null;
 }
 
-export function AnchorForm({ accountId, isCredit, defaultDate }: AnchorFormProps) {
+export function AnchorForm({ accountId, isCredit, defaultDate, refusal }: AnchorFormProps) {
   return (
     <form action={addAnchorAction} className="flex flex-wrap items-end gap-3">
+      <RefusalShownField error={refusal} />
       <input type="hidden" name="accountId" value={accountId} />
       <Field label="Date">
         {/* the bounds mirror manualAnchorInputSchema exactly, so a fat-fingered

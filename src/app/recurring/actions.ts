@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { CADENCES } from "@/db/schema/recurring";
@@ -38,6 +37,7 @@ import {
   firstIssueMessage,
   type ActionResult,
 } from "@/app/transactions/action-types";
+import { landBack } from "@/app/refusal-landing";
 
 // the single-argument form reports the SAME message when the hidden input is
 // missing entirely, instead of zod's "expected string, received undefined"
@@ -82,7 +82,8 @@ function failure(error: unknown, fallback: string): { ok: false; error: string }
  * `(formData) => void | Promise<void>`, so a result cannot be returned from one
  * without breaking its call site. Each delegates to a validating
  * `*ResultAction` twin and routes a failure to `?error=` (the /budgets pattern)
- * instead of letting a throwing `.parse()` become an error digest.
+ * instead of letting a throwing `.parse()` become an error digest — and a press that lands while the page shows a
+ * refusal back to /recurring with none (`landBack`).
  */
 export async function detectNowResultAction(): Promise<ActionResult<DetectionSummary>> {
   try {
@@ -94,11 +95,8 @@ export async function detectNowResultAction(): Promise<ActionResult<DetectionSum
   }
 }
 
-export async function detectNowAction(): Promise<void> {
-  const result = await detectNowResultAction();
-  if (result.ok) return;
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
+export async function detectNowAction(formData: FormData): Promise<void> {
+  landBack("/recurring", formData, await detectNowResultAction());
 }
 
 /** Shared core of confirm/dismiss — the only difference is the target status. */
@@ -126,9 +124,7 @@ export async function confirmSeriesResultAction(
 }
 
 export async function confirmSeriesAction(formData: FormData): Promise<void> {
-  const result = await confirmSeriesResultAction(formData);
-  if (result.ok) return;
-  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
+  landBack("/recurring", formData, await confirmSeriesResultAction(formData));
 }
 
 export async function dismissSeriesResultAction(
@@ -138,9 +134,7 @@ export async function dismissSeriesResultAction(
 }
 
 export async function dismissSeriesAction(formData: FormData): Promise<void> {
-  const result = await dismissSeriesResultAction(formData);
-  if (result.ok) return;
-  redirect(`/recurring?error=${encodeURIComponent(result.error)}`);
+  landBack("/recurring", formData, await dismissSeriesResultAction(formData));
 }
 
 // ─── Detail-page value-returning actions (§4.2) ────────────────────────────

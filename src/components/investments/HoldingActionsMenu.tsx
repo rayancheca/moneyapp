@@ -20,9 +20,12 @@ interface HoldingAccount {
 export function HoldingActionsMenu({
   accounts,
   defaultDate,
+  refusal,
 }: {
   accounts: HoldingAccount[];
   defaultDate: string;
+  /** the refusal the page shows, handed to its form (`HoldingForm`) */
+  refusal: string | null;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -36,7 +39,7 @@ export function HoldingActionsMenu({
               The explanation it carried now rides on that button's tooltip. */}
           <section>
             <h3 className="mb-3 text-sm font-medium">Add or update a holding</h3>
-            <HoldingForm accounts={accounts} defaultDate={defaultDate} />
+            <HoldingForm accounts={accounts} defaultDate={defaultDate} refusal={refusal} />
           </section>
         </div>
       </Sheet>

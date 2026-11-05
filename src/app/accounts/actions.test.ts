@@ -47,9 +47,12 @@ const {
   addAnchorResultAction,
   createAccountAction,
   createAccountResultAction,
+  deleteAnchorAction,
   deleteAnchorResultAction,
+  setAccountActiveAction,
   setAccountActiveResultAction,
 } = await import("./actions");
+const { refusalShownFields } = await import("@/components/ui/ErrorBanner");
 
 let institutionId: string;
 let accountId: string;
@@ -72,6 +75,11 @@ function form(entries: Record<string, string>): FormData {
   const fd = new FormData();
   for (const [k, v] of Object.entries(entries)) fd.set(k, v);
   return fd;
+}
+
+/** a form on the page while it shows a refusal (`refusalShownFields`) */
+function shown(entries: Record<string, string>): FormData {
+  return form({ ...entries, ...refusalShownFields("Balance: that amount didn't parse") });
 }
 
 describe("addAnchorResultAction", () => {
@@ -168,6 +176,50 @@ describe("addAnchorAction (the <form action> adapter)", () => {
       addAnchorAction(form({ accountId, anchoredOn: "2026-01-18", balance: "50" })),
     ).resolves.toBeUndefined();
     expect(redirects).toEqual([]);
+  });
+
+  /*
+   * 🔴 The review of 425ae02c (2026-11-05): a mistyped balance on /accounts/[id] refused to `?error=`, and the right one
+   * after it landed under that URL — the refusal stayed beside the balance he had just added (`landBack`).
+   */
+  test("…and one that lands while a refusal shows goes back to the account with none — its banner gone", async () => {
+    redirects.length = 0;
+    await expect(addAnchorAction(shown({ accountId, anchoredOn: "2026-01-19", balance: "60" }))).rejects.toThrow(
+      /NEXT_REDIRECT/,
+    );
+    expect(redirects).toEqual([`/accounts/${accountId}`]);
+  });
+});
+
+/*
+ * The account page's other two forms: a balance removed, the account archived or restored. Each is refused on /accounts
+ * (`?error=`), and each, landing while the account page shows a refusal — a balance refused there — goes back to it
+ * with none.
+ */
+describe("deleteAnchorAction and setAccountActiveAction (the account page's other adapters)", () => {
+  test("a balance removed while a refusal shows goes back to the account with none", async () => {
+    await addAnchorResultAction(form({ accountId, anchoredOn: "2026-01-20", balance: "70" }));
+    const { db } = getDbBundle();
+    const added = db.select().from(balanceAnchors).all().find((a) => a.accountId === accountId && a.anchoredOn === "2026-01-20")!;
+    redirects.length = 0;
+
+    await expect(deleteAnchorAction(shown({ anchorId: added.id, accountId }))).rejects.toThrow(/NEXT_REDIRECT/);
+
+    expect(redirects).toEqual([`/accounts/${accountId}`]);
+    expect(db.select().from(balanceAnchors).all().map((a) => a.id)).not.toContain(added.id);
+  });
+
+  test("…and the account restored while one shows", async () => {
+    redirects.length = 0;
+    await expect(setAccountActiveAction(shown({ accountId, isActive: "true" }))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(redirects).toEqual([`/accounts/${accountId}`]);
+  });
+
+  test("a refusal is still said on /accounts, and a press that lands with none showing stays where it is", async () => {
+    redirects.length = 0;
+    await expect(deleteAnchorAction(form({ accountId }))).rejects.toThrow(/NEXT_REDIRECT/);
+    await expect(setAccountActiveAction(form({ accountId, isActive: "true" }))).resolves.toBeUndefined();
+    expect(redirects).toEqual([`/accounts?error=${encodeURIComponent("Pick a balance entry")}`]);
   });
 });
 

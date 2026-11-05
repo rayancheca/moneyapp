@@ -97,8 +97,9 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
   function setArchived(node: CategoryTreeNode, archived: boolean): void {
     if (busy) return;
     setBusy(true);
-    const run = archived ? archiveCategoryAction : unarchiveCategoryAction;
-    void settleAction(() => run({ categoryId: node.id }))
+    // each action called where it is named, so the press gate reads it there (useAction.test.ts)
+    const input = { categoryId: node.id };
+    void settleAction(() => (archived ? archiveCategoryAction(input) : unarchiveCategoryAction(input)))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });

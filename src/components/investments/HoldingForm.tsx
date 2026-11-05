@@ -1,6 +1,7 @@
 "use client";
 
 import { addHoldingAction } from "@/app/investments/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { accountSubtypeLabel } from "@/lib/account-label";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { MAX_FINANCIAL_DATE, MIN_FINANCIAL_DATE } from "@/lib/date-window";
@@ -18,12 +19,16 @@ interface InvestmentAccount {
 export function HoldingForm({
   accounts,
   defaultDate,
+  refusal,
 }: {
   accounts: InvestmentAccount[];
   defaultDate: string;
+  /** the refusal the page shows (`?error=`), or null: while one shows, an add that lands takes it away (`landBack`) */
+  refusal: string | null;
 }) {
   return (
     <form action={addHoldingAction} className="grid gap-3 md:grid-cols-2">
+      <RefusalShownField error={refusal} />
       <Field label="Account">
         <Select name="accountId" required>
           {accounts.map((a) => (

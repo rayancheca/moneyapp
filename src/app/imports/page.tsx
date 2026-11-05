@@ -36,7 +36,7 @@ import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { ErrorBanner, errorParam, REFUSAL_SHOWN, refusalShownFields } from "@/components/ui/ErrorBanner";
+import { ErrorBanner, errorParam, RefusalShownField, refusalShownFields } from "@/components/ui/ErrorBanner";
 import { formatCents } from "@/lib/money";
 import { acceptGapAction, unimportFileAction, uploadStatementsAction } from "./actions";
 
@@ -199,8 +199,8 @@ export default async function ImportsPage({
             a file is always safe: duplicates are a guaranteed no-op.
           </p>
           <form action={uploadStatementsAction} className="flex flex-wrap items-center gap-3">
-            {/* while a refusal shows, a press that lands clears it (`backToImports`) */}
-            {error ? <input type="hidden" name={REFUSAL_SHOWN} value="1" /> : null}
+            {/* while a refusal shows, a press that lands clears it (`landBack`) */}
+            <RefusalShownField error={error} />
             {/* `min-w-0` on both boxes: a file input's min-content is its
                 button plus the filename text — 318px here, against 288px of
                 page at the 320 floor. As a flex item the label defaults to that
