@@ -12,6 +12,8 @@ import { recurringSeries } from "@/db/schema/recurring";
 import { transactions } from "@/db/schema/transactions";
 import { seedDatabase } from "@/db/seed";
 import { addDays } from "@/lib/dates";
+import { formatDayLong } from "@/lib/format-date";
+import { cashEarningsSectionNotes } from "@/lib/section-notes";
 import { unbankedIncomeForSeries } from "./arrears";
 import { incomeExpectation } from "./budgets";
 import { cashEarningsReadings } from "./cash-earnings";
@@ -183,7 +185,9 @@ function readingOfDay(day: string, today: string) {
   const month = day.slice(0, 7);
   const s = paydaySettlement(bundle.db, PAY, today);
   const entries = entriesOn(day, today, month);
-  const deposit = entries.find((e) => e.transactionId !== null && e.amountCents > 0) ?? null;
+  // the day's largest deposit — the week, beside an extra one (`lib/per-payday`), whichever was stored first
+  const deposits = entries.filter((e) => e.transactionId !== null && e.amountCents > 0);
+  const deposit = deposits.sort((a, b) => b.amountCents - a.amountCents)[0] ?? null;
   const line = payLine(today);
   return {
     portions: s.portions,
@@ -525,7 +529,9 @@ describe("money out linked to his pay is held to no week", () => {
     expect(heldTo("2026-09-17", -50_000)).toBeNull();
     // the deposit is held to the week at the day's net, as it was
     expect(graded("2026-09-17", WEEK)).toEqual(["paid_different", WEEK]);
-    expect(payNotices()).toEqual(["It America LLC (weekly pay) fell by $500.00 between its usual amount and Sep 17."]);
+    expect(payNotices()).toEqual([
+      "It America LLC (weekly pay) fell by $500.00 between its usual amount and its amount on Sep 17.",
+    ]);
   });
 
   test("a payroll returned whole the same day: the return is ungraded, under a cached spread too", () => {
@@ -709,5 +715,103 @@ describe("two deposits on one day are one deposit", () => {
     ]);
     const unbanked = unbankedIncomeForSeries(bundle.db, new Set([PAY]), "2026-09-01", TODAY);
     expect(unbanked.series[0]?.occurrenceDates).toEqual(["2026-09-10"]);
+  });
+});
+
+/*
+ * ⚖️ THE WEEK BESIDE AN EXTRA DEPOSIT — default built, not asked (2026-11-04; `lib/per-payday`): a day whose money paid
+ * its one payday the week, every cent of it from a deposit that is the week to the cent, is the week paid and an extra
+ * deposit beside it on every surface that grades a row — settlement is untouched. 🔴 Read as the day, his Oct 15 (the
+ * week's $1,141.92 and an off-cycle $200.00) was one payday at $1,341.92: Worth a look read "It America LLC (weekly
+ * pay) rose by $200.00 between its usual amount and Oct 15.", the calendar drew both rows amber, and his popover warned
+ * "The ledger's own average of what actually posted is $1,175.25, which is not what you set." (his ledger copy,
+ * 2026-11-04).
+ */
+describe("the week's own deposit beside an extra one the same day", () => {
+  beforeEach(() => {
+    // a spread of $5.00 — a day held to the week as $1,341.92 reads changed whatever the measured spread says
+    bundle.db.update(recurringSeries).set({ amountCentsStddev: 500 }).where(eq(recurringSeries.id, PAY)).run();
+    rePost("2026-09-17", [20_000, WEEK]);
+  });
+
+  test("settlement is untouched: the day pays Sep 17 its week, and the $200.00 is left over", () => {
+    const s = paydaySettlement(bundle.db, PAY, TODAY);
+    expect(s.portions.filter((p) => p.depositOn === "2026-09-17")).toEqual([
+      { paydayOn: "2026-09-17", depositOn: "2026-09-17", cents: WEEK },
+    ]);
+    expect(s.unallocatedCents).toBe(20_000);
+  });
+
+  test("the calendar draws the week paid and the extra toward no payday — and nothing says his pay rose", () => {
+    expect(graded("2026-09-17", WEEK)).toEqual(["paid", WEEK]);
+    expect(graded("2026-09-17", 20_000)).toEqual(["paid", null]);
+    expect(entriesOn("2026-09-17").find((e) => e.amountCents === 20_000)?.towardNoPayday).toBe(true);
+    expect(payNotices()).toEqual([]);
+  });
+
+  test("the series page holds the week to the week, and the extra to nothing", () => {
+    expect(heldTo("2026-09-17", WEEK)).toBe(WEEK);
+    expect(heldTo("2026-09-17", 20_000)).toBeNull();
+  });
+
+  test("the posted average is the week's, and the extra is the one deposit that paid no payday", () => {
+    expect(samplesOf(TODAY)).toEqual({
+      avg: WEEK,
+      samples: ["2026-09-03", "2026-09-10", "2026-09-17"].map((day) => [day, WEEK, 1, WEEK]),
+    });
+    const s = bundle.db.select().from(recurringSeries).where(eq(recurringSeries.id, PAY)).get()!;
+    expect(postedAveragesBySeries(bundle.db, [s], TODAY).get(PAY)!.perPayday!.noPaydayOfTheirOwn).toBe(1);
+  });
+
+  /*
+   * ⛔ …and /spending's notes, in the one phrase (`TOWARD_NO_PAYDAY`) and by the extra's day — never change over a
+   * payday's worth. 🔴 Read off the settlement alone, his Oct 15's $200.00 — "toward no payday" on the calendar, the
+   * series page and the popover — read "another $200.00 banked inside the window was more than the paydays its deposits
+   * paid came to" on /spending's October, "$200.00 of it was more than …" on Oct 15, and his year named Jun 5's $400.00
+   * alone (review of 339b2c7a, his ledger copy 2026-11-04).
+   */
+  const spendingNotes = (from: string, to: string, today = TODAY): string[] =>
+    cashEarningsSectionNotes({
+      rows: cashEarningsReadings(bundle.db, { from, to, today, withChecked: true }),
+      formatDay: formatDayLong,
+    }).map((n) => n.body);
+  const theExtra = "$200.00 of it, from the deposit of Thu, Sep 17, 2026, went toward no payday";
+
+  test("/spending: a window that banked its paydays and the extra says the extra went toward no payday", () => {
+    const noPayday = (from: string, to: string) =>
+      cashEarningsReadings(bundle.db, { from, to, today: TODAY, withChecked: true })[0]!.shortfall!.towardNoPayday;
+    expect(noPayday("2026-09-01", "2026-09-30")).toEqual([{ depositOn: "2026-09-17", cents: 20_000 }]);
+    // …and a window without its day names none of it
+    expect(noPayday("2026-09-01", "2026-09-16")).toEqual([]);
+    for (const [from, to] of [
+      ["2026-09-01", "2026-09-30"],
+      ["2026-09-17", "2026-09-17"],
+    ] as const) {
+      expect(spendingNotes(from, to)).toEqual([expect.stringContaining(` ${theExtra}.`)]);
+    }
+  });
+
+  test("/spending: a window short a payday names the extra inside what it banked, as it names Jun 5's $400.00", () => {
+    rePost("2026-09-10", []);
+    expect(spendingNotes("2026-09-01", "2026-09-30")).toEqual([
+      expect.stringContaining(`of which $2,483.84 was banked inside the window (${theExtra})`),
+    ]);
+  });
+
+  // ⚖️ …two weeks to the cent on a day that paid one are the week and a deposit toward no payday (`weekBesideExtra`)
+  test("/spending: the second week of a day that paid one went toward no payday, as the calendar draws it", () => {
+    rePost("2026-09-17", [WEEK, WEEK]);
+    expect(spendingNotes("2026-09-01", "2026-09-30")).toEqual([
+      expect.stringContaining(" $1,141.92 of it, from the deposit of Thu, Sep 17, 2026, went toward no payday."),
+    ]);
+  });
+
+  test("/spending: money beyond the read paydays is the extra, named by its day", () => {
+    // read Fri Sep 25: Sep 24 has passed after the checked Sep 20, so September holds money beyond its read paydays
+    expect(spendingNotes("2026-09-01", "2026-09-30", "2026-09-25")).toEqual([
+      expect.stringContaining(
+        "another $200.00 banked inside the window, from the deposit of Thu, Sep 17, 2026, went toward no payday; ",
+      ),
+    ]);
   });
 });

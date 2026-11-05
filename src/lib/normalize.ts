@@ -68,9 +68,13 @@ function isAchIndividualId(token: string): boolean {
  * A normalized description without its ACH individual IDs (above) — v3's LAST step, so it is v2's answer with the ID
  * taken off. ⛔ That is why it is exported: `normalized_description` is stored at import, and his rows keep the v2
  * strings theirs wrote, so a comparison of a stored description against another reads both through this — absorption
- * (`absorbIntoLiveSeries`) and the stripped key (`strippedDescriptionKey`) — and a v2 row and a v3 row of one payee are
- * one descriptor without a row of his being rewritten. A description that is nothing but the ID keeps it: an empty one
- * names nothing, and every reader skips it.
+ * (`absorbIntoLiveSeries`), the stripped key (`strippedDescriptionKey`), detection's groups and their names
+ * (`detectRecurringSeries`), Make recurring's siblings (`createSeriesFromTransaction`), the AI categorize queue
+ * (`pendingMerchantQueue`) and the score every import and duplicate reader ranks two descriptions by
+ * (`descriptionScore`) — and a v2 row and a v3 row of one payee are one descriptor without a row of his being
+ * rewritten. 🔴 b53989c8 said so of the first two alone: the next four still compared stored strings, so a payee's v2
+ * and v3 rows were two groups and two sibling sets, and a v2 row and its own line re-read scored 1, not 3 (review of
+ * b53989c8). A description that is nothing but the ID keeps it: an empty one names nothing, and every reader skips it.
  */
 export function withoutAchReferences(normalized: string): string {
   const tokens = normalized.split(" ");

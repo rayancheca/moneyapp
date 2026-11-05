@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { AppDatabase } from "@/db/client";
 import { aiCalls } from "@/db/schema/ai";
@@ -8,6 +8,7 @@ import { merchantAliases, merchants } from "@/db/schema/merchants";
 import { appSettings } from "@/db/schema/settings";
 import { transactions } from "@/db/schema/transactions";
 import { formatCategoryPath, parseCategoryPath } from "@/lib/category-path";
+import { withoutAchReferences } from "@/lib/normalize";
 import { isPrintableName } from "@/lib/printable-name";
 import { notUserOwned } from "./merchants";
 
@@ -100,9 +101,10 @@ export function requestClaudeStop(db: AppDatabase): void {
   writeStateKey(db, STOP_KEY, "1");
 }
 
-export function pendingMerchantQueue(db: AppDatabase): { description: string; count: number }[] {
-  const rows = db
-    .select({ normalizedDescription: transactions.normalizedDescription })
+/** The rows the queue waits on: active, unfiled, no merchant, and not left unfiled by him on purpose. */
+function pendingRows(db: AppDatabase): { id: string; description: string }[] {
+  return db
+    .select({ id: transactions.id, normalizedDescription: transactions.normalizedDescription })
     .from(transactions)
     .where(
       and(
@@ -112,9 +114,19 @@ export function pendingMerchantQueue(db: AppDatabase): { description: string; co
         notUserOwned(),
       ),
     )
-    .all();
+    .all()
+    /*
+     * ⛔ Each in normalizer v3's form (`withoutAchReferences`), as absorption and the stripped key read a stored
+     * description: a row stored before v3 keeps its ACH entry's individual ID. 🔴 Keyed as stored, each of a payee's
+     * entries was a merchant of its own — asked one by one, "seen 1x" apiece — and its next statement's rows another
+     * (review of b53989c8).
+     */
+    .map((r) => ({ id: r.id, description: withoutAchReferences(r.normalizedDescription) }));
+}
+
+export function pendingMerchantQueue(db: AppDatabase): { description: string; count: number }[] {
   const counts = new Map<string, number>();
-  for (const r of rows) counts.set(r.normalizedDescription, (counts.get(r.normalizedDescription) ?? 0) + 1);
+  for (const r of pendingRows(db)) counts.set(r.description, (counts.get(r.description) ?? 0) + 1);
   return [...counts.entries()]
     .map(([description, count]) => ({ description, count }))
     .sort((a, b) => b.count - a.count);
@@ -228,6 +240,9 @@ export async function classifyPendingMerchants(
 
     const submitted = new Set(batch.map((b) => b.description));
     db.transaction((tx) => {
+      // the rows each queued description stands for, read as the queue read them (`pendingRows`)
+      const rowsOf = new Map<string, string[]>();
+      for (const r of pendingRows(tx)) rowsOf.set(r.description, [...(rowsOf.get(r.description) ?? []), r.id]);
       for (const m of parsed.data.merchants) {
         // prompt-injection guard: the model's `description` is a DB write
         // selector — it must be exactly one of the descriptions we sent, or a
@@ -293,7 +308,7 @@ export async function classifyPendingMerchants(
           })
           .where(
             and(
-              eq(transactions.normalizedDescription, m.description),
+              inArray(transactions.id, rowsOf.get(m.description) ?? []),
               eq(transactions.status, "active"),
               isNull(transactions.categoryId),
               // defence in depth: category_id IS NULL already excludes every

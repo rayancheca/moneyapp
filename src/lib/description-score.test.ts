@@ -20,6 +20,23 @@ describe("descriptionScore", () => {
     expect(descriptionScore("ABCDEFG1one", "ABCDEFG2two")).toBe(0);
   });
 
+  /*
+   * ⛔ Both read in normalizer v3's form (`withoutAchReferences`): a stored row keeps the ACH individual ID its import
+   * wrote, and the same line read again — or the payee's next entry — carries none. 🔴 Compared as stored, Sep 24's
+   * payroll and its own line re-read scored 1, a shared prefix, where they are one descriptor (review of b53989c8).
+   */
+  test("a stored row holding its ACH individual ID and the same payee's v3 line are equal", () => {
+    const sep24 = "IT AMERICA LLC PAYROLL 9357426222928QJ KARIM CHECA,RAYAN";
+    expect(descriptionScore(sep24, "IT AMERICA LLC PAYROLL KARIM CHECA,RAYAN")).toBe(3);
+    expect(descriptionScore("IT AMERICA LLC PAYROLL KARIM CHECA,RAYAN", sep24)).toBe(3);
+    expect(
+      descriptionScore(
+        "CAPITAL ONE MOBILE PMT CA0FDA683870046 RAYAN KARIM CHECA",
+        "CAPITAL ONE MOBILE PMT RT0FDB716244107 RAYAN KARIM CHECA",
+      ),
+    ).toBe(3);
+  });
+
   test("scores unrelated descriptions zero", () => {
     expect(descriptionScore("Microsoft CUSIP 594918104 MSFT", "Cash settlement Crypto Purchase ETH")).toBe(0);
   });

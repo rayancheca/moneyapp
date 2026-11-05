@@ -302,7 +302,7 @@ describe("a series with no cached spread — the spread is measured per payday t
       perPayday: { paydays: 4, cents: 120_000 },
     });
     expect(payNotices()).toEqual([
-      expect.stringContaining(`${PAY_NAME} rose by $58.08 between its usual amount and Sep 23`),
+      expect.stringContaining(`${PAY_NAME} rose by $58.08 between its usual amount and its amount on Sep 23`),
     ]);
   });
 
@@ -402,7 +402,9 @@ describe("a lump and the week's deposit on ONE day, on a series with no cached s
  * ⚖️ THE UNIT IS THE DAY, pinned where it costs something (review of 9d11570, 2026-10-08 — pinned as intended
  * 2026-10-13). Settlement names money by its deposit's day, so a day's deposits are read as the one deposit it walked:
  * the day's money divided by the paydays it paid on its own (`lib/per-payday`). Neither reading below is wrong by §6A
- * 55a or 55b — there is one rate era, and what is left over pays no payday past the day's own reach — so both stand.
+ * 55a or 55b — there is one rate era, and what is left over pays no payday past the day's own reach — so both stood.
+ * ⚖️ The second is read apart since 2026-11-04 (default built, not asked): a day whose money stopped at the week one
+ * of its deposits is to the cent is the week and an extra deposit (`weekBesideExtra`).
  */
 describe("a day's deposits read as one — what that costs", () => {
   /*
@@ -429,28 +431,33 @@ describe("a day's deposits read as one — what that costs", () => {
   });
 
   /*
-   * TWO WEEKS ON ONE DAY THAT PAY ONE PAYDAY READ AS ONE CHANGED WEEK. Every payday from the anchor, Jul 23, to Sep 17
-   * was paid by its own deposit; Sep 24 brings that week's pay and the next week's early. The next week's money cannot
-   * reach Oct 1 (§6A 55b — the day's reach is Sep 27) and finds no older payday unpaid, so the day pays Sep 24 alone
-   * with $1,141.92 over, read as one payday at $2,283.84: drawn changed, as ONE deposit of $2,283.84 is, where each
-   * row read as the week it is used to be drawn paid. How his payer splits a transfer is not a fact about his pay. Oct
-   * 1 then passes unpaid — the early week paid nothing.
+   * ⚖️ TWO WEEKS ON ONE DAY THAT PAY ONE PAYDAY ARE THE WEEK AND AN EXTRA DEPOSIT — default built, not asked
+   * (2026-11-04; `weekBesideExtra`), where this test pinned one changed week on 2026-10-13 (b99a7374). Every payday
+   * from the anchor, Jul 23, to Sep 17 was paid by its own deposit; Sep 24 brings that week's pay and the next week's
+   * early.
+   * The next week's money cannot reach Oct 1 (§6A 55b — the day's reach is Sep 27) and finds no older payday unpaid, so
+   * the day pays Sep 24 alone with $1,141.92 over: one deposit is that week to the cent, drawn paid, and the other paid
+   * no payday, drawn "toward no payday" as settlement left it. Oct 1 then passes unpaid — the early week paid nothing.
+   * 🔴 Read as the day it was one payday at $2,283.84, and Worth a look read "rose by $1,141.92" for a week paid and a
+   * week early — as his ledger's Oct 15 read "rose by $200.00" for the week and an off-cycle $200.00 (2026-11-04).
    */
-  test("this week's and next week's pay on one day read as one payday at $2,283.84 — changed, like one deposit", () => {
+  test("this week's and next week's pay on one day are the week paid and a deposit toward no payday", () => {
     for (let day = "2026-07-23"; day <= "2026-09-17"; day = addDays(day, 7)) deposit(day, WEEK);
     const week = deposit("2026-09-24", WEEK);
     const early = deposit("2026-09-24", WEEK);
-    for (const id of [week, early]) {
-      expect(rowOn("2026-09", "2026-09-24", id)).toMatchObject({
-        state: "paid_different",
-        perPayday: { paydays: 1, cents: WEEK * 2, deposits: 2 },
-      });
-    }
+    const drawn = [week, early].map((id) => {
+      const e = rowOn("2026-09", "2026-09-24", id)!;
+      return [e.state, e.expectedAmountCents, e.towardNoPayday, e.perPayday];
+    });
+    expect(drawn).toEqual([
+      ["paid", WEEK, false, null],
+      ["paid", null, true, null],
+    ]);
     const s = paydaySettlement(bundle.db, PAY, TODAY);
     expect([s.settledBy.has("2026-10-01"), s.unallocatedCents]).toEqual([false, WEEK]);
-    expect(payNotices()).toEqual([expect.stringContaining(`${PAY_NAME} rose by $1,141.92`)]);
+    expect(payNotices()).toEqual([]);
 
-    // ⛔ the same money as ONE deposit reads the same: the split is the payer's
+    // ⛔ ONE deposit of the same money still reads changed: the bank posted one amount, and no part of it is the week
     bundle.db.delete(transactions).where(eq(transactions.id, early)).run();
     bundle.db.update(transactions).set({ amountCents: WEEK * 2 }).where(eq(transactions.id, week)).run();
     expect(rowOn("2026-09", "2026-09-24", week)).toMatchObject({ state: "paid_different", amountCents: WEEK * 2 });

@@ -84,6 +84,11 @@ export interface SettlementWalked extends Pick<PaydaySettlement, "settledBy" | "
   deposits: readonly AttributedDeposit[];
   /** the days money went back out on, a day of its own (`daysThatWentBackOut`): each day's net, negative */
   wentBackOut: readonly AttributedDeposit[];
+  /**
+   * of the days that paid a payday, the money of the deposits beside its week (`moneyBesideTheWeek`, `lib/per-payday`):
+   * what every reading of the rows calls toward no payday, which `deposits` cannot tell from change
+   */
+  besideTheWeek: readonly AttributedDeposit[];
 }
 
 export interface PayShortfallWindow {
@@ -197,7 +202,10 @@ export interface PayShortfall {
   otherBeyondCents: number;
   /** the window's passed paydays after the checked day that no deposit has settled — not looked for */
   unlookedPaydays: number;
-  /** deposit days inside the window whose money paid no payday at all (`PaydayReading.towardNoPayday`) */
+  /**
+   * the window's money that paid no payday (`PaydayReading.towardNoPayday`), per deposit day: a day whose money paid
+   * none, and the deposits beside a day's week (`SettlementWalked.besideTheWeek`)
+   */
   towardNoPayday: readonly { depositOn: string; cents: number }[];
   /**
    * The money deposits INSIDE the window put into paydays after the ones it counts — a later window's, or its own not
@@ -520,15 +528,25 @@ function byDepositDay(portions: readonly SettlementPortion[]): PaidAhead[] {
 }
 
 /**
- * The window's deposit days whose money paid no payday at all — the calendar's "toward no payday", read by DAY as
- * `lib/per-payday` reads it (settlement names money by its deposit's day). Change left over from a deposit that paid
- * a payday is not one of them: that day's money answered a week.
+ * The window's money that paid no payday, per deposit day — the calendar's "toward no payday", read by DAY as
+ * `lib/per-payday` reads it (settlement names money by its deposit's day): a day whose money paid no payday at all, by
+ * what it banked; and of a day that paid one, the deposits beside its week (`besideTheWeek`). Other change left over
+ * from a deposit that paid a payday is not among it: that day's money answered a week.
+ *
+ * ⚖️ The week beside an extra deposit is the readings' (default built, not asked, 2026-11-04; `weekBesideExtra`). 🔴
+ * Read off the days that banked alone, his Oct 15's $200.00 — "toward no payday" on the calendar, the series page and
+ * the popover — read "another $200.00 banked inside the window was more than the paydays its deposits paid came to" on
+ * /spending's October, "$200.00 of it was more than …" on Oct 15, and the year named Jun 5's $400.00 alone (review of
+ * 339b2c7a, his ledger copy 2026-11-04).
  */
 function towardNoPayday(s: SettlementWalked, inWindow: (day: string) => boolean): { depositOn: string; cents: number }[] {
   const paying = new Set(s.portions.map((p) => p.depositOn));
   const days = new Map<string, number>();
   for (const d of s.deposits) {
     if (d.amountCents <= 0 || !inWindow(d.postedOn) || paying.has(d.postedOn)) continue;
+    days.set(d.postedOn, (days.get(d.postedOn) ?? 0) + d.amountCents);
+  }
+  for (const d of s.besideTheWeek.filter((b) => inWindow(b.postedOn))) {
     days.set(d.postedOn, (days.get(d.postedOn) ?? 0) + d.amountCents);
   }
   return [...days].sort(([a], [b]) => compareDates(a, b)).map(([depositOn, cents]) => ({ depositOn, cents }));

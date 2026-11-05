@@ -5,6 +5,7 @@ import type { CategoryKind } from "@/db/schema/categories";
 import { recurringSeries, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { LIVE_ROW, transactions, type CategorizationSource } from "@/db/schema/transactions";
 import { todayIso } from "@/lib/dates";
+import { withoutAchReferences } from "@/lib/normalize";
 import { deriveAnchorDay, stepFrom, stepPlan } from "@/lib/recurring-step";
 import { formatCategoryPath } from "@/lib/category-path";
 import { loadCategoryIndex, uncategorizedWhere, type CategoryIndex } from "./analytics";
@@ -806,16 +807,15 @@ export function createSeriesFromTransaction(
       throw new Error("This transaction has no description to group by");
     }
 
-    // detection's identity rule: merchant across accounts, else account+description
+    // detection's identity rule: merchant across accounts, else account+description — a description in normalizer v3's
+    // form (`withoutAchReferences`), as detection reads it: a row stored before v3 keeps its ACH entry's individual ID
+    const descriptor = withoutAchReferences(seed.normalizedDescription);
     const allSeries = tx.select().from(recurringSeries).all();
     const mergedById = new Map(allSeries.map((s) => [s.id, s.mergedIntoId]));
     const existing = seed.merchantId
       ? allSeries.find((s) => s.merchantId === seed.merchantId)
       : allSeries.find(
-          (s) =>
-            s.merchantId === null &&
-            s.accountId === seed.accountId &&
-            s.name === seed.normalizedDescription,
+          (s) => s.merchantId === null && s.accountId === seed.accountId && withoutAchReferences(s.name) === descriptor,
         );
     if (existing) {
       const targetId = resolveMergeTarget(existing.id, mergedById);
@@ -844,14 +844,11 @@ export function createSeriesFromTransaction(
       return;
     }
 
-    // unlinked siblings of the same identity (linked rows are never stolen)
+    // unlinked siblings of the same identity (linked rows are never stolen) — 🔴 compared as stored, a payee's rows
+    // stored before v3 were no siblings of its v3 rows, nor of each other (review of b53989c8)
     const siblingWhere = seed.merchantId
       ? eq(transactions.merchantId, seed.merchantId)
-      : and(
-          isNull(transactions.merchantId),
-          eq(transactions.accountId, seed.accountId),
-          eq(transactions.normalizedDescription, seed.normalizedDescription),
-        );
+      : and(isNull(transactions.merchantId), eq(transactions.accountId, seed.accountId));
     const group = tx
       .select({
         id: transactions.id,
@@ -860,6 +857,7 @@ export function createSeriesFromTransaction(
         amountCents: transactions.amountCents,
         categoryId: transactions.categoryId,
         seriesLinkSource: transactions.seriesLinkSource,
+        normalizedDescription: transactions.normalizedDescription,
       })
       .from(transactions)
       .where(
@@ -870,7 +868,8 @@ export function createSeriesFromTransaction(
           siblingWhere,
         ),
       )
-      .all();
+      .all()
+      .filter((t) => seed.merchantId !== null || withoutAchReferences(t.normalizedDescription) === descriptor);
 
     // the full set joins only when it passes detection's own evidence bar
     const stats = analyzeGroup(group);
@@ -887,13 +886,12 @@ export function createSeriesFromTransaction(
           amountCents: seed.amountCents,
           categoryId: seed.categoryId,
           seriesLinkSource: seed.seriesLinkSource,
+          normalizedDescription: seed.normalizedDescription,
         },
       ];
     }
     const accountIds = new Set(members.map((t) => t.accountId));
-    const name = seed.merchantId
-      ? (ctx.merchantById.get(seed.merchantId)?.canonicalName ?? seed.normalizedDescription)
-      : seed.normalizedDescription;
+    const name = seed.merchantId ? (ctx.merchantById.get(seed.merchantId)?.canonicalName ?? descriptor) : descriptor;
     const isTransferSeed = (() => {
       const cat = seed.categoryId ? ctx.categoryById.get(seed.categoryId) : undefined;
       const root = cat?.parentId ? ctx.categoryById.get(cat.parentId) : cat;
