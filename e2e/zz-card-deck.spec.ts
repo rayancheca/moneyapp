@@ -143,7 +143,7 @@ test.describe("the card deck", () => {
     await page.locator(`${DECK} > [aria-current="true"]`).getByRole("link").first().focus();
     const box = await visibleBox(deck, "the card deck");
     await page.mouse.move(box.x + box.width * 0.7, box.y + 60);
-    // the deck takes one step per burst, timed on the page's own clock from 0 (CardDeck's wheel lock): wait past it
+    // the deck takes one step per 320 ms, timed on the page's own clock from 0 (CardDeck's wheel lock): wait past it
     await page.waitForFunction(() => performance.now() > 400);
     await page.mouse.wheel(120, 0);
     await expect(live).toContainText("card 2 of");

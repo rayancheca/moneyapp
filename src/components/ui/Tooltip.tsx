@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { FocusEvent, KeyboardEvent, ReactNode, RefObject } from "react";
+import type { FocusEvent, KeyboardEvent, ReactNode, RefObject, ToggleEvent } from "react";
 import { computePosition, type Placement } from "@/lib/positioning";
 import { OVERLAY_PRESS } from "./letterpress";
 
@@ -27,8 +27,9 @@ interface TooltipProps<T extends HTMLElement> {
 
 /**
  * Hover/focus tooltip: 300ms hover intent, immediate on keyboard focus,
- * hides on leave/blur/Esc. popover="manual" (not "auto") so hovering an
- * annotation never light-dismisses an open menu/popover stack.
+ * hides on leave/blur/Esc — and on a hide from outside, which it follows.
+ * popover="manual" (not "auto") so hovering an annotation never
+ * light-dismisses an open menu/popover stack.
  */
 export function Tooltip<T extends HTMLElement = HTMLElement>({
   content,
@@ -54,8 +55,23 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
 
   const handleMouseEnter = useCallback(() => {
     cancelDelay();
-    delayRef.current = setTimeout(() => setOpen(true), SHOW_DELAY_MS);
+    // ⛔ not on a control the page has made `inert` while the hover waited: a deck stepped, the card this ⓘ is on went
+    // behind, and the tooltip would open over the card brought forward (CardDeck's `turn`, Tooltip.test.ts)
+    delayRef.current = setTimeout(() => {
+      if (!triggerRef.current?.closest("[inert]")) setOpen(true);
+    }, SHOW_DELAY_MS);
   }, [cancelDelay]);
+
+  // A hide from outside is this tooltip's own: a deck stepping past the card it is on hides it (CardDeck's `turn`),
+  // and a hover opens it with no blur or leave to come — a two-finger swipe moves no pointer. Followed, as Popover
+  // follows a light dismiss; 🔴 unfollowed, the tooltip held itself open with nothing on screen, and the deck left it
+  // floating.
+  const handleToggle = useCallback(
+    (event: ToggleEvent<HTMLSpanElement>) => {
+      if (event.newState === "closed") hide();
+    },
+    [hide],
+  );
 
   const handleFocus = useCallback((event: FocusEvent<T>) => {
     // Immediate on keyboard focus only; pointer use rides the hover delay.
@@ -120,6 +136,7 @@ export function Tooltip<T extends HTMLElement = HTMLElement>({
         id={id}
         role="tooltip"
         popover="manual"
+        onToggle={handleToggle}
         className={`fixed inset-auto m-0 max-w-64 rounded-md border border-line bg-surface-overlay px-2 py-1 text-xs text-ink ${OVERLAY_PRESS}`}
       >
         {content}

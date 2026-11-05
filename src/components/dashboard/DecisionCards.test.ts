@@ -34,3 +34,24 @@ describe("the decision cards' count", () => {
     expect(render([card("runway"), card("trust")], mode)).toContain("2 readings");
   });
 });
+
+/**
+ * The grid counts the cards it is dealt: one card takes the full width rather than half of it beside a hole. 🔴 The
+ * dashboard counted them a second time, `decisionCardCount`, read by nothing since the deck's first commit (ebcb8f77)
+ * and missing Worth a look (removed 2026-11-05).
+ */
+describe("the decision cards' grid", () => {
+  const grid = (count: number): string => {
+    const cards = Array.from({ length: count }, (_, i) => card(`card-${i}`));
+    return renderToStaticMarkup(createElement(DecisionCards, { cards, state: { cards: "grid" } }));
+  };
+
+  test("one card is one column", () => {
+    expect(grid(1)).toContain("card-0 body");
+    expect(grid(1)).not.toContain("lg:grid-cols-2");
+  });
+
+  test("two cards go two across", () => {
+    expect(grid(2)).toContain("lg:grid-cols-2");
+  });
+});

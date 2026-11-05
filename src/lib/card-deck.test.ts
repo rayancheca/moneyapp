@@ -53,9 +53,11 @@ describe("where each card sits in the stack", () => {
   test("cards past the visible depth are parked, not unmounted", () => {
     /*
      * ⛔ Parked means transparent and pushed down — never `display: none`. A
-     * hidden card is gone from the accessibility tree and from anything that
-     * reads the page's text, and the stack is a PRESENTATION of twelve cards,
-     * not a filter that leaves eleven of them out of the document.
+     * hidden card is gone from anything that reads the page's text, and the
+     * stack is a PRESENTATION of twelve cards, not a filter that leaves eleven
+     * of them out of the document. (Not the accessibility tree: every card
+     * behind the front is `inert`, parked or not, so out of it either way —
+     * see CardDeck. The page's text is what tells the two apart.)
      */
     expect(deckSlot(VISIBLE_DEPTH, 0, 12).parked).toBe(false);
     expect(deckSlot(VISIBLE_DEPTH + 1, 0, 12).parked).toBe(true);
