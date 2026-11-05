@@ -16,7 +16,7 @@ import {
 import { firstPaydayOn } from "@/lib/payday-settlement";
 import type { ExpectedDay, UnattachedMatch } from "@/lib/unattached-match";
 import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
-import { outsidePortfolioCashAccountIds } from "./accounts";
+import { outsidePortfolioCashAccountIds } from "./account-sides";
 import { isAgentsIncomeSeries, loadCategoryIndex, payDayRows } from "./analytics";
 import { billingCarriers } from "./billing-carriers";
 import { accountsAwaitingStatements, silenceReadThrough } from "./cash-wallet-rule";

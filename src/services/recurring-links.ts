@@ -273,6 +273,11 @@ export function importFilingTargets(db: AppDatabase): ReadonlyMap<string, Confir
  * July's rent, filed by its import and excluded, came back from a chase-deposit-csv re-read excluded and linked to
  * Rent and filed nowhere, its line under the read gone — this asked `status = 'active'`. Latent on his ledger copy
  * 2026-11-04: 0 rows excluded, 0 filed as `confirmed_series`.
+ *
+ * ⛔ Wider than what linking claims, on purpose (⚖️ default built, not asked, 2026-11-05): the linkers claim what a
+ * series counts as a posting, an active row (`absorbIntoLiveSeries`, `planFirstPostings`), so a row he excluded is
+ * filed here only when it arrives linked. Still latent on his ledger copy 2026-11-05: 0 rows excluded, and no rule
+ * excludes one.
  */
 const FILED_AT_IMPORT = LIVE_ROW.filter((status) => status !== "quarantined");
 
@@ -350,16 +355,19 @@ export function fileImportedLinks(
  * restore, a gap accepted, the scripts. For as long as it is true: a row he or a rule has filed since is no longer the
  * import's (`notUserOwned` lets a rule file it again), and a row no longer linked names no series. ⚖️ default built,
  * not asked (2026-10-30): it names every row still in the ledger (`LIVE_ROW`) — one he excludes from analytics, or one
- * a later gap holds, is filed as it was; only a re-read's retired rows (superseded) are not the ledger's, and the read
- * in place names them. ⛔ The write's rule is this one less a gap's hold (`FILED_AT_IMPORT`): what a re-read files on
- * the row that replaces one he excluded is named under the read in place.
+ * a later gap holds, is filed as it was; a superseded row (a re-read's, a duplicate's, a takeover's) is no longer the
+ * ledger's, and its filing is named nowhere — the read in place names what it filed itself. ⛔ The write's rule is this
+ * one less a gap's hold (`FILED_AT_IMPORT`): what a re-read files on the row that replaces one he excluded is named
+ * under the read in place.
  *
  * 🔴 Review of 304c59a4 (2026-10-30): an import's filing was said by the two scripts only — the /imports upload dropped
  * its report, and an un-import's restore and a gap acceptance discarded theirs. None stands on his ledger (0 rows
  * filed as `confirmed_series`, his copy of 2026-10-30): the payroll the Wells Fargo import of 2026-10-29 left unfiled
  * was filed on his answer by a guarded script, as his own (scripts/file-wells-fargo-october-2026-10-29.ts).
- * 🔴 Review of d2180a48 (2026-10-30): it asked `status = 'active'`, so excluding one of his five payroll rows would
- * have said "4 rows filed under Income > Salary", all five still filed, and a filing a later gap held went unsaid.
+ * 🔴 Review of d2180a48 (2026-10-30): it asked `status = 'active'`, so excluding one of five weekly pay rows an import
+ * filed would have said "4 rows filed under Income > Salary", all five still filed, and a filing a later gap held went
+ * unsaid. Not his October five (his ledger copy 2026-11-05): the script filed them as his own (`user`), and no read
+ * names a row he filed — only pay a later import files (`confirmed_series`).
  */
 export function importFilingsByRead(db: AppDatabase): Map<string, ImportFiling[]> {
   const idx = loadCategoryIndex(db);
@@ -375,7 +383,8 @@ export function importFilingsByRead(db: AppDatabase): Map<string, ImportFiling[]
     .innerJoin(recurringSeries, eq(recurringSeries.id, transactions.recurringSeriesId))
     .where(
       and(
-        // a row he excludes, or a gap holds, is still the ledger's; a re-read's retired rows (superseded) are not
+        // a row he excludes, or a gap holds, is still the ledger's; a superseded one (a re-read's, a duplicate's, a
+        // takeover's) is not
         inArray(transactions.status, [...LIVE_ROW]),
         eq(transactions.categorizationSource, "confirmed_series"),
         isNotNull(transactions.importFileId),

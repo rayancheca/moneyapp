@@ -1725,6 +1725,10 @@ describe("an import links what it brought in to the series that already carry it
     return { june, rent };
   }
 
+  /** what /imports names under each read, in the report's words */
+  const namedByRead = () =>
+    [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)] as const);
+
   test("⚖️ default built, not asked (2026-10-29): it files what it links to a series he confirmed, and says so", async () => {
     const { june, rent } = await rentHeLinkedInJune();
 
@@ -1748,21 +1752,19 @@ describe("an import links what it brought in to the series that already carry it
     await rentHeLinkedInJune();
     await importStatementFiles(bundle.db, [load("chase", JULY_CHECKING)]);
     const july = rowOn("2026-07-01", "ACH PYMT WESTVIEW");
-    const named = () =>
-      [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)] as const);
 
     // the July read only: June's row he filed by hand is his, never the import's
-    expect(named()).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+    expect(namedByRead()).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
     // filed again by his hand, the row is his — no longer the import's to name
     bundle.db.update(transactions).set({ categorizationSource: "user" }).where(eq(transactions.id, july.id)).run();
-    expect(named()).toEqual([]);
+    expect(namedByRead()).toEqual([]);
     // …and one no longer linked to the series names no series
     bundle.db
       .update(transactions)
       .set({ categorizationSource: "confirmed_series", recurringSeriesId: null, seriesLinkSource: "user" })
       .where(eq(transactions.id, july.id))
       .run();
-    expect(named()).toEqual([]);
+    expect(namedByRead()).toEqual([]);
   });
 
   /*
@@ -1787,20 +1789,16 @@ describe("an import links what it brought in to the series that already carry it
       categorizationSource: "confirmed_series",
       recurringSeriesId: rent,
     });
-    const named = [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)]);
-    expect(named).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
+    expect(namedByRead()).toEqual([[july.importFileId, ["Rent: 1 row filed under Housing > Rent"]]]);
   });
-
-  /** what /imports names under each read, in the report's words */
-  const namedByRead = () =>
-    [...importFilingsByRead(bundle.db)].map(([read, filings]) => [read, filings.map(importFilingLine)] as const);
 
   /*
    * ⚖️ default built, not asked (2026-10-30): a row still in the ledger (`LIVE_ROW`) keeps its line. The sheet's
    * "Exclude from analytics" box sets the row's status alone (`setTransactionFlags`): it files nothing again and
    * detaches nothing, so the filing stands — and is named.
-   * 🔴 Review of d2180a48 (2026-10-30): the read-back asked `status = 'active'`, so excluding one of his five payroll
-   * rows would have said "It America LLC (weekly pay): 4 rows filed under Income > Salary", all five still filed.
+   * 🔴 Review of d2180a48 (2026-10-30): the read-back asked `status = 'active'`, so excluding one of five weekly pay
+   * rows an import filed would have said "It America LLC (weekly pay): 4 rows filed under Income > Salary", all five
+   * still filed. Not his October five (his ledger copy 2026-11-05): filed as his own (`user`), no read names them.
    */
   test("…and a row he excludes from analytics is still named: excluding neither files it again nor detaches it", async () => {
     const { june, rent } = await rentHeLinkedInJune();
@@ -1855,8 +1853,9 @@ describe("an import links what it brought in to the series that already carry it
   });
 
   /*
-   * …and one a later gap holds. A statement prints its balances (the checking CSV prints none, so its rows are never
-   * held): the card's next import reconciles every month of it again (`reconcileAccounts`), and a month whose rows no
+   * …and one a later gap holds. A statement prints its opening and closing balances (the checking CSV prints a running
+   * balance on each row, and no period with an opening and a closing one, so `reconcileAccounts` checks no month of it
+   * and its rows are never held): the card's next import reconciles every month of it again, and a month whose rows no
    * longer add up holds its own — the one its import filed with them, still filed and linked, waiting on the gap.
    * Measured on this fixture: a $9.00 row recorded by hand on Oct 20 opens a $9.00 gap in Oct 15 → Nov 14.
    */

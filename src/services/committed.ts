@@ -25,6 +25,7 @@ import { monthIncomeLink } from "@/lib/income-basis";
 import { resolvePeriod, withPeriod } from "@/lib/period";
 import { seriesBehindHref } from "@/lib/recurring-list";
 import { runway, type Runway } from "@/lib/runway";
+import { SPEND_BASELINE_MONTHS } from "@/lib/spend-baseline";
 import { cashPosition, outsidePortfolioCashAccountIds } from "./accounts";
 import {
   isAgentsSeries,
@@ -57,18 +58,9 @@ import { cashFlowByPeriod } from "./spending";
 /** How far ahead the committed book looks. A year covers every cadence once. */
 export const COMMITTED_HORIZON_MONTHS = 12;
 
-/**
- * How many COMPLETE calendar months the spend baseline averages.
- *
- * Six, and the current month is excluded rather than prorated. A partial month
- * dragged into the mean understates the rate by however much of the month is
- * left — measured 2026-08-24, August alone reads $6,683.25 against a $8,025.92
- * six-month mean, and including it would publish a runway a fifth too long.
- *
- * ⚖️ …and "complete" means READ in full, not only over (his decision 71, 2026-10-13): the six end at the last month
- * every account you spend from has been imported through to its end — `baselineWindow` says which, and why.
- */
-export const SPEND_BASELINE_MONTHS = 6;
+// the spend baseline's window (`SPEND_BASELINE_MONTHS`) lives in @/lib/spend-baseline, re-exported here for the
+// services that have always read it here
+export { SPEND_BASELINE_MONTHS };
 
 
 export interface SpendBaseline {
