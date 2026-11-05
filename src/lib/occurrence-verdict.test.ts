@@ -3,6 +3,7 @@ import type { UnattachedMatch } from "./unattached-match";
 import {
   absenceIsEvidence,
   asksForUnattachedMatch,
+  dayAskedForUnattachedMatch,
   dueDayIsRead,
   forecastConfidence,
   lastDueDayRead,
@@ -395,6 +396,36 @@ describe("settledVerdict, with a row matching the day to the cent unattached", (
     // a due day: read with its grace (3) — Oct 11 is the first read day that covers Oct 8
     expect(asksForUnattachedMatch("bill", "2026-10-08", bill("2026-10-11"))).toBe(true);
     expect(asksForUnattachedMatch("bill", "2026-10-08", bill("2026-10-10"))).toBe(false);
+  });
+});
+
+/*
+ * ⛔ The day a past occurrence asks the one rule about — ONE function for the arrears' read days and the calendar's
+ * (`dayAskedForUnattachedMatch`): asked once the day it FELL DUE is read, on its OWN day. 🔴 Two forms of it, each
+ * right alone, and each could read the other day with every test passing (review of 95cdf198, L82).
+ */
+describe("dayAskedForUnattachedMatch — read by the day it fell due, asked on its own day", () => {
+  // the rent typed Nov 16: what it carries on the 1st falls due with it, a row of its own matched on its own day
+  const nov1 = { date: "2026-11-16", ownDate: "2026-11-01", amountCents: -18221 };
+  const isRead = (through: string) => (fellDue: string) => dueDayIsRead(fellDue, read(through));
+
+  test("billed on its own, the day it fell due is the day asked, at its own amount", () => {
+    const water = { date: "2026-11-02", ownDate: "2026-11-02", amountCents: -18221 };
+    expect(dayAskedForUnattachedMatch(water, isRead("2026-11-09"))).toEqual({
+      date: "2026-11-02",
+      amountCents: -18221,
+    });
+  });
+
+  test("billed inside another, asked on its OWN day once the day it fell due is read — never on the carrier's", () => {
+    expect(dayAskedForUnattachedMatch(nov1, isRead("2026-11-19"))).toEqual({ date: "2026-11-01", amountCents: -18221 });
+  });
+
+  test("…and never while the day it fell due is unread, however long ago its own day was", () => {
+    // read through Nov 9: their own Nov 1 and its grace are, the rent's Nov 16 is not — nothing is asked
+    expect(dayAskedForUnattachedMatch(nov1, isRead("2026-11-09"))).toBeNull();
+    // …nor through Nov 18, a day short of the rent's Nov 16 and its 3 days: the day read is the one it fell due on
+    expect(dayAskedForUnattachedMatch(nov1, isRead("2026-11-18"))).toBeNull();
   });
 });
 

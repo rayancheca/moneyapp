@@ -21,6 +21,7 @@ import { RECURRING_HISTORY_STATUSES } from "@/lib/series-evidence";
 import { billedWithPhrase, carrierWord } from "@/lib/billed-with";
 import {
   asksForUnattachedMatch,
+  dayAskedForUnattachedMatch,
   forecastConfidence,
   settledVerdict,
   STATE_ATTENTION_ORDER,
@@ -1222,10 +1223,11 @@ export function recurringCalendar(
   const asked = new Map<string, ExpectedDay[]>();
   // the month's days draw their marks; the edges' only say which row is theirs (`unreadCreditsDrawn`)
   for (const { s, o, reading } of [...past, ...edges]) {
-    // read by the day it falls due, the one its verdict is taken on — and asked on its OWN day, as the arrears ask it
-    // (`readDueDays`): a row is matched to a day as a row of the series' own is graded (`paymentFor`)
-    if (!asksForUnattachedMatch(s.kind, o.date, reading)) continue;
-    asked.set(s.id, [...(asked.get(s.id) ?? []), { date: o.ownDate, amountCents: o.amountCents }]);
+    // read by the day it falls due, the one its verdict is taken on — and asked on its OWN day, by the one function the
+    // arrears ask too (`readDueDays`): a row is matched to a day as a row of the series' own is graded (`paymentFor`)
+    const day = dayAskedForUnattachedMatch(o, (fellDue) => asksForUnattachedMatch(s.kind, fellDue, reading));
+    if (day === null) continue;
+    asked.set(s.id, [...(asked.get(s.id) ?? []), day]);
   }
   const unattachedOf = unattachedMatchesBySeries(db, asked, today);
   for (const { s, o, reading, proven } of past) {
