@@ -48,7 +48,8 @@ const HIS_PORTIONS = [
 ];
 
 const payday = (readings: ReadonlyMap<string, PaydayReading>) => ({ per: "payday", readings }) as const;
-const PER_OCCURRENCE = { per: "occurrence" } as const;
+/** no rate to run by: every day that did not net to nothing is a payment (money back: posted-average-money-back) */
+const PER_OCCURRENCE = { per: "occurrence", rateCents: null } as const;
 const AS_POSTED = { per: "row" } as const;
 const rowsOf = (pairs: readonly (readonly [string, number])[]) =>
   pairs.map(([postedOn, amountCents], i) => ({ id: `r${i}`, postedOn, amountCents }));

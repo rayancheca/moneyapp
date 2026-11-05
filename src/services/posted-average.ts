@@ -5,6 +5,8 @@ import { transactions } from "@/db/schema/transactions";
 import { paydayReadings, type ReadableRow } from "@/lib/per-payday";
 import {
   atTodaysRate,
+  averagedPayments,
+  moneyBackDays,
   nettedToNothing,
   occurrencesOf,
   paidAhead,
@@ -16,7 +18,7 @@ import {
   type PostedAverage,
   type PostedReading,
 } from "@/lib/posted-average";
-import { currentRateSince, nextRateSince, rateOn } from "@/lib/series-kind";
+import { currentRateSince, nextRateSince, rateOn, seriesAmountCents } from "@/lib/series-kind";
 import { loadCategoryIndex } from "./analytics";
 import { carriedNamesBySeries } from "./billing-carriers";
 import { asPayRows, paydaySettlement, readsPerPayday } from "./payday-settlement";
@@ -30,8 +32,9 @@ export interface SeriesPostedAverage extends PostedAverage {
    */
   carries: readonly string[];
   /**
-   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): of the payments the average is of (`occurrences`), those of at least twice
-   * the rate in force, of a bill or subscription one of whose other payments was that rate and none more (`paidAhead`)
+   * ⚖️ DEFAULT, BUILT, NOT ASKED (2026-10-22): of the payments at the rate in force now (`atTodaysRate` — money back
+   * among them, which is what a payment ahead returned, and `paidAhead` reads it), those of at least twice the rate in
+   * force, of a bill or subscription one of whose other payments was that rate and none more (`paidAhead`)
    * — each covered more than one charge, named beside the average wherever it prints (`postedAvgNotes`). Empty for a
    * series read per payday or as posted, and for one with none. His Car insurance's Sep 3 -$1,000.00, alone on his
    * ledger copy 2026-10-21. ⚖️ default built, not asked (2026-10-23): …and none less, nor money back, before the first
@@ -45,17 +48,28 @@ export interface SeriesPostedAverage extends PostedAverage {
   /**
    * What each payment paid, oldest first (`occurrencesOf`) — the samples of the average, when the series reads per
    * occurrence (`readsPerOccurrence`): ⚖️ the payments at the rate in force now (`atTodaysRate`, §6A 63), every one
-   * for a series whose rate never changed; null when it reads per payday or as posted. ⛔ What the popover's sentence
-   * counts and ranges beside this average. 🔴 Row by row beside it, his rent's popover read "5 different amounts, from
-   * -$2,291.21 to -$1,100.00" before "average … is -$2,312.20" (review of af5b0fa, 2026-10-12).
+   * for a series whose rate never changed — ⚖️ and of those only the days that paid a charge (`averagedPayments`,
+   * default built, not asked, 2026-11-04: money back is none, `moneyBack`); null when it reads per payday or as posted.
+   * ⛔ What the popover's sentence counts and ranges beside this average. 🔴 Row by row beside it, his rent's popover
+   * read "5 different amounts, from -$2,291.21 to -$1,100.00" before "average … is -$2,312.20" (review of af5b0fa,
+   * 2026-10-12).
    */
   occurrences: readonly Occurrence[] | null;
   /**
    * Every payment, at every rate, oldest first — what the series page's Amount history draws, each bar against its own
-   * time's rate (§6A 55), as his pay's history draws his cash weeks; null where `occurrences` is. 🔴 Drawn per row, his
-   * page read "each of the 5 posted occurrences" under a Per charge of four (review of af5b0fa, 2026-10-12).
+   * time's rate (§6A 55), as his pay's history draws his cash weeks, money back against nothing (`moneyBack`); null
+   * where `occurrences` is. 🔴 Drawn per row, his page read "each of the 5 posted occurrences" under a Per charge of
+   * four (review of af5b0fa, 2026-10-12).
    */
   everyOccurrence: readonly Occurrence[] | null;
+  /**
+   * The days whose tagged rows net AGAINST its rate, at every rate, oldest first (`moneyBackDays`) — money back, no
+   * payment of the average's (`averagedPayments`): ONE set for the Amount history's bars "toward no due day"
+   * (`daysThatPaid`, every grader's rule) and the popover's words naming them, so its counts add up to the rows; null
+   * where `occurrences` is. 🔴 Review of 23e9c5d1: the bar said a +$50.00 credit of Breezeline's paid no charge, the
+   * average beside it counted it a payment.
+   */
+  moneyBack: readonly Occurrence[] | null;
   /**
    * The days whose tagged rows net to $0.00, at every rate, oldest first (`nettedToNothing`) — a charge and its
    * same-day reversal, no payment of `everyOccurrence`: what the popover names so its counts add up to the rows; null
@@ -87,8 +101,8 @@ export interface SeriesPostedAverage extends PostedAverage {
  * the series page, the All tab and the amount popover all read it: every active row linked to the series; a pay
  * series' rows read per payday by its settlement (`readsPerPayday`, `paydayReadings` — the calendar's own gate and
  * reading), held to its rate history (`effectiveSeries`); a series with a schedule of charges, per occurrence
- * (`readsPerOccurrence`), held to that same history (`atTodaysRate`, §6A 63); any other, as posted. With it, what
- * each one's payments carry (`carriedNamesBySeries`).
+ * (`readsPerOccurrence`), held to that same history (`atTodaysRate`, §6A 63), its money back no payment
+ * (`averagedPayments`); any other, as posted. With it, what each one's payments carry (`carriedNamesBySeries`).
  *
  * ⛔ One function for all three, so no surface can feed the rule a different reading. 🔴 They each averaged the rows
  * themselves — three copies of one mean — and when the mean was the wrong figure for a pay series, all three printed
@@ -132,18 +146,21 @@ export function postedAveragesBySeries(
     const reading: PostedReading = byPayday
       ? { per: "payday", readings: paydayReadings(rows, paydaySettlement(db, s.id, today, idx).portions, schedule) }
       : readsPerOccurrence(s)
-        ? { per: "occurrence" }
+        ? // the rate a payment runs the way of, as every grader reads a day paid (`daysThatPaid`)
+          { per: "occurrence", rateCents: seriesAmountCents(s) }
         : { per: "row" };
     const every = reading.per === "occurrence" ? occurrencesOf(rows) : null;
-    // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63)
-    const counted = every === null ? null : atTodaysRate(every, schedule, today);
+    // ⚖️ the payments the average is of — `postedAverage` reads them by this same rule (§6A 63; and money back none)
+    const counted = reading.per === "occurrence" ? averagedPayments(rows, reading.rateCents, schedule, today) : null;
     out.set(s.id, {
       ...postedAverage(rows, reading, schedule, today),
       carries: carried.get(s.id) ?? [],
-      // …held to the rate in force, as the popover holds the average (`rateOn`)
-      paidAhead: counted === null ? [] : paidAhead(counted, rateOn(schedule, today), s.kind),
+      // …held to the rate in force, as the popover holds the average (`rateOn`) — over every day at it, money back
+      // too: what a payment ahead kept is what it paid less what came back after it (`paidAhead`)
+      paidAhead: every === null ? [] : paidAhead(atTodaysRate(every, schedule, today), rateOn(schedule, today), s.kind),
       occurrences: counted,
       everyOccurrence: every,
+      moneyBack: reading.per === "occurrence" ? moneyBackDays(rows, reading.rateCents) : null,
       netted: reading.per === "occurrence" ? nettedToNothing(rows) : null,
       // ⚖️ …and a pay series' paydays — `postedAverage` reads them by this same rule (§6A 55)
       perPayday: reading.per === "payday" ? perPaydayEvidence(rows, reading.readings, schedule, today) : null,

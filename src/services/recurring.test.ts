@@ -215,7 +215,8 @@ describe("analyzeGroup", () => {
     const stats = analyzeGroup(rows)!;
     expect(stats.amountCentsAvg).toBe(-1001);
     expect(stats.nextExpectedAmountCents).toBe(-1001);
-    const posted = postedAverage(rows, { per: "occurrence" }, { amountHistory: null }, TODAY);
+    const reading = { per: "occurrence", rateCents: stats.nextExpectedAmountCents } as const;
+    const posted = postedAverage(rows, reading, { amountHistory: null }, TODAY);
     expect(posted.avgCents).toBe(stats.nextExpectedAmountCents);
   });
 

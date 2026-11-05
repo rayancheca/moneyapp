@@ -371,10 +371,14 @@ describe("the posted average, per occurrence — his rent on the page, the All t
     sep3Named(car.insuranceId, "2026-11-15", "-$476.77");
   });
 
+  /*
+   * …beside an average of its two payments: ⚖️ the credit is no payment of it (`averagedPayments`, default built, not
+   * asked, 2026-11-04) — "-$448.36" over three until the review of 23e9c5d1.
+   */
   test("Car insurance: a +$12.50 credit back leaves Sep 3 named — on all three", () => {
     const car = seedHisCarSeries(bundle.db);
     car.charge("2026-10-02", 1_250, car.insuranceId);
-    sep3Named(car.insuranceId, TODAY, "-$448.36");
+    sep3Named(car.insuranceId, TODAY, "-$678.79");
   });
 
   type Rows = readonly (readonly [string, number])[];

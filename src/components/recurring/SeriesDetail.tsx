@@ -228,7 +228,13 @@ export function SeriesDetail({
                 a schedule's end ahead of a series nothing expects any more (his ledger copy, 2026-10-13). */}
             {data.endsOn !== null && !seriesIsOver(data.status) ? (
               <Badge tone={data.evidence === "schedule-ended" ? seriesEvidenceTone(data.evidence) : "warning"}>
-                {seriesEndBadge(data.endsOn, data.scheduleRanOutOn, today, data.evidence === "schedule-ended")}
+                {seriesEndBadge(
+                  data.endsOn,
+                  data.scheduleRanOutOn,
+                  today,
+                  data.evidence === "schedule-ended",
+                  data.lastFallsDueOn,
+                )}
               </Badge>
             ) : null}
             {data.merchant ? (

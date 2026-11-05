@@ -4,7 +4,7 @@ import { neverPosted, seriesCanBeReshaped, type SeriesEvidence } from "@/lib/ser
 import type { PassedPaydaysReading } from "@/lib/unbanked-income";
 import type { BillingCarrier } from "@/lib/billed-with";
 import type { CarriedGrace } from "@/lib/occurrence-verdict";
-import { daysThatPaid, type Occurrence } from "@/lib/posted-average";
+import type { Occurrence } from "@/lib/posted-average";
 import type { AppDatabase } from "@/db/client";
 import { accounts } from "@/db/schema/accounts";
 import { categories } from "@/db/schema/categories";
@@ -19,7 +19,6 @@ import { transactions } from "@/db/schema/transactions";
 import { addDays, compareDates, isValidIsoDate, todayIso } from "@/lib/dates";
 import { expectedCentsOf, paydayReadings, type PaydayReading, type PerPayday } from "@/lib/per-payday";
 import { stepFrom, stepPlan } from "@/lib/recurring-step";
-import { seriesAmountCents } from "@/lib/series-kind";
 import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsIncomeSeries, loadCategoryIndex } from "./analytics";
 import { arrearsThisMonth, unbankedIncomeThisMonth, unbankedIncomeTotals } from "./arrears";
@@ -101,8 +100,10 @@ export interface AmountHistoryPoint {
   /**
    * ⚖️ A payment of a series read per occurrence on a day that PAID NO CHARGE (`daysThatPaid`) — money back: graded
    * against nothing (`expectedCents` null) and said "toward no due day", the calendar's words for the same row
-   * (`CalendarEntry.towardNoDueDay`). 🔴 Held to the rate, a +$357.58 credit on a −$357.58 premium read "$0.00" against
-   * it in the table lens and "expected −$357.58" in its tooltip (review of d7a5485c, L16). Absent on every other row.
+   * (`CalendarEntry.towardNoDueDay`) — and no sample of the posted average above it (`SeriesPostedAverage.moneyBack`).
+   * 🔴 Held to the rate, a +$357.58 credit on a −$357.58 premium read "$0.00" against it in the table lens and "expected
+   * −$357.58" in its tooltip (review of d7a5485c, L16); 🔴 drawn so, a +$50.00 credit of Breezeline's sat beside
+   * "posted avg -$31.72 ± $40.22", one of its six samples (review of 23e9c5d1). Absent on every other row.
    */
   towardNoDueDay?: true;
   /**
@@ -276,15 +277,17 @@ export interface SeriesDetail {
   endsOn: string | null;
   /**
    * The day its schedule RAN OUT once its end has closed it (`scheduleRanOutOn`) — its last date on or before the end,
-   * which can fall between two due days — else null. The end badge names it in the past tense, beside the card's
-   * "Its schedule has ended" (`seriesEndBadge`).
+   * which can fall between two due days, dated by the day it falls due (billed inside another, the carrier's later day,
+   * past the end too) — else null. The end badge names it in the past tense, beside the card's "Its schedule has
+   * ended" (`seriesEndBadge`).
    */
   scheduleRanOutOn: string | null;
   /**
    * ⚖️ (B) Billed inside another on its carrier's step, the day its last charge inside its end FALLS DUE on when that is
    * after the end itself (`lastFallsDueAfterItsEnd`) — else null. Where the End dialog's span runs to
-   * (`seriesEndInput`). 🔴 Review of 933b29e2 (L74): the rent typed Nov 16 and paid Nov 16, the utilities ending Dec
-   * 10, on Nov 20 the dialog read "every charge from Dec 16, 2026 to Dec 10, 2026" (his ledger copy 2026-11-04).
+   * (`seriesEndInput`), and the day the end badge names, still to come, once the end has gone by (`seriesEndBadge`).
+   * 🔴 Review of 933b29e2 (L74): the rent typed Nov 16 and paid Nov 16, the utilities ending Dec 10, on Nov 20 the
+   * dialog read "every charge from Dec 16, 2026 to Dec 10, 2026" (his ledger copy 2026-11-04).
    */
   lastFallsDueOn: string | null;
   /**
@@ -554,20 +557,18 @@ export function seriesDetail(
    * ⚖️ Every payment at every rate, each against its own time's (§6A 55): a history is drawn whole, as his pay's cash
    * weeks are, though the Per charge above averages only the payments at the rate in force now (§6A 63).
    */
-  // ⚖️ …of which the days that PAID a charge — every grader's one rule (`daysThatPaid`); money back is held to nothing
-  const paidDays =
-    posted.everyOccurrence === null
-      ? null
-      : new Set(daysThatPaid(posted.everyOccurrence, seriesAmountCents(s)).map((o) => o.postedOn));
+  // ⚖️ …of which the days that paid NO charge — money back, every grader's one rule (`daysThatPaid`) — held to nothing,
+  // the days the average beside it leaves out (`SeriesPostedAverage.moneyBack`, one set for both)
+  const moneyBack = new Set((posted.moneyBack ?? []).map((o) => o.postedOn));
   const amountHistory: AmountHistoryPoint[] =
     posted.everyOccurrence !== null
       ? posted.everyOccurrence.map((o) => ({
           date: o.postedOn,
           amountCents: o.amountCents,
           perPayday: null,
-          expectedCents: paidDays!.has(o.postedOn) ? expectedCentsOf(undefined, eff, o.postedOn) : null,
+          expectedCents: moneyBack.has(o.postedOn) ? null : expectedCentsOf(undefined, eff, o.postedOn),
           towardNoPayday: false,
-          ...(paidDays!.has(o.postedOn) ? {} : { towardNoDueDay: true as const }),
+          ...(moneyBack.has(o.postedOn) ? { towardNoDueDay: true as const } : {}),
           postings: o.postings,
         }))
       : [...linked].reverse().map((t) => {

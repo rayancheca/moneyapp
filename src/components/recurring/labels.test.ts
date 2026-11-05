@@ -1057,19 +1057,19 @@ describe("annualizedCaveat — a year is qualified only when the series stops in
  */
 describe("seriesEndBadge — the end in the tense of the schedule", () => {
   test("a date still to come: the end ahead, in the future tense", () => {
-    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", false)).toBe("Ends Jan 11, 2027");
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", false, null)).toBe("Ends Jan 11, 2027");
   });
 
   test("ran out: Ended, on the day it ran out — never the end day still to come", () => {
-    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12", true)).toBe("Ended Dec 11, 2026");
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2026-12-12", true, null)).toBe("Ended Dec 11, 2026");
     // …and the same day after the end has passed: no jump to the end on Jan 6
-    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20", true)).toBe("Ended Dec 11, 2026");
+    expect(seriesEndBadge("2027-01-05", "2026-12-11", "2027-01-20", true, null)).toBe("Ended Dec 11, 2026");
     // the Nov 11 balance, its end its one day: as it has read since 0af5689
-    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12", true)).toBe("Ended Nov 11, 2026");
+    expect(seriesEndBadge("2026-11-11", "2026-11-11", "2026-11-12", true, null)).toBe("Ended Nov 11, 2026");
   });
 
   test("no day it ran out (no date to step from): the end day's own tense", () => {
-    expect(seriesEndBadge("2027-01-05", null, "2027-01-06", false)).toBe("Ended Jan 5, 2027");
+    expect(seriesEndBadge("2027-01-05", null, "2027-01-06", false, null)).toBe("Ended Jan 5, 2027");
   });
 
   /*
@@ -1079,9 +1079,30 @@ describe("seriesEndBadge — the end in the tense of the schedule", () => {
    * copy 2026-10-13, Car insurance's anchor typed Feb 11). Ended — before the end it names, still to come.
    */
   test("its schedule ended, no day it ran out, the end still ahead: 'Ended before', never 'Ends'", () => {
-    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", true)).toBe("Ended before Jan 11, 2027");
+    expect(seriesEndBadge("2027-01-11", null, "2026-10-13", true, null)).toBe("Ended before Jan 11, 2027");
     // on the end day itself it has not passed either
-    expect(seriesEndBadge("2027-01-11", null, "2027-01-11", true)).toBe("Ended before Jan 11, 2027");
+    expect(seriesEndBadge("2027-01-11", null, "2027-01-11", true, null)).toBe("Ended before Jan 11, 2027");
+  });
+
+  /*
+   * ⚖️ (B) Billed inside another on its carrier's step, the last charge inside its end can fall due AFTER it, with the
+   * carrier's later day (`SeriesDetail.lastFallsDueOn`). 🔴 Review of 23e9c5d1: the utilities ending Dec 10, their Dec 1
+   * due with the rent's Dec 16 — from Dec 11 their page read "Ended Dec 10, 2026" beside a list still naming Dec 16.
+   * The end gone by and that charge still to come: its day, in the future tense; the end itself while it is ahead.
+   */
+  test("its end gone by, a charge inside it still to fall due with the rent: 'Ends' the day it falls due", () => {
+    expect(seriesEndBadge("2026-12-10", null, "2026-12-11", false, "2026-12-16")).toBe("Ends Dec 16, 2026");
+    expect(seriesEndBadge("2026-12-10", null, "2026-12-16", false, "2026-12-16")).toBe("Ends Dec 16, 2026");
+    expect(seriesEndBadge("2026-12-10", null, "2026-12-05", false, "2026-12-16")).toBe("Ends Dec 10, 2026");
+  });
+
+  /*
+   * 🔴 Review of 23e9c5d1: a schedule opened past its end — the rent typed Nov 1 opening the utilities on their Nov 1,
+   * their end typed Oct 15 — held no date, and read "Ended Oct 1, 2026" from Oct 1, a day it never held. It ran out on
+   * no day (`scheduleRanOutOn`): "Ended before" its end, past the end too.
+   */
+  test("a schedule that held no date inside its end ran out on none: 'Ended before', past the end too", () => {
+    expect(seriesEndBadge("2026-10-15", null, "2026-11-04", true, null)).toBe("Ended before Oct 15, 2026");
   });
 });
 

@@ -1148,9 +1148,10 @@ export interface SeriesOccurrence {
    * ⚖️ The day it FALLS DUE (`fallsDueOn`): its own day — or, billed inside another on its carrier's step, the later
    * of that and the carrier's day it pairs with (default (B), built, not asked, 2026-10-30). ONE day for every reader
    * that holds, names or draws it — the window it is in, the date a list or a sentence prints, the cell the calendar
-   * draws it in, the paycheck it is due by — so none can read another. The page's cadence sentence alone names its own
-   * day instead (`rollForwardNextExpected`, the day its editor saves), saying this one beside it: "around the 1st, due
-   * with the rent on the 16th" (`SeriesDetail.nextFallsDueOn`; review of 933b29e2, L75). 🔴 It was its own day while
+   * draws it in, the paycheck it is due by, the day the end badge says the last one ran out (`scheduleRanOutOn`; 🔴
+   * its own day until the review of 23e9c5d1) — so none can read another. The page's cadence sentence alone names its
+   * own day instead (`rollForwardNextExpected`, the day its editor saves), saying this one beside it: "around the 1st,
+   * due with the rent on the 16th" (`SeriesDetail.nextFallsDueOn`; review of 933b29e2, L75). 🔴 It was its own day while
    * the windows held it by this one (review of aa05a56d): the rent typed Nov 1, the utilities on the 25th — their Oct
    * 25, held in November, was re-filtered out of it by the category forecast and counted in no month; the rent typed
    * Nov 16, their Nov 1 was due by a Nov 12 paycheck on the dashboard, "next Nov 1" on Nov 10 and "came due Dec 1" of
@@ -1860,21 +1861,39 @@ export function scheduleHasEnded(s: SeriesOverrides & CarriedBy, today: string):
  * day-stepped anchor is the last posting plus the MEDIAN gap while the walk steps the AVERAGE: biweekly, last Dec 4,
  * median 14, average 14.6, end Dec 10 — the walk landed on Dec 3, the day before the charge. A charge after the end is
  * the end's own: "Ended Jan 11, 2027", as 7a3c702 read it and as his typed anchor does.
+ *
+ * ⛔ …and its days are the ones `scheduleHasEnded` asks (`steppedSchedule`): billed inside another, never one before
+ * where its carrier opens it — a schedule opening past its end held no date and ran out on none ("Ended before …") —
+ * and ⚖️ (B) its last day DATED by the day it falls due (`fallsDueOn`), as every reader dates a day
+ * (`SeriesOccurrence.date`): on its carrier's step, the carrier's later day it pairs with, which can lie past the end —
+ * so nor past THAT day, its end's own. 🔴 Stepped on its own days alone (review of 23e9c5d1): the rent typed Nov 16
+ * and paid Nov 16, the utilities ending Dec 10 — from Dec 17 their badge read "Ended Dec 1, 2026" beside an
+ * Already-due card for Dec 16, the day their Dec 1 fell due; the rent typed Nov 1 and their end Oct 15 — "Ended Oct 1,
+ * 2026" from Oct 1, a day before the rent's date opens them (his ledger copy 2026-11-04, both what-ifs). Billed on its
+ * own, its day falls due on itself and opens on its anchor: as it read.
  */
 export function scheduleRanOutOn(
   s: SeriesOverrides & { lastMatchedOn: string | null } & CarriedBy,
   today: string,
 ): string | null {
   if (!scheduleHasEnded(s, today)) return null;
-  const eff = effectiveSchedule(s);
+  const eff = steppedSchedule(s);
   // `scheduleHasEnded` holds only with a next day and an end (`rollForwardNextExpected`'s two nulls)
   const plan = stepPlan(eff.cadence, eff.intervalDaysAvg, eff.anchorDay);
   const anchor = eff.nextExpectedOn!;
   const end = eff.userEndsOn!;
-  const walked = stepFrom(anchor, plan, signedStepsToReach(anchor, plan, addDays(end, 1)) - 1);
+  const own = stepFrom(anchor, plan, signedStepsToReach(anchor, plan, addDays(end, 1)) - 1);
+  // a day before where its schedule opens is none of its days, as the walk draws none (`notBeforeItOpens`)
+  if (notBeforeItOpens(anchor, eff.opensOn, own) !== own) return null;
+  const walked = fallsDueOn(eff.pairedWith, own);
+  const bound = compareDates(walked, end) > 0 ? walked : end;
   const charged = s.lastMatchedOn;
   const last =
-    charged !== null && compareDates(charged, walked) > 0 ? (compareDates(charged, end) > 0 ? end : charged) : walked;
+    charged !== null && compareDates(charged, walked) > 0
+      ? compareDates(charged, bound) > 0
+        ? bound
+        : charged
+      : walked;
   // a day still to come has not run out: only an anchor TYPED past its end lands here (detection's follows a posting)
   return compareDates(last, today) > 0 ? null : last;
 }

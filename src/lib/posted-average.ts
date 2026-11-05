@@ -20,8 +20,10 @@ import { currentRatePeriod, rateOn, ratePeriodOf, type RateSchedule } from "./se
  * A series with a schedule of charges (`readsPerOccurrence`) averages what each OCCURRENCE was paid: the rows of one
  * payment are one sample. ⚖️ …and only the payments made at the rate in force now (owner decision 2026-10-12, §6A 63 —
  * `atTodaysRate`), as his pay is held to its current rate: a rent increase recorded with the old rate's dates leaves
- * the old rent out of the average, and with no payment yet at the new rate there is NO average. Any other series
- * averages its rows as they posted.
+ * the old rent out of the average, and with no payment yet at the new rate there is NO average. ⚖️ …and only the days
+ * that PAID a charge (`averagedPayments`; default built, not asked, 2026-11-04): money back paid none — every grader's
+ * one rule (`daysThatPaid`), drawn "toward no due day" beside the average — as a pay row toward no payday is no sample
+ * of his pay's. Any other series averages its rows as they posted.
  *
  * 🔴 Measured on a copy of his ledger 2026-10-08: the raw mean of his four deposits — Jun 4's $1,047.00 cash week,
  * Jun 5's $400.00, the Sep 23 lump of $4,567.68 and Sep 24's $1,141.92 — is $1,789.15, an amount no payday ever paid.
@@ -41,11 +43,12 @@ export interface PostedAverage {
 
 /**
  * How a series' rows become samples — `services/posted-average` picks it: per payday (`readsPerPayday`, with the
- * series' per-payday reading, `paydayReadings`), per occurrence (`readsPerOccurrence`), or each row as it posted.
+ * series' per-payday reading, `paydayReadings`), per occurrence (`readsPerOccurrence`, with the rate whose way a
+ * payment runs, `seriesAmountCents` — `averagedPayments`), or each row as it posted.
  */
 export type PostedReading =
   | { readonly per: "payday"; readonly readings: ReadonlyMap<string, PaydayReading> }
-  | { readonly per: "occurrence" }
+  | { readonly per: "occurrence"; readonly rateCents: number | null }
   | { readonly per: "row" };
 
 /**
@@ -71,7 +74,7 @@ export function postedAverage(
     reading.per === "payday"
       ? perPaydayEvidence(rows, reading.readings, schedule, today).samples.map((s) => s.cents)
       : reading.per === "occurrence"
-        ? atTodaysRate(occurrencesOf(rows), schedule, today).map((o) => o.amountCents)
+        ? averagedPayments(rows, reading.rateCents, schedule, today).map((o) => o.amountCents)
         : rows.map((r) => r.amountCents);
   if (samples.length === 0) return { avgCents: null, stddevCents: null };
   const mean = samples.reduce((a, c) => a + c, 0) / samples.length;
@@ -243,9 +246,9 @@ export interface Occurrence {
 /**
  * What each payment paid, oldest first: a day's rows summed — one payment the bank posted as several, as his card
  * posted Jun 16's rent as two. A row of another day is another payment, however near. The payments of the posted
- * average (`readsPerOccurrence`) — those at the rate in force now, `atTodaysRate` — and, every one of them, what the
- * series page's Amount history draws (`SeriesPostedAverage.everyOccurrence`), so neither the average, the popover's
- * sentence nor the history can count a payment as two.
+ * average (`readsPerOccurrence`) — those that paid a charge at the rate in force now, `averagedPayments` — and, every
+ * one of them, what the series page's Amount history draws (`SeriesPostedAverage.everyOccurrence`, money back among
+ * them), so neither the average, the popover's sentence nor the history can count a payment as two.
  *
  * ⚠️ Not the series' tolerance either side, the reach the calendar gives a payment of a due day (`paymentFor`): the
  * calendar pays a due day with ONE posting, and walks due days only from the anchor forward — the rent's from Sep 1, so
@@ -319,13 +322,47 @@ export function daysThatPaid(
 }
 
 /**
+ * The days whose rows net AGAINST the way `rateCents` runs, oldest first — money back on a day of its own: what
+ * `daysThatPaid` leaves of the days that did not net to nothing (`occurrencesOf`), so each such day is one or the
+ * other. None with no rate to run by. Where the series page's Amount history draws a bar "toward no due day", and what
+ * the popover names beside the average that leaves them out (`SeriesPostedAverage.moneyBack`, `averagedPayments`).
+ */
+export function moneyBackDays(
+  rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[],
+  rateCents: number | null,
+): Occurrence[] {
+  const way = Math.sign(rateCents ?? 0);
+  return way === 0 ? [] : occurrencesOf(rows).filter((o) => Math.sign(o.amountCents) !== way);
+}
+
+/**
+ * ⚖️ The payments a series read per occurrence AVERAGES (`postedAverage`): the days that paid a charge (`daysThatPaid`)
+ * at the rate in force now (`atTodaysRate`, §6A 63) — ONE rule for the average and for what the popover counts and
+ * ranges beside it (`SeriesPostedAverage.occurrences`). ⚖️ default built, not asked (2026-11-04): money back is no
+ * payment of the average either, as a pay row toward no payday is none of his pay's (`perPaydayEvidence`). 🔴 Review of
+ * 23e9c5d1: +$50.00 linked to Breezeline on Oct 12, its page's Amount history drew the bar "toward no due day" beside
+ * "posted avg -$31.72 ± $40.22" over six "payments", the credit among them — its five payments average -$48.06 (his
+ * ledger copy 2026-11-04, the credit added on Venture X). Latent on his ledger: no day of any series of his read per
+ * occurrence nets against its rate.
+ */
+export function averagedPayments(
+  rows: readonly Pick<ReadableRow, "postedOn" | "amountCents">[],
+  rateCents: number | null,
+  schedule: Pick<RateSchedule, "amountHistory">,
+  today: string,
+): Occurrence[] {
+  return atTodaysRate(daysThatPaid(rows, rateCents), schedule, today);
+}
+
+/**
  * ⚖️ A ROW WHOSE DAY PAID NO CHARGE SAYS SO (`daysThatPaid`, default built, not asked, 2026-10-29) — money back, or a
  * charge and its same-day reversal: it pays no due day of any grader's, so where it is drawn it is graded against
  * nothing and says where it went, a bill's mirror of "toward no payday" (`TOWARD_NO_PAYDAY`). One phrase for the
- * calendar's cell and Day Sheet and the series page's Amount history. 🔴 Review of d7a5485c (L16): with a −$357.58
- * premium's Sep 11 missed, a +$357.58 credit on Sep 9 was drawn "paid (amount changed)" +$357.58 "expected −$357.58"
- * beside Sep 11's ✕ (his ledger copy 2026-10-29 with that premium on Venture X); latent on his ledger, where no day of
- * any series of his paid no charge (2026-11-04).
+ * calendar's cell and Day Sheet, the series page's Amount history, and the popover's words for the money back its
+ * average leaves out (`averagedPayments`). 🔴 Review of d7a5485c (L16): with a −$357.58 premium's Sep 11 missed, a
+ * +$357.58 credit on Sep 9 was drawn "paid (amount changed)" +$357.58 "expected −$357.58" beside Sep 11's ✕ (his
+ * ledger copy 2026-10-29 with that premium on Venture X); latent on his ledger, where no day of any series of his paid
+ * no charge (2026-11-04).
  */
 export const TOWARD_NO_DUE_DAY = "toward no due day";
 

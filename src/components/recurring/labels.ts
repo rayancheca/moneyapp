@@ -1012,13 +1012,31 @@ export function annualizedEndNote(endsOn: string | null, today: string): string 
  * detected anchor past its end ran out on its last charge, or on the end when that charge settled after it), holds no
  * date: the card says "Its schedule has ended" (`scheduleEnded`, the evidence's `schedule-ended`). 🔴 The badge took
  * the end day's tense and read "Ends Jan 11, 2027" beside it (review of the late-lapse batch; his ledger copy
- * 2026-10-13, Car insurance's anchor typed Feb 11). It ended, before the end it names: "Ended before Jan 11, 2027".
+ * 2026-10-13, Car insurance's anchor typed Feb 11). It ended, before the end it names: "Ended before Jan 11, 2027" —
+ * and so does one opening PAST its end, billed inside another (`openingOf`), which held no date and ran out on none,
+ * past the end too.
+ *
+ * ⚖️ (B) …and billed inside another on its carrier's step, its end gone by while the last charge inside it still falls
+ * due with the carrier's later day (`lastFallsDueOn`, `SeriesDetail.lastFallsDueOn`): that day, still to come — the
+ * day its list names it on and the End dialog's span runs to; once it has come, "Ended" on it (`scheduleRanOutOn`
+ * dates the day it ran out as every reader dates a day, by when it falls due). 🔴 Review of 23e9c5d1: the rent typed
+ * Nov 16 and paid Nov 16, the utilities' end typed Dec 10 — Dec 11 to Dec 16 their page read "Ended Dec 10, 2026"
+ * beside a list naming Dec 16 and an End dialog "Leaving the forecast: ~$182.21 / yr", and from Dec 17 "Ended Dec 1,
+ * 2026" beside an Already-due card for Dec 16; the rent typed Nov 1 and their end Oct 15, "Ended Oct 1, 2026", a day
+ * they never held (his ledger copy 2026-11-04, both what-ifs). Latent: nothing of his billed inside another has an end.
  */
-export function seriesEndBadge(endsOn: string, ranOutOn: string | null, today: string, scheduleEnded: boolean): string {
+export function seriesEndBadge(
+  endsOn: string,
+  ranOutOn: string | null,
+  today: string,
+  scheduleEnded: boolean,
+  lastFallsDueOn: string | null,
+): string {
   const ended = SERIES_EVIDENCE_LABEL["schedule-ended"];
   if (ranOutOn !== null) return `${ended} ${longDate(ranOutOn)}`;
-  if (compareDates(endsOn, today) < 0) return `${ended} ${longDate(endsOn)}`;
-  return `${scheduleEnded ? `${ended} before` : "Ends"} ${longDate(endsOn)}`;
+  if (scheduleEnded) return `${ended} before ${longDate(endsOn)}`;
+  if (compareDates(endsOn, today) >= 0) return `Ends ${longDate(endsOn)}`;
+  return lastFallsDueOn === null ? `${ended} ${longDate(endsOn)}` : `Ends ${longDate(lastFallsDueOn)}`;
 }
 
 /**
