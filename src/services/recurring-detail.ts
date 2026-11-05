@@ -31,13 +31,13 @@ import {
   annualizedCentsOf,
   effectiveSeries,
   isSeriesActive,
-  lastFallsDueAfterItsEnd,
   oneChargeDays,
   projectOccurrences,
   rollForwardNextExpected,
   scheduleRanOutOn,
   toProjectable,
   type SeriesOccurrence,
+  seriesEndDays,
   seriesEvidence,
   seriesIsForecast,
   seriesStaleness,
@@ -755,10 +755,10 @@ export function seriesDetail(
     evidence: seriesEvidence(s, today, checkedThrough),
     neverPosted: neverPosted(seriesStaleness(s, today, checkedThrough)),
     billedWith: s.billedWith,
-    endsOn: s.userEndsOn ?? null,
+    // its end and the later day its last charge falls due on, off its status as the All tab and the runway read them —
+    // never the forecast's lapse (`seriesEndDays`, `lastFallsDueAfterItsEnd`)
+    ...seriesEndDays(s, today),
     scheduleRanOutOn: scheduleRanOutOn(s, today),
-    // off its status, as the All tab reads it — never the forecast's lapse (`lastFallsDueAfterItsEnd`)
-    lastFallsDueOn: lastFallsDueAfterItsEnd(s, today),
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),
     nextExpected,

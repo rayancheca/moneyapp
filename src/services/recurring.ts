@@ -27,6 +27,7 @@ import {
 } from "@/lib/recurring-step";
 import { roundToCents } from "@/lib/money";
 import { withoutAchReferences } from "@/lib/normalize";
+import type { SeriesEndDays } from "@/lib/committed";
 import { isOneCharge } from "@/lib/one-charge";
 import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
@@ -938,7 +939,9 @@ export interface SeriesView {
   lastFallsDueOn: string | null;
   /**
    * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), else null — what makes its
-   * cadence slot read "Once" (`cadenceLabel`) or "once · Nov 11". ⚖️ Owner decision 2026-10-08 (§6A 56).
+   * cadence slot read "Once" (`cadenceLabel`) or "once · Nov 11". ⚖️ Owner decision 2026-10-08 (§6A 56). ⚖️ (B) The
+   * day it FALLS DUE (`oneChargeDueDays`): billed inside another, the carrier's later day, the row's Next — 🔴 the
+   * category page and the attach picker read "once · Nov 1" of one due with the rent's Nov 16 (review of 78d64f6a).
    */
   oneChargeOn: string | null;
   /**
@@ -1073,8 +1076,6 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     if (!t.recurringSeriesId) continue;
     countBySeries.set(t.recurringSeriesId, (countBySeries.get(t.recurringSeriesId) ?? 0) + 1);
   }
-  // ⚖️ §6A 56 — the one reading of "one charge" every cadence printer asks
-  const oneCharge = oneChargeDays(db, rows.map((r) => r.series));
   // the series page's and the popover's own reading of what posted — see `postedAvgCents`
   const posted = postedAveragesBySeries(db, rows.map((r) => r.series), today);
   // ⚖️ the carrier each series is billed with — its evidence (`lastSeenOn`, §6A 59)
@@ -1083,6 +1084,8 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
     s: { ...row, billedWith: carriers.get(row.id) ?? null },
     merchantName,
   }));
+  // ⚖️ §6A 56 — the one reading of "one charge" every cadence printer asks, on the day it falls due (`oneChargeDueDays`)
+  const oneCharge = oneChargeDueDays(db, withCarriers.map(({ s }) => s));
   // the series the forecast carries — the ones a next date is stepped for — and what is still to come of each, read
   // once for all of them (`stillToComeReader`)
   const forecast = new Set(
@@ -1138,8 +1141,8 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         isActive: isSeriesActive(s, today),
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),
-        endsOn: s.userEndsOn ?? null,
-        lastFallsDueOn: lastFallsDueAfterItsEnd(s, today),
+        // its end, and the later day its last charge falls due on — its page's and the runway's (`seriesEndDays`)
+        ...seriesEndDays(s, today),
         oneChargeOn: oneCharge.get(s.id) ?? null,
         billedWith: s.billedWith,
       } satisfies SeriesView;
@@ -1233,7 +1236,8 @@ export interface SeriesStaleness {
   /**
    * The day of its ONE charge when its whole schedule holds one (`oneChargeDays`), null when it does not — undefined
    * when the caller did not ask. ⚖️ §6A 56 (2026-10-08): such a series is "once · Nov 11" wherever a cadence prints, and
-   * its staleness sentence says "expected once on Nov 11, 2026", never `stepDays`' "about every 30 days".
+   * its staleness sentence says "expected once on Nov 11, 2026", never `stepDays`' "about every 30 days". ⚖️ (B) The
+   * day it falls due (`oneChargeDueDays`) — billed inside another, its carrier's later day, as its list names it.
    *
    * ⛔ Asked by every reader whose staleness is DISCLOSED — the forecast's two legs and Upcoming (`forecastWalk`), the
    * chip's tooltip and the footers'. The came-due leg's is carried though nothing discloses it: come due, a one charge's
@@ -1942,6 +1946,20 @@ export function lastFallsDueAfterItsEnd(
 }
 
 /**
+ * What every reader of a series' end reads of it (`SeriesEndDays`): the end he typed, and the later day its last charge
+ * inside it falls due on (`lastFallsDueAfterItsEnd`) — ONE reading for its page (`seriesDetail`), the All tab
+ * (`listSeries`) and the committed books (`termsBySeries`), so the day each names it stopping on (`seriesStopsOn`) is
+ * one day. 🔴 The books read the end alone (review of 78d64f6a): the runway's "evidenced through Feb 10, 2027" beside
+ * a page reading "Ends Feb 16, 2027" (his ledger copy 2026-11-05, the rent retyped Nov 16, the utilities' end Feb 10).
+ */
+export function seriesEndDays(
+  s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind; status: SeriesStatus } & CarriedBy,
+  today: string,
+): SeriesEndDays {
+  return { endsOn: s.userEndsOn ?? null, lastFallsDueOn: lastFallsDueAfterItsEnd(s, today) };
+}
+
+/**
  * The series among `rows` whose whole schedule holds ONE charge, each to the day of that charge — `isOneCharge`
  * (lib/one-charge) asked of the ledger. ⚖️ Owner decision 2026-10-08 (§6A 56): such a series reads "once · Nov 11"
  * wherever a cadence is printed, and is no monthly cost. Every surface that prints a cadence, and the subscriptions
@@ -1995,6 +2013,35 @@ export function oneChargeDays(
     if (isOneCharge(eff, earliest)) days.set(id, eff.nextExpectedOn!);
   }
   return days;
+}
+
+/**
+ * ⚖️ (B) `oneChargeDays`, each day the day that ONE charge FALLS DUE (`fallsDueOn`): billed inside another on its
+ * carrier's step, the carrier's later day it pairs with — the day its list, its badge (`seriesStopsOn`), its End dialog
+ * and the calendar name it on; billed on its own, its own day. The day every reader that names it dates it by but two:
+ * "once · Nov 16" wherever a cadence slot prints it (`oneChargePhrase` — the subscriptions card, the category page,
+ * the attach picker), the merchant page's "once, on Nov 16," and the staleness sentence's "expected once on Nov 16,
+ * 2026" (`SeriesStaleness.oneChargeOn`). Its page's sentence names its own day (`oneChargeDays`), the one its editor
+ * saves, with this one beside it — "charges once on Nov 1, due with the rent on Nov 16" — and asks this rule nothing;
+ * ⚠️ and the car card's "charges once on …" names the day its rate counts it on, its own (`heaviestMonthEnding`'s
+ * `lastPaymentOn`, the committed book's months are its own days — `scheduledOccurrences`). Latent: no car series is
+ * billed inside another. ⛔ The row's carrier is REQUIRED, `toProjectable`'s reason.
+ *
+ * 🔴 Review of 78d64f6a (L77's what-if): the utilities as one charge on Nov 1, the rent retyped Nov 16, read through Nov
+ * 9 — from Oct 30 to Nov 16 their page read "Ends Nov 16, 2026" over "Next expected Nov 16, 2026" and the calendar drew
+ * Nov 16 upcoming, while the subscriptions card listed "once · Nov 1" among what is still to come and the End dialog
+ * read "once on Nov 1, 2026" — from Nov 2 a day gone by (his ledger copy 2026-11-05). Latent on his ledger: his one
+ * charge, the Nov 11 balance, is billed on its own.
+ */
+export function oneChargeDueDays(
+  db: AppDatabase,
+  rows: readonly (Parameters<typeof oneChargeDays>[1][number] & CarriedBy)[],
+): Map<string, string> {
+  const byId = new Map(rows.map((r) => [r.id, r] as const));
+  return new Map(
+    // every id `oneChargeDays` names is one of `rows`
+    [...oneChargeDays(db, rows)].map(([id, day]) => [id, fallsDueOn(pairingOf(byId.get(id)!), day)] as const),
+  );
 }
 
 /**
@@ -2353,8 +2400,9 @@ function forecastWalk(
 
   // today is day ONE of the window — see `upcomingOccurrences`' rent-twice measurement
   const to = addDays(today, windowDays - 1);
-  // a one-charge series' staleness says "once on Nov 11", as its cadence does (`SeriesStaleness.oneChargeOn`)
-  const oneCharge = oneChargeDays(db, live);
+  // a one-charge series' staleness says "once on Nov 11", as its cadence does (`SeriesStaleness.oneChargeOn`) — on the
+  // day it falls due (`oneChargeDueDays`)
+  const oneCharge = oneChargeDueDays(db, live);
   return live
     // A series whose evidence has run out is not a forecast. UBER *ONE last
     // charged 2025-05-25 and was still listed as a bill due next week, wearing

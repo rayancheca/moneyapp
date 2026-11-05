@@ -41,7 +41,7 @@ import {
 import { latestBalances } from "./derivation";
 import { latestBridgedNetWorthCents } from "./in-flight";
 import {
-  oneChargeDays,
+  oneChargeDueDays,
   projectOccurrences,
   seriesStaleness,
   toProjectable,
@@ -780,7 +780,8 @@ function fixedComponents(
     db,
     db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
   );
-  const oneCharge = oneChargeDays(db, live);
+  // a line's "(once)" and its staleness's "once on …", on the day the charge falls due (`oneChargeDueDays`)
+  const oneCharge = oneChargeDueDays(db, live);
   // what is still to come of each — read once for every series (`stillToComeReader`), asked per occurrence below
   const toCome = stillToComeReader(db, live, today);
 
@@ -973,7 +974,8 @@ function arrearsComponents(
   ).filter((s) => seriesIsIncomeOrSpending(s.kind));
   const byId = new Map(live.map((s) => [s.id, s]));
   const late = arrearsThisMonth(db, new Set(byId.keys()), today);
-  const oneCharge = oneChargeDays(db, live);
+  // …and the came-due leg's, on the same day (`oneChargeDueDays`)
+  const oneCharge = oneChargeDueDays(db, live);
   /*
    * ⚖️ A schedule of the agent's that came due and has not posted is the agent's to pay (owner decision 2026-10-02):
    * no line of his, and still money net worth will pay — EOM net worth alone, under the band the forward leg names it

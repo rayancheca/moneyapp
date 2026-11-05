@@ -63,7 +63,10 @@ export interface CommittedOccurrence {
    * from the count would make every such series look like it runs throughout.
    */
   cadence: Cadence;
-  /** the day the series stops, or null when it runs on past this horizon */
+  /**
+   * the day the series stops (`seriesStopsOn`: billed inside another, the later day its last charge falls due on), or
+   * null when it runs on past this horizon
+   */
   endsOn: string | null;
   /**
    * The series' whole schedule is ONE charge (`oneChargeDays`, services/recurring) — ⚖️ owner decision 2026-10-08
@@ -133,7 +136,7 @@ export interface CommittedLine {
   neverPosted: boolean;
   /** the series' cadence, so a reader can check the two figures below */
   cadence: Cadence;
-  /** the day the series stops, or null */
+  /** the day the series stops (`seriesStopsOn`), or null */
   endsOn: string | null;
   /**
    * The day of its LAST payment inside the horizon, or null when it has none there (arrears only). Of a ONE-CHARGE line
@@ -282,9 +285,40 @@ interface Accumulator {
  * and so told the owner his `Car lease`, which ends 2028-08-15 and bills the
  * next twelve months in full for $8,340.48, that it was "scheduled only to
  * 2028-08-15".
+ *
+ * ⛔ …and both ask it of ONE day, the day the series stops (`seriesStopsOn`) — the book's lines carry it
+ * (`termsBySeries`), as the page's caveat reads it. 🔴 Review of 78d64f6a: the book asked the end he typed and the page
+ * the later day its last charge falls due on, so the rent typed Nov 16 and paid Nov 16 and Dec 16, the utilities' end
+ * typed Feb 10, 2027, the runway read "Rent utilities & fees stops inside that window — evidenced through Feb 10, 2027"
+ * on Jan 12, Jan 20 and Feb 1 beside a page reading "Ends Feb 16, 2027" (his ledger copy 2026-11-05, the same what-if).
  */
 export function endsInsideHorizon(endsOn: string | null, toExclusive: string): boolean {
   return endsOn !== null && compareDates(endsOn, toExclusive) < 0;
+}
+
+/** What every reader of a series' end reads of it: the end he typed, and the later day its last charge falls due on. */
+export interface SeriesEndDays {
+  endsOn: string | null;
+  /** ⚖️ (B) billed inside another, the day its last charge inside the end falls due on when after it, else null */
+  lastFallsDueOn: string | null;
+}
+
+/**
+ * ⚖️ (B) The day a series STOPS, as every reader dates its days — by the day each falls due (`SeriesOccurrence.date`):
+ * its end, or, billed inside another on its carrier's step, the later day its last charge inside that end falls due on
+ * (`lastFallsDueOn`), the day its list names that charge by. ONE day for every reader that names it: the end badge
+ * (`seriesEndBadge`), the Annualized qualifier and the All tab's short form (`annualizedCaveat`, `annualizedEndNote`),
+ * the End dialog's span (`seriesEndInput`) — and the committed books' lines (`termsBySeries`), so the runway's lead
+ * sentence (`shrinkCaption`) and the car card's of a commitment that stops (`carEvidenceCaption`) date it by that day,
+ * and gate it with the page (`endsInsideHorizon`). 🔴 Each read its own (review of 99bd525a): the rent typed Nov 16 and
+ * paid Nov 16, the utilities' end typed Dec 10 — on Dec 5 their page read "Ends Dec 10, 2026" and "this one stops on
+ * Dec 10, 2026" above "Next expected Dec 16, 2026" and an End dialog "every charge from Dec 16, 2026 to Dec 16, 2026"
+ * (his ledger copy 2026-11-04, the same what-if). 🔴 …and the books still read the end he typed (review of 78d64f6a):
+ * with Car insurance's ends cleared, on Nov 5 and Nov 20 the runway read "evidenced through Dec 10, 2026" beside "Ends
+ * Dec 16, 2026" (his ledger copy 2026-11-05). Latent on his ledger: nothing of his billed inside another has an end.
+ */
+export function seriesStopsOn<End extends string | null>(s: SeriesEndDays & { endsOn: End }): string | End {
+  return s.lastFallsDueOn ?? s.endsOn;
 }
 
 export function committedOutflows(input: CommittedInput): CommittedOutflows {

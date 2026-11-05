@@ -4,11 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DbBundle } from "@/db/client";
 import { recurringSeries } from "@/db/schema/recurring";
+import { formatCents } from "@/lib/money";
 import { resolveViewState } from "@/lib/view-state";
+import { RunwayCard } from "@/components/dashboard/RunwayCard";
+import { createCategory } from "@/services/category-edit";
 import { checkedThrough } from "@/services/checked-days-fixture";
-import { closeLedger, openLedger, rentWith, UTIL } from "@/services/nearer-due-day-fixture";
+import { carCard, committedBook, runwayCard } from "@/services/committed";
+import { closeLedger, marks, openLedger, rentWith, UTIL } from "@/services/nearer-due-day-fixture";
 import { listSeries } from "@/services/recurring";
 import { seriesDetail } from "@/services/recurring-detail";
+import { seriesEndInput, seriesEndLines } from "./end-radius";
 import { RECURRING_SERIES_VIEW_SPEC } from "./recurring-view-spec";
 
 // rendering never navigates or submits; the page and its controls only need these to exist
@@ -208,5 +213,115 @@ describe("⛔ the year of what the rent carries — it stops on the day its last
       expect(seriesDetail(bundle.db, UTIL, DEC5)!.lastFallsDueOn, status).toBeNull();
       expect(listSeries(bundle.db, DEC5).find((s) => s.id === UTIL)!.lastFallsDueOn, status).toBeNull();
     }
+  });
+});
+
+/*
+ * ⛔ …and the runway card's lead sentence dates it by that day too (`seriesStopsOn`, read by the committed book's
+ * `termsBySeries`): the gate "does it stop inside the window" is asked of ONE day on both surfaces
+ * (`endsInsideHorizon`). 🔴 Review of 78d64f6a: the book read the end he typed. The rent typed Nov 16 and paid Nov 16
+ * and Dec 16, the utilities' end typed Feb 10, 2027, read through Dec 19 — on Jan 12, Jan 20 and Feb 1 the runway read
+ * "Rent utilities & fees stops inside that window — evidenced through Feb 10, 2027, with no renewal in the ledger — …"
+ * while their page read "Ends Feb 16, 2027" and "this one stops on Feb 16, 2027, inside them"; with their end typed Dec
+ * 10 and Car insurance's ends cleared, on Nov 5 and Nov 20 "evidenced through Dec 10, 2026" beside "Ends Dec 16, 2026"
+ * (his ledger copy 2026-11-05, both what-ifs). At 99bd525a all of them read the end he typed.
+ */
+describe("⛔ the runway names the day what the rent carries stops on — its page's day", () => {
+  /** the day the runway card's lead sentence says they are evidenced through, as the owner reads it — null for none */
+  const runwayDayOn = (today: string): string | null => {
+    const card = words(renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, today) })));
+    const lead = /Rent utilities & fees stops inside that window — evidenced through ([A-Z][a-z]{2} \d{1,2}, \d{4})/;
+    return card.match(lead)?.[1] ?? null;
+  };
+
+  test("⛔ ending Dec 10, due with the rent's Dec 16: 'evidenced through Dec 16, 2026', as 'Ends Dec 16, 2026'", () => {
+    rentPaidNov16();
+    endOn("2026-12-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2026-11-05", "2026-11-20", "2026-12-01"]) {
+      expect(runwayDayOn(day), day).toBe("Dec 16, 2026");
+      expect(badgeOn(day), day).toEqual(["Ends Dec 16, 2026"]);
+    }
+    // the line the sentence names — its stop day, the one the gate is asked of
+    const line = committedBook(bundle.db, "2026-11-20").lines.find((l) => l.seriesId === UTIL)!;
+    expect([line.endsOn, line.endsInHorizon]).toEqual(["2026-12-16", true]);
+  });
+
+  test("⛔ ending Feb 10, 2027, paid Nov 16 and Dec 16: 'evidenced through Feb 16, 2027' to Feb 1", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-16",
+    );
+    endOn("2027-02-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2027-01-12", "2027-01-20", "2027-02-01"]) {
+      expect(runwayDayOn(day), day).toBe("Feb 16, 2027");
+      expect(badgeOn(day), day).toEqual(["Ends Feb 16, 2027"]);
+    }
+  });
+
+  // ⛔ …and the car card's sentence asks the same book's day (`termsBySeries`, one reading for both books)
+  test("filed under Car, the car card's sentence names that day too", () => {
+    rentPaidNov16();
+    endOn("2026-12-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    bundle.db.update(recurringSeries).set({ userCategoryId: car.id }).where(eq(recurringSeries.id, UTIL)).run();
+    expect(carCard(bundle.db, "2026-11-20")!.evidenceCaption).toBe(
+      "Rent utilities & fees stops inside the next 12 months — evidenced through Dec 16, 2026, with no renewal in " +
+        "the ledger — so the monthly figure above stops being what you pay after that date.",
+    );
+  });
+
+  // billed on its own, the day it stops is the end he typed — as it read
+  test("the rent's own end: the end he typed, on the runway and the page alike", () => {
+    rentPaidNov16();
+    bundle.db.update(recurringSeries).set({ userEndsOn: "2027-03-16" }).where(eq(recurringSeries.id, "rent")).run();
+    const line = committedBook(bundle.db, "2026-11-20").lines.find((l) => l.seriesId === "rent")!;
+    expect([line.endsOn, line.endsInHorizon]).toEqual(["2027-03-16", true]);
+  });
+});
+
+/*
+ * ⛔ …and the End dialog of a carried ONE charge names the day it comes off the calendar: the day it falls due, its
+ * list's (`nextChargeOn`) — never its own. 🔴 Review of 78d64f6a (L77's what-if): the utilities as one charge on Nov 1
+ * (next and end Nov 1), the rent retyped Nov 16, read through Nov 9 — from Oct 30 to Nov 16 their page read "Ends Nov
+ * 16, 2026 … charges once on Nov 1, due with the rent on Nov 16 … Next expected Nov 16, 2026", the calendar drew Nov 16
+ * upcoming and the All tab "Once -$182.21 Nov 16", while the dialog read "Upcoming charges off the calendar: once on
+ * Nov 1, 2026" — from Nov 2 a day gone by, as upcoming, that the calendar holds nothing on (his ledger copy
+ * 2026-11-05, the same what-if).
+ */
+describe("⛔ the End dialog of a carried one charge — once, on the day it falls due", () => {
+  const upcomingOn = (today: string): string | undefined =>
+    seriesEndLines(seriesEndInput(seriesDetail(bundle.db, UTIL, today)!), formatCents).find(
+      (l) => l.label === "Upcoming charges off the calendar",
+    )?.value;
+
+  test("⛔ once on Nov 1, due with the rent's Nov 16: 'once on Nov 16, 2026', the calendar's day", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-11-01", utilTyped: true, noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+    );
+    endOn("2026-11-01");
+    checkedThrough(bundle.db, "acct", "2026-11-09");
+    for (const day of ["2026-10-30", "2026-11-01", "2026-11-02", "2026-11-10", "2026-11-16"]) {
+      expect(upcomingOn(day), day).toBe("once on Nov 16, 2026");
+      // the day its badge, its list and the calendar name — one day
+      expect(badgeOn(day), day).toEqual(["Ends Nov 16, 2026"]);
+      expect(seriesDetail(bundle.db, UTIL, day)!.nextExpected.map((o) => o.date), day).toEqual(["2026-11-16"]);
+      expect(marks("2026-11", "2026-11-16", day), day).toContainEqual([UTIL, "upcoming", null]);
+      // …while its sentence names its own day, the one its editor saves, with the one it falls due beside it
+      expect(pageOn(day), day).toContain("charges once on Nov 1 , due with the rent on Nov 16");
+    }
+    // past it, nothing is scheduled — as of any series
+    expect(upcomingOn("2026-11-17")).toBe("none scheduled");
   });
 });
