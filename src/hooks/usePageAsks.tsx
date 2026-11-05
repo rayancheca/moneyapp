@@ -2,7 +2,7 @@
 
 import { createContext, Suspense, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createPageAsks, type PageAsks } from "@/lib/page-asks";
+import { createPageAsks, redrawAfterBackSaves, type PageAsks } from "@/lib/page-asks";
 import { NAVIGATION_START, type NavigationStart } from "./navigation-start";
 
 /**
@@ -25,7 +25,7 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
   // why its commit is too late). Back/Forward always does: it commits outside any transition
   // while a press may still be pending, and can land on a URL a press asked for.
   useEffect(() => {
-    // every navigation's start, counted: a link's page is drawn again only while no navigation has started since
+    // every navigation's start, counted: a page is drawn again only while no navigation has started since
     let starts = 0;
     const onStart = (event: Event): void => {
       const { url, kind } = (event as CustomEvent<NavigationStart>).detail;
@@ -34,26 +34,23 @@ export function PageAsksProvider({ children }: { children: ReactNode }) {
         asks.moved();
         return;
       }
-      const mark = asks.moveMark();
       asks.departing(url, kind);
-      // ⚖️ B2: a link carries no view and goes at once, never held as a URL writer is (`navigateAfterBackSaves`),
-      // so followed while a save of Back's view is being written its page can draw the saved view he walked away
-      // from. 🔴 /investments?range=1Y, Return, Back (Value), the sidebar's /investments: his Return, and once Back's
-      // save landed nothing drew the Value (review of ab13868, measured 2026-10-13). Drawn again once they land, as
-      // a writer gone at BACK_SAVE_WAIT_MS goes again then — the page on screen, re-rendered where he is, and only
-      // while no navigation has started since (`starts`: what started since draws its own page, and a writer gone at
-      // its bound goes again itself).
-      // ⛔ A LINK'S ALONE — a navigation that moved the page under its asks (`movedSince`) — and never one a press
-      // gone at BACK_SAVE_WAIT_MS makes (`goesAgain`). A press or URL writer gone at its bound goes again itself once
-      // what it waits on lands: to its asked URL, which is no move, or — a press after a link — making that link
-      // again, which is. 🔴 Review of b37a250: a press waits on its own write, which Next queues behind Back's save,
-      // so this fired first and the page was rendered twice — the refresh, then the press going again. 🔴 Review of
-      // 7898ee2 (batch 6): the same for a press making again the link he had followed, which a guard on moves let by.
-      if (asks.movedSince(mark) === null || asks.goesAgain()) return;
-      const landing = asks.backSavesLanding();
-      if (landing === null) return;
+      // ⚖️ B2: a push or replace made while a save of Back's view is being written can draw the saved view he walked
+      // away from — a link most of all: it carries no view and goes at once, never held as a URL writer is
+      // (`navigateAfterBackSaves`). 🔴 /investments?range=1Y, Return, Back (Value), the sidebar's /investments: his
+      // Return, and once Back's save landed nothing drew the Value (review of ab13868, measured 2026-10-13). Drawn
+      // again once they land — the page on screen, re-rendered where he is (`redrawAfterBackSaves`) — after what is
+      // still going has gone, which draws its own page (a press once its write lands: making that link again, or to
+      // its own URL; a URL writer they held), and no later than BACK_SAVE_WAIT_MS after; only while no navigation has
+      // started since (`starts`: what started since draws its own page).
+      // 🔴 Reviews of b37a250 and 7898ee2 (batch 6): a press waits on its own write, which Next queues behind Back's
+      // save, so this fired first and the page was rendered twice — the refresh, then the press going again. Guarded
+      // by what had moved and by what a press gone at its bound made, a link followed while a press waited on its
+      // write was still rendered twice, and once Back's save landed nothing drew again the page of a press gone at
+      // its bound whose write never answered: the view he walked away from until a reload (review of 1c057674,
+      // batch 8).
       const at = starts;
-      void landing.then(() => {
+      redrawAfterBackSaves(asks, () => {
         if (starts === at) router.refresh();
       });
     };

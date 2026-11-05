@@ -352,15 +352,17 @@ export interface PageAsks {
    */
   landing(): Landing | null;
   /**
-   * A press gone at BACK_SAVE_WAIT_MS (`pressWriteLanding` settled `true`) navigates through this (`go`): it goes again
-   * itself once its write lands, so while its navigation starts `goesAgain` is true, and PageAsksProvider draws nothing
-   * again for it. 🔴 Made again then, the link he had followed meanwhile is a move (`movedSince`), and the page was
-   * rendered twice once Back's save and the press's write landed: the provider's redraw, then the press going again
-   * (review of 7898ee2, batch 6).
+   * Something that navigates once what it waits on lands has started: a press, until it has gone for the last time —
+   * once its write lands, or at BACK_SAVE_WAIT_MS and again then (`pressWriteLanding`) — and a URL writer held by
+   * Back's saves, until it has gone once they land (`navigateAfterBackSaves`). Call what it returns then. What is still
+   * going draws its own page, so PageAsksProvider waits on it before drawing the page on screen again
+   * (`redrawAfterBackSaves`).
+   * 🔴 Reviews of b37a250, 7898ee2 (batch 6) and 1c057674 (batch 8): drawn again as Back's save landed, the page was
+   * rendered twice — the provider's redraw, then a press going to its own URL or making again the link he had followed.
    */
-  goneAtBound(go: () => void): void;
-  /** true while a press gone at BACK_SAVE_WAIT_MS navigates (`goneAtBound`), and only then */
-  goesAgain(): boolean;
+  going(): () => void;
+  /** Settles once everything still going (`going`) has gone; null when nothing is. */
+  stillGoing(): Promise<void> | null;
   /**
    * A push or replace to `href` is starting: one nobody asked for drops the ask. Until anything
    * is drawn, `base`, `paramsOn` and the next `ask` still build on the ask it dropped: the page
@@ -445,8 +447,8 @@ export function createPageAsks(): PageAsks {
   // the page's moves under its asks (a Back/Forward, a link nobody asked for): how many, and the newest
   let moves = 0;
   let newestMove: PageMove = "link";
-  // a press gone at BACK_SAVE_WAIT_MS is navigating (`goneAtBound`)
-  let atBound = false;
+  // what is still going (`going`): each one's last navigation, once made
+  let goings: readonly Promise<void>[] = [];
   // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
   // asked for when it was (every one was saved by its press), and the ones it kept from the URL it
   // built on that his presses had put there
@@ -478,15 +480,18 @@ export function createPageAsks(): PageAsks {
       if (current !== null) return { href: current.href, kind: "push", scroll: false };
       return overtaken === null ? null : { ...overtaken, scroll: true };
     },
-    goneAtBound(go) {
-      atBound = true;
-      try {
-        go();
-      } finally {
-        atBound = false;
-      }
+    going() {
+      let gone!: () => void;
+      const went = new Promise<void>((resolve) => {
+        gone = resolve;
+      });
+      goings = [...goings, went];
+      void went.then(() => {
+        goings = goings.filter((pending) => pending !== went);
+      });
+      return gone;
     },
-    goesAgain: () => atBound,
+    stillGoing: () => (goings.length === 0 ? null : Promise.all(goings).then(() => undefined)),
     departing(href, kind) {
       // a push or replace — a press's, a link's: whatever it draws is not Back's page
       traversing = false;
@@ -567,7 +572,8 @@ export const BACK_SAVE_WAIT_MS = 5_000;
  * it is entangled with has settled — with Back's save hung, a link he followed next was never drawn.
  * 🔴 Gone at BACK_SAVE_WAIT_MS, the pill's page drew the saved view he had walked away from, and a
  * save landing after that drew nothing again: the view Back showed only after a reload (review of
- * ab13868).
+ * ab13868). Held, it is still going (`PageAsks.going`) until it has gone once they land: its page
+ * is drawn by it, never again by PageAsksProvider first (`redrawAfterBackSaves`).
  */
 export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => void): void {
   const landing = asks.backSavesLanding();
@@ -575,17 +581,59 @@ export function navigateAfterBackSaves(asks: PageAsks, href: string, go: () => v
     go();
     return;
   }
+  const gone = asks.going();
   const goIfNewest = (): void => {
     if (asks.isNewest(href)) go();
   };
-  void boundedByBackSaves(landing, landing, goIfNewest).then(goIfNewest);
+  const goLast = (): void => {
+    try {
+      goIfNewest();
+    } finally {
+      gone();
+    }
+  };
+  void boundedByBackSaves(landing, landing, goLast).then((cut) => (cut ? goIfNewest() : goLast()));
+}
+
+/**
+ * Draws the page on screen again (`redraw`: PageAsksProvider's `router.refresh`, which says itself whether anything
+ * has started since) once every save of Back's view being written when it is called has landed — and once everything
+ * still going then has gone (`PageAsks.going`), no later than BACK_SAVE_WAIT_MS after they land. Nothing while none is
+ * being written. Leaves no timer behind.
+ *
+ * ⚖️ B2: a page drawn while a save of Back's view is being written can draw the saved view he walked away from. What is
+ * still going draws its own page once they land — a press once its write lands, making again the link he followed
+ * meanwhile (`landing`) or going to its own URL; a URL writer held by them — so the redraw waits on it. 🔴 Review of
+ * 1c057674 (batch 8): drawn again as Back's save landed, a link's page was rendered twice — the redraw, then a press's
+ * write landing and the press making the link again. 🔴 And no longer than BACK_SAVE_WAIT_MS: skipped for what a press
+ * gone at its bound made, a page whose press's write never answered kept the view he had walked away from until a
+ * reload, with the one Back showed saved (the same review).
+ */
+export function redrawAfterBackSaves(asks: PageAsks, redraw: () => void): void {
+  const landing = asks.backSavesLanding();
+  if (landing === null) return;
+  void landing.then(() => {
+    const going = asks.stillGoing();
+    if (going === null) {
+      redraw();
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, BACK_SAVE_WAIT_MS);
+    });
+    void Promise.race([going, bound]).then(() => {
+      clearTimeout(timer);
+      redraw();
+    });
+  });
 }
 
 /**
  * What a press waits on before it navigates (`useViewState`): its own `write` — and, while a save of Back's view is
  * being written, no longer than BACK_SAVE_WAIT_MS unless those land first; cut short, it calls `again` once the write
  * lands. Settles either way, a refused write too (persistence is best-effort) — while Back's saves are being written,
- * `true` when cut short (`again` is still to come: the press goes through `goneAtBound`) and `false` when not.
+ * `true` when cut short (`again` is still to come: the press is still going, `PageAsks.going`) and `false` when not.
  *
  * 🔴 Every URL writer that writes nothing was bounded (`navigateAfterBackSaves`), and the press made after one was
  * not: Next queues a server action behind the one in flight, so with Back's save hung the press's own write never ran

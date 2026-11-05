@@ -358,13 +358,13 @@ export interface MonthForecast {
   spendPaceMonths: number;
   /**
    * How many months the INCOME pace averaged (`incomePaceMonths`): three — ending at the last month every account its
-   * own rows come in on habitually that a statement is still coming for is read to the end of — fewer where the ledger
-   * is young, and 0 where it covers no whole month read in full. Under the presence gate's two
-   * (`incomePaceMeasurable`) there is no income pace — no kind of income can come in two of one month — and the card's
-   * band holds Money in's pace back as it does Money out's. 🔴 Review of f1a0180: with no count to read, the band could
-   * not tell "no month" from "$0" and printed "Money in · Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review
-   * of 0795a2a: it then held back 0 months alone, and one month read the same "$0.00 (0 lines)" beside Money out's
-   * one-month "$64.52 (1 line)".
+   * own rows come in on habitually (before any account holds the habit, those still coming in when last read) that a
+   * statement is still coming for is read to the end of — fewer where the ledger is young, and 0 where it covers no
+   * whole month read in full. Under the presence gate's two (`incomePaceMeasurable`) there is no income pace — no kind
+   * of income can come in two of one month — and the card's band holds Money in's pace back as it does Money out's.
+   * 🔴 Review of f1a0180: with no count to read, the band could not tell "no month" from "$0" and printed "Money in ·
+   * Recent pace $0.00 (0 lines)", drawn 100% scheduled. 🔴 Review of 0795a2a: it then held back 0 months alone, and
+   * one month read the same "$0.00 (0 lines)" beside Money out's one-month "$64.52 (1 line)".
    */
   incomePaceMonths: number;
   /**
@@ -547,9 +547,10 @@ export interface PaceMonths {
  * at the pace and a month-end cash with no spending in it, where its parent commit had read −$80.65. A pace of no
  * month is withheld, never a pace of nothing (`MonthForecast.spendPaceMonths`).
  *
- * ⚠️ Spending's day alone: the income pace ends at its own — every account its own rows come in on habitually that a
- * statement is still coming for (`incomePaceMonths`), which is not every account he SPENDS from — by the same rule and
- * floor (`averagedMonthsThrough`).
+ * ⚠️ Spending's day alone: the income pace ends at its own — every account its own rows come in on habitually (before
+ * any account holds the habit, those still coming in when last read) that a statement is still coming for
+ * (`incomePaceMonths`), which is not every account he SPENDS from — by the same rule and floor
+ * (`averagedMonthsThrough`).
  */
 export function paceMonths(db: AppDatabase, today: string, count: number = TRAILING_FULL_MONTHS): PaceMonths {
   const { keys, unread } = averagedMonths(db, today, count);
@@ -1209,7 +1210,8 @@ function variableComponents(
  * VARIABLE INCOME — the fix for a near-zero "projected income" when income is
  * real but IRREGULAR (a cash job, tutoring) rather than a detected series. Per
  * income subcategory, the trailing average of ONGOING income over the last 3 FULL
- * months read through by every account its own rows come in on habitually that a
+ * months read through by every account its own rows come in on habitually (before
+ * any account holds the habit, those still coming in when last read) that a
  * statement is still coming for (`incomePaceMonths`, default built 2026-10-23;
  * the calendar's where none is; fewer on a young ledger, its floor), scaled by
  * remaining days. Mirrors variableComponents (spending) but
@@ -1279,10 +1281,11 @@ function variableIncomeComponents(
   daysInMonth: number,
   { notDrawn, outside, agentsCash, incomePace }: ForecastReads,
 ): ForecastLeg {
-  // the months every account its own rows come in on habitually that a statement is still coming for is read to
-  // the end of, floored (`incomePaceMonths`): a September read to its 9th is no month of $0.07 dividends, and May
-  // before a ledger opening Jun 1 no month of $0 pay — read once for the chain (`forecastReads`), so its window is the
-  // chain's today, as spending's is (`variableComponents`)
+  // the months every account its own rows come in on habitually (before any account holds the habit, those still
+  // coming in when last read) that a statement is still coming for is read to the end of, floored
+  // (`incomePaceMonths`): a September read to its 9th is no month of $0.07 dividends, and May before a ledger opening
+  // Jun 1 no month of $0 pay — read once for the chain (`forecastReads`), so its window is the chain's today, as
+  // spending's is (`variableComponents`)
   const windows = incomePace.windows;
   if (windows.length === 0) {
     return { components: [], cashCents: 0, outsideAccountIds: new Set(), agentsCents: 0, agentsCostCents: 0 };

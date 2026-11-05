@@ -23,8 +23,11 @@ import { spendingCoverageThrough } from "./movers-card";
 /*
  * ⚖️ Default built, not asked (2026-10-23) — his decision 71 (2026-10-13) carried to the INCOME pace, option (A) of
  * batch 6's forecast fixer (he said "no more questions, follow the instructions"): the income pace ends at the last
- * month every account his income lands in has been read through to the END of, as spending's three end at the last
- * one every account he spends from has (`paceMonths`). "A month read to its 12th is not a twelfth of a measurement."
+ * month every account its own rows come in on habitually (before any account holds the habit, those still coming in
+ * when last read) that a statement is still coming for has been read through to the END of (`incomePaceMonths`), as
+ * spending's three end at the last one every account he spends from has (`paceMonths`). "A month read to its 12th is
+ * not a twelfth of a measurement." 🔴 It said "every account his income lands in": Wells Fargo, where his payroll
+ * lands, dates nothing — a live series projects the pay by its schedule (review of af84411).
  *
  * 🔴 Measured on his ledger copy (batch 6, at 2026-10-21; re-measured at 2026-10-23): every Dividends and Interest row
  * the pace reads lands on Robinhood Cash, whose rows run to Sep 9, and the pace averaged the calendar's Jul–Sep —
@@ -122,7 +125,7 @@ const JUN_TO_AUG =
   "Money in's pace is averaged over 3 complete months, Jun 2026 to Aug 2026. Sep 2026 is left out: Sep 9 is the last " +
   "day Brokerage Cash has been imported through.";
 
-describe("the income pace averages only months every account its income lands in is read to its end", () => {
+describe("the income pace averages only months every account that dates it is read to its end", () => {
   test("Brokerage Cash read to Sep 9 leaves September out: Jun–Aug, never the calendar's Jul–Sep", () => {
     ledger();
     expect(incomePaceMonths(bundle.db, TODAY)).toEqual({
