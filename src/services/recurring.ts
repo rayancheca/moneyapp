@@ -1147,12 +1147,14 @@ export interface SeriesOccurrence {
   /**
    * ⚖️ The day it FALLS DUE (`fallsDueOn`): its own day — or, billed inside another on its carrier's step, the later
    * of that and the carrier's day it pairs with (default (B), built, not asked, 2026-10-30). ONE day for every reader
-   * that holds, names or draws it — the window it is in, the date a sentence or a list prints, the cell the calendar
-   * draws it in, the paycheck it is due by — so none can read another. 🔴 It was its own day while the windows held
-   * it by this one (review of aa05a56d): the rent typed Nov 1, the utilities on the 25th — their Oct 25, held in
-   * November, was re-filtered out of it by the category forecast and counted in no month; the rent typed Nov 16, their
-   * Nov 1 was due by a Nov 12 paycheck on the dashboard, "next Nov 1" on Nov 10 and "came due Dec 1" of a day due Dec
-   * 16. What a grader asks paid is `ownDate`.
+   * that holds, names or draws it — the window it is in, the date a list or a sentence prints, the cell the calendar
+   * draws it in, the paycheck it is due by — so none can read another. The page's cadence sentence alone names its own
+   * day instead (`rollForwardNextExpected`, the day its editor saves), saying this one beside it: "around the 1st, due
+   * with the rent on the 16th" (`SeriesDetail.nextFallsDueOn`; review of 933b29e2, L75). 🔴 It was its own day while
+   * the windows held it by this one (review of aa05a56d): the rent typed Nov 1, the utilities on the 25th — their Oct
+   * 25, held in November, was re-filtered out of it by the category forecast and counted in no month; the rent typed
+   * Nov 16, their Nov 1 was due by a Nov 12 paycheck on the dashboard, "next Nov 1" on Nov 10 and "came due Dec 1" of
+   * a day due Dec 16. What a grader asks paid is `ownDate`.
    */
   date: string;
   /**
@@ -1296,9 +1298,10 @@ interface ProjectableSeries {
   /**
    * ⚖️ …and where it opens when that is AFTER its anchor: the day its schedule opens as every grader of a bill reads it
    * (`openingOf`, `DueDays.opensOn`) — billed inside another, the day of its own that falls due with its carrier's
-   * date he typed, one of the walk's own steps. The walk draws no date before it, here or in the next date it names
-   * (`rollForwardNextExpected`), so no reader projects a day no charge of it can lie on (default built, not asked,
-   * 2026-10-29). On or before the anchor, or absent, the anchor opens the walk (or `firstOn` walks it back).
+   * opening day, the one the carrier's payment of that day pays — one of the walk's own steps. The walk draws no date
+   * before it, here or in the next date it names (`rollForwardNextExpected`), so no reader projects a day no charge of
+   * it can lie on (default built, not asked, 2026-10-29). On or before the anchor, or absent, the anchor opens the walk
+   * (or `firstOn` walks it back).
    * `toProjectable` always sets it.
    */
   opensOn?: string | null;
@@ -1760,16 +1763,18 @@ export function seriesIsForecast(
  *
  * ⚖️ …and never a date before the day its schedule opens (`ProjectableSeries.opensOn`), as the walk draws none: a
  * schedule built for a projection (`toProjectable`) carries it — billed inside another, the day of its own that falls
- * due with its carrier's date he typed — so the sentence and the All tab's Next name the day Upcoming lists first
- * (default built, not asked, 2026-10-29). ⚖️ …and the first day that FALLS DUE from today on (`firstStepFallingDue`):
- * billed inside another on its carrier's step, a day of its own still to come with the carrier's day it pairs with,
- * though its own day has passed — the utilities' Nov 1 on Nov 10, beside the rent's Nov 16 (default (B), built, not
- * asked, 2026-10-30) — so its editor saves the day still to come, never one past it. ⛔ Its OWN day, always: what the
- * editor saves is the series' own schedule, so on Nov 10 it opens on their Nov 1 — on the rent's Nov 16 a Save with
- * nothing changed would retype them onto the 16th. A date that says when it is still to come names the day that one
- * falls due on (`fallsDueOn`): Upcoming's, the All tab's Next (`nextStillToCome`), the page's list — and the page's
- * sentence says it beside this one, "around the 1st, due with the rent on the 16th" (`SeriesDetail.nextFallsDueOn`).
- * 🔴 It said this day alone over a list on the rent's (review of a456a6fc).
+ * due with its carrier's opening day, the one the carrier's payment of that day pays (`openingOf`) — so neither the
+ * sentence nor the All tab's Next names a day before it (default built, not asked, 2026-10-29). ⚖️ …and the first day
+ * that FALLS DUE from today on (`firstStepFallingDue`): billed inside another on its carrier's step, a day of its own
+ * still to come with the carrier's day it pairs with, though its own day has passed — the utilities' Nov 1 on Nov 10,
+ * beside the rent's Nov 16 (default (B), built, not asked, 2026-10-30) — so its editor saves the day still to come,
+ * never one past it. ⛔ Its OWN day, always: what the editor saves is the series' own schedule, so on Nov 10 it
+ * opens on their Nov 1 — on the rent's Nov 16 a Save with nothing changed would retype them onto the 16th. A date that
+ * says when it is still to come names the day that one falls due on (`fallsDueOn`): Upcoming's, the All tab's Next
+ * (`nextStillToCome`), the page's list — and the page's sentence says it beside this one, "around the 1st, due with
+ * the rent on the 16th" (`SeriesDetail.nextFallsDueOn`). 🔴 It said this day alone over a list on the rent's (review
+ * of a456a6fc); 🔴 and this note said the sentence and the All tab's Next name one day, Upcoming's first (review of
+ * 933b29e2, L75: on Nov 10, the rent typed Nov 16, the sentence names their Nov 1, the All tab and Upcoming Nov 16).
  */
 export function rollForwardNextExpected(eff: SteppedSchedule, today: string = todayIso()): string | null {
   if (!eff.nextExpectedOn) return null;
@@ -2121,9 +2126,10 @@ export function dueDayBefore(series: DueDaySchedule, day: string): string | null
 /**
  * The due day NEAREST `day` on a series' schedule — `day` itself when it is one, of two as near the earlier — by index
  * from its anchor, behind it too, as `dueDayBefore` steps: the day his decision 76 says a payment on `day` pays ("the
- * one it's nearer to (a tie goes to the earlier one)"). Where a series billed inside another opens (`openingOf`): the
- * day of its own nearest the payment that paid its carrier's opening day — or, none yet, nearest that day itself. Null
- * for a series with no schedule.
+ * one it's nearer to (a tie goes to the earlier one)"). Where a series billed inside another opens is read from it
+ * (`dayFallingDueWith`, `openingOf`): its day nearest the payment that paid its carrier's opening day, stepped back as
+ * many of its days as that payment's own day lies past the opening day (`dueDayStepped`) — or, none yet, its day
+ * nearest the opening day itself. Null for a series with no schedule.
  */
 export function dueDayNearest(series: DueDaySchedule, day: string): string | null {
   if (!series.nextExpectedOn) return null;

@@ -413,7 +413,7 @@ describe("⚖️ a late catch-up — two premiums in one payment after a missed 
    * schedule: that day is no charge, so it catches nothing up and pays no day of his early (`paidAheadFromTheDayBefore`
    * in billing-carriers). 🔴 At b6e11a76 it paid his date early (review of b6e11a76; his ledger copy 2026-10-29, this
    * premium added on Venture X, read through Oct 14): Jun 11 and Jul 11 paid, Aug 11 and Sep 11 missed, Sep 19
-   * -$715.16, then he typed Oct 11 (the toast read "Next expected Oct 11") — October drew Oct 11 "paid early by its
+   * -$715.16, then he typed Oct 11 (the toast read "Next expected 2026-10-11") — October drew Oct 11 "paid early by its
    * payment of Sep 19, 2026"; on Sep 25 Upcoming listed Nov 11 alone, October's forecast left it out, and the All tab
    * and the page named Nov 11 next; on Oct 29 nothing was owed, /budgets' Car pace had no overdue line, and the runway
    * read "A further $3,519.98 came due earlier this month and no statement has covered it yet." — his own bills, round

@@ -329,10 +329,13 @@ describe("the e2e Meal Kit's real miss is still a miss", () => {
   // ⚖️ Jun 12 is default (a), built, not asked (above) — nearer Jun 5, paid on time: paying the other day would pay
   // Jul 5 early with its $19.99 and flip this test. The e2e fixture's Meal Kit has no row, so no e2e screen moves
   // either way.
-  test("…and June's on-time payment and a second June row nearer Jun 5 pay no Jul 5 — still a miss", () => {
+  test("…and June's on-time payment and a second June row nearer Jun 5 pay no Jul 5 — drawn ?, still owed", () => {
     seriesWith(MEAL, "Meal Kit", -12500, "2026-06-05", ["2026-06-05", -12500], ["2026-06-12", -1999]);
     checkedThrough(bundle.db, "acct", "2026-07-08");
     expect(owed("2026-07-09")).toEqual([[MEAL, "2026-07-05", 12500]]);
     expect(unpaid("2026-07", "2026-07-05", "2026-07-09")).toEqual([MEAL]);
+    // "?", not ✕: two postings prove no schedule (`scheduleIsProven`) — the state is the read's, never the payment's.
+    // 🔴 Titled "still a miss" and pinned through `unpaid` alone, which takes either (review of 302df0c4, L30)
+    expect(marks("2026-07", "2026-07-05", "2026-07-09")).toEqual([[MEAL, "unsettled", null]]);
   });
 });

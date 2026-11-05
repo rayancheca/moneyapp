@@ -630,8 +630,8 @@ export function seriesDetail(
   // read "Upcoming charges off the calendar: none scheduled" under "Leaving the forecast: ~$72.74, its one charge" — as
   // one on Mar 11, 2027, inside the year, did too. A longer window only adds days after the ones it held, so a series
   // whose next day is near keeps every day it listed. ⚖️ …its own next day, or where its schedule opens when that is
-  // later (`opensOn`: billed inside another, the day of its own that falls due with its carrier's date he typed —
-  // default built, not asked, 2026-10-29)
+  // later (`opensOn`: billed inside another, the day of its own that falls due with its carrier's opening day, the one
+  // the carrier's payment of that day pays — default built, not asked, 2026-10-29)
   const projectable = toProjectable(s);
   const ownNext =
     projectable.opensOn && eff.nextExpectedOn !== null && compareDates(projectable.opensOn, eff.nextExpectedOn) > 0
@@ -710,8 +710,11 @@ export function seriesDetail(
     category: namedCategoryId === undefined ? null : categoryRef(namedCategoryId, catById),
     accountName,
     cadence: eff.cadence,
-    // Rolled forward so the sentence never reads a date in the past — billed inside another, past its own day only
-    // while its carrier's is still to come, said beside it (`nextFallsDueOn`). Only the
+    // Rolled forward to its first own day still to FALL DUE (`rollForwardNextExpected`), so the sentence names no day
+    // whose charge has come and gone: a day gone by only billed inside another, while the carrier's day it falls due
+    // with is still to come — said beside it (`nextFallsDueOn`), and what a Save with nothing changed writes back. On
+    // his ledger copy 2026-11-04 with his rent retyped Nov 16, read Nov 10: the utilities' sentence names their Nov 1,
+    // "due with the rent on the 16th". 🔴 It said "never reads a date in the past" (review of 933b29e2, L73). Only the
     // series the forecast still projects roll — see `projects` above.
     // ⛔ The schedule's step, not settlement's (`nextStillToCome`, listSeries'
     // reading): the sentence's editor opens on this date and Save writes it back
@@ -721,8 +724,8 @@ export function seriesDetail(
     // and Save with nothing changed took Sep 24 out of the projection settlement
     // walks. The token read "Thursdays" either way.
     // ⚖️ …stepped as its list is (`projectable`): never before the day its schedule opens — billed inside another, the
-    // day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29), the day
-    // Save then writes as its own
+    // day of its own that falls due with its carrier's opening day (`openingOf`; default built, not asked, 2026-10-29),
+    // the day Save then writes as its own
     nextExpectedOn: sentenceOn,
     // ⚖️ …and the day it falls due on, said beside it when that is another — the day its list names (`nextFallsDueOn`)
     nextFallsDueOn: sentenceFallsDueOn === sentenceOn ? listFallsDueOn : sentenceFallsDueOn,

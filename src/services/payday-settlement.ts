@@ -306,7 +306,8 @@ export function stillToCome<T extends { ownDate: string }>(
  * list says.
  *
  * ⚖️ …and never before the day its schedule opens, as its list (`toProjectable`'s `opensOn`): billed inside another,
- * the day of its own that falls due with its carrier's date he typed (default built, not asked, 2026-10-29).
+ * the day of its own that falls due with its carrier's opening day, the one the carrier's payment of that day pays
+ * (`openingOf`; default built, not asked, 2026-10-29).
  *
  * ⚖️ …and NAMED by the day it falls due (`fallsDueOn`), as its list dates it (`SeriesOccurrence.date`): billed inside
  * another on its carrier's step, the later of its own day and the carrier's day it pairs with (default (B), built,

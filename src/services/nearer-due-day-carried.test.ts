@@ -38,8 +38,9 @@ beforeEach(() => {
 afterEach(closeLedger);
 
 /*
- * ⚖️ What is billed inside the rent is paid by the rent's payments, by the rent's own test (§6A 59) — unaffected: his
- * rent posted Jul 8, Aug 4 and Sep 2, each its own month's (Jul 8 a week late, nearer Jul 1 than Aug 1).
+ * ⚖️ What is billed inside the rent is paid by the rent's payments (§6A 59 as recorded: "paid when the rent's payment of
+ * the period posts", implied), each read by the rent's own test — unaffected: his rent posted Jul 8, Aug 4 and Sep 2,
+ * each its own month's (Jul 8 a week late, nearer Jul 1 than Aug 1).
  */
 describe("the utilities carried by the rent are paid with each month's rent payment, as before", () => {
   beforeEach(() => {
@@ -116,20 +117,23 @@ describe("⚖️ a carrier's payment of two pays two days of what it carries, as
 });
 
 /*
- * ⛔ …and where a carried series' schedule OPENS is its carrier's — on the day of its own the carrier's date falls due
- * with: the carrier's date he typed, or the earlier of detection's and its own (`openingOf`; the days apart, below): a
- * day before the rent's date is no charge of the rent's, so no payment of the
- * rent's catches one up for what it carries either, none is projected (below), and one payment pays the same days of
- * the rent and of what it carries. ⚖️ default built, not asked (2026-10-29), read off §6A 59's "by the rent's own
- * test". 🔴 At 4d6ec2ac the his-date guard read the carried series' own row (review of 4d6ec2ac): a what-if rent at
- * -$2,291.21 typed Oct 1, the utilities carried on
- * detection's Oct 1 — his ledger's shape, the rent typed Sep 1 and the utilities detected Sep 1 — Jul 1 and Aug 2 paid,
- * then Sep 10 -$4,582.42: October drew the rent's Oct 1 missed beside "Rent utilities & fees paid … with the rent's
- * payment of Sep 10 (early)", the arrears owed the rent $2,291.21 and not the utilities, the runway read "A further
- * $2,291.21 came due earlier this month and has not posted.", and on Sep 25 Upcoming listed the rent's Oct 1 and Nov 1
- * but the utilities' Nov 1 alone, October's forecast the rent without them. And through `couldHaveCharged`, at 32aeb3a9
- * too: Oct 10's two months, late for his Oct 1 itself, drew the rent's Nov 1 "paid early by Oct 10" while the
- * utilities' Nov 1 stayed upcoming. Latent: his rent names no payment of two (the known gap above).
+ * ⛔ …and where a carried series' schedule OPENS is its carrier's — on the day of its own the carrier's opening day
+ * falls due with, the one the carrier's payment of it pays: on the carrier's date he typed, that day; on detection's,
+ * the earlier of that day and its own (`openingOf`; the days apart, below). His date on the rent: a day of the rent's
+ * before it is no charge, nor a day of what it carries before the day of its own that falls due with it — a day that
+ * may lie before the rent's date itself: their Nov 1 for the rent's Nov 2, a charge (below) — so no payment of the
+ * rent's catches one up, none is projected (below), and one payment pays the same days of the rent and of what it
+ * carries. ⚖️ default built, not asked (2026-10-29), read off §6A 59 as recorded, "paid when the rent's payment of the
+ * period posts" (implied). 🔴 At 4d6ec2ac the his-date guard read the carried series' own row (review of 4d6ec2ac): a
+ * what-if rent at -$2,291.21 typed Oct 1, the utilities carried on detection's Oct 1 — his ledger's shape, the rent
+ * typed Sep 1 and the utilities detected Sep 1 — Jul 1 and Aug 2 paid, then Sep 10 -$4,582.42: October drew the rent's
+ * Oct 1 missed beside "Rent utilities & fees paid … with the rent's payment of Sep 10 (early)", the arrears owed the
+ * rent $2,291.21 and not the utilities, the runway read "A further $2,291.21 came due earlier this month and has not
+ * posted.", and on Sep 25 Upcoming listed the rent's Oct 1 and Nov 1 but the utilities' Nov 1 alone, October's
+ * forecast the rent without them. And through `couldHaveCharged`, at 32aeb3a9 too: Oct 10's two months, late for his
+ * Oct 1 itself, drew the rent's Nov 1 "paid early by Oct 10" while the utilities' Nov 1 stayed upcoming. Latent: his
+ * rent names no payment of two (the known gap above). 🔴 This note said no day of what the rent carries before the
+ * rent's date is a charge or projected — 0ac5d059's rule, untrue since (review of 46f19f15, L59).
  */
 describe("⛔ …and what a carrier carries opens where the carrier's schedule opens — his date on the rent", () => {
   const TODAY = "2026-10-23";
@@ -177,18 +181,20 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
   });
 
   /*
-   * ⚖️ …and no day of what it carries is PROJECTED before the rent's date either: where a carried series' schedule opens
-   * is where every reader's projection of it starts (`DueDays.opensOn`, `projectOccurrences`) — default built, not
-   * asked (2026-10-29), read off the default above: a day no payment of the rent's can catch up is a day no reader
-   * draws, owes or lists. 🔴 At 68c837ce their own detected Sep 1 still opened their projection (review of 68c837ce):
-   * projected, so graded as a charge, and no charge to the catch-up. A payment of two on time for his Oct 1 — Oct 2
-   * -$4,582.42, which the rent's page names as covering more than one month — paid their Oct 1, and September drew
-   * their Sep 1 "missed", owed $182.21. On his ledger copy 2026-10-29 with this what-if added on Wells Fargo (read
-   * through Oct 26), the runway on Sep 25 read "A further $347.08 came due earlier this month: $182.21 has not posted,
-   * and no statement has covered the other $164.87 yet." Now September draws nothing of theirs, and it reads "A
-   * further $164.87 came due earlier this month and no statement has covered it yet." — his own bills, as with the
-   * rent on detection's Oct 1 (the review's first control, below). The rent's own reading of Oct 2 is unchanged: its
-   * Oct 1, and no day before his date.
+   * ⚖️ …and no day of what it carries is PROJECTED before the day it opens on — its day falling due with the rent's
+   * date, here their Oct 1 for the rent's Oct 1 (their Nov 1 for a rent typed Nov 2, below): where a carried series'
+   * schedule opens, when that lies after its own anchor, is where every reader's projection of it starts
+   * (`DueDays.opensOn`, `projectOccurrences`) — default built, not asked (2026-10-29), read off the default above: a day
+   * no payment of the rent's can catch up is a day no reader draws, owes or lists. 🔴 At 68c837ce their own detected Sep
+   * 1 still opened their projection (review of 68c837ce): projected, so graded as a charge, and no charge to the
+   * catch-up. A payment of two on time for his Oct 1 — Oct 2 -$4,582.42, which the rent's page names as covering more
+   * than one month — paid their Oct 1, and September drew their Sep 1 "missed", owed $182.21. On his ledger copy
+   * 2026-10-29 with this what-if added on Wells Fargo (read through Oct 26), the runway on Sep 25 read "A further
+   * $347.08 came due earlier this month: $182.21 has not posted, and no statement has covered the other $164.87 yet."
+   * Now September draws nothing of theirs, and it reads "A further $164.87 came due earlier this month and no statement
+   * has covered it yet." — his own bills, as with the rent on detection's Oct 1 (the review's first control, below).
+   * The rent's own reading of Oct 2 is unchanged: its Oct 1, and no day before his date. 🔴 "Before the rent's date"
+   * was 0ac5d059's rule, untrue since (review of 46f19f15, L59).
    */
   test("…and Oct 2's two months, on time for his Oct 1: what it carries draws no Sep 1, missed or owed", () => {
     rentWith({ rentOn: "2026-10-01", typed: true, utilOn: "2026-09-01" }, "2026-07-01", "2026-08-02", "2026-10-02");
@@ -390,8 +396,9 @@ describe("⛔ …and what a carrier carries opens where the carrier's schedule o
 
   /*
    * ⚖️ …and the day of their own that falls due with the rent's date is the one the rent's PAYMENT of that date pays —
-   * their due day nearest that payment, as his decision 76 reads one between two due days; only while none has posted,
-   * the one nearest the date itself, a tie the earlier (`openingOf`, default built, not asked, 2026-10-29). 🔴 At
+   * their due day nearest that payment, as his decision 76 reads one between two due days (the day behind it for a
+   * payment of two that caught the rent's day up from its next: Dec 20's, below); only while none has posted, the one
+   * nearest the date itself, a tie the earlier (`openingOf`, default built, not asked, 2026-10-29). 🔴 At
    * ec7fd198 it was read off the date alone (review of ec7fd198): the rent posts a day or more after its date (Sep 2,
    * Oct 2, Jul 8, Aug 4 on his ledger), and one a day past a date on the 15th or 16th lies nearer the NEXT 1st — the
    * rent typed Nov 16 (the tie) or Nov 15 (nearer Nov 1), paid Nov 17 on time, opened the utilities on Nov 1, which no

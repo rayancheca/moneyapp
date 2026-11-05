@@ -10,7 +10,11 @@ interface UpcomingListProps {
 }
 
 /**
- * Projected occurrences for the next 30 days, date-sorted, with a total.
+ * Projected occurrences FALLING DUE in the next 30 days, each on that day (`SeriesOccurrence.date`), date-sorted,
+ * with a total. ⚖️ Billed inside another on its carrier's step, one whose own day has passed is listed on the
+ * carrier's day it falls due with, still to come (default (B), 2026-10-30): on his ledger copy 2026-11-04 with his
+ * rent retyped Nov 16, read Nov 10, the utilities' own Nov 1 is listed Nov 16, beside the rent. 🔴 It said
+ * "occurrences for the next 30 days" of a list holding a day nine days past by its own (review of 933b29e2, L73).
  *
  * Every detected|confirmed series is here, stale evidence included — see
  * services/recurring.ts::upcomingOccurrences for why filtering would be the

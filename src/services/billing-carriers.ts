@@ -230,8 +230,11 @@ export interface Payment {
 /**
  * A bill's due days either side of one — its schedule's steps from its anchor, its end and its anchor disregarded
  * (`dueDaysOf`): the days a payment between two of them is measured against, to pay the one it lies nearer (⚖️ his
- * decision 76, `paymentFor`). Every grader of a bill's day reads the series' own (`billDueDaysBySeries`), so each
- * reads the same days.
+ * decision 76, `paymentFor`). Every grader of a bill's day reads the same ones (`billDueDaysBySeries`), so none can
+ * read another: the series' own steps — and, billed inside another, opening where its carrier opens it (`opensOn`)
+ * and, on the carrier's step, paid by its carrier's payments only as they pay the carrier's own day it pairs with
+ * (`pairedWith`). 🔴 It said every grader "reads the series' own" — untrue of what the rent carries once it opened
+ * where the rent opens (review of 68c837ce, L17).
  */
 export interface DueDays {
   /** the due day after `day`, or null — which asks nothing late (`stillToComeReader`) */
@@ -244,15 +247,19 @@ export interface DueDays {
    * from it on is a charge (`couldHaveCharged`). One before it is none once it is his date (`opensOnHisDate`), else
    * none before it and before every payment — so no payment of two catches it up (`paymentFor`'s catch-up; default
    * built, not asked, 2026-10-23). Billed on its own, its anchor, where its projection starts. Billed inside another,
-   * the day of its OWN that falls due with its CARRIER's opening day — the one the carrier's payment of that day pays,
-   * its due day nearest that payment; none yet, its due day nearest that day, a tie the earlier (`openingOf`) — the
-   * carrier's date he typed: its projection floored there, starting at its own anchor only when that is later;
-   * detection's: the earlier of that day and its own anchor, which opens its projection (default built, not asked,
-   * 2026-10-29): the payments are the carrier's, and so is the test. Always one of its own days. 🔴 Until then "where
-   * every reader's projection of a bill starts" was false of what the rent carries: its projection opened at its own
-   * date, before the rent's he typed (review of 68c837ce — `openingOf`); 🔴 then at the rent's date itself, after the
-   * day of its own the rent's first month carries (review of 0ac5d059); 🔴 then on its day nearest the rent's date
-   * even once paid, a day a payment posted a day or two after that date may never pay (review of ec7fd198).
+   * the day of its OWN that falls due with its CARRIER's opening day — the one the carrier's payment of that day pays:
+   * its due day nearest that payment, stepped back as many of its own days as that payment's own day lies past the
+   * opening day (a payment of two that caught the opening day up from the next: the day behind the one nearest it —
+   * Dec 20's two months open the utilities on Dec 1, their day nearest Dec 20 being Jan 1); none yet, its due day
+   * nearest that day, a tie the earlier (`openingOf`, `dayFallingDueWith`) — the carrier's date he typed: its
+   * projection floored there, starting at its own anchor only when that is later; detection's: the earlier of that day
+   * and its own anchor, its own anchor opening its projection (default built, not asked, 2026-10-29): the payments are
+   * the carrier's, and so is the test. Always one of its own days. 🔴 Until then "where every reader's projection of a
+   * bill starts" was false of what the rent carries: its projection opened at its own date, before the rent's he typed
+   * (review of 68c837ce — `openingOf`); 🔴 then at the rent's date itself, after the day of its own the rent's first
+   * month carries (review of 0ac5d059); 🔴 then on its day nearest the rent's date even once paid, a day a payment
+   * posted a day or two after that date may never pay (review of ec7fd198); 🔴 and "its due day nearest that payment"
+   * left out the step back (review of 46f19f15, L61).
    */
   readonly opensOn: string | null;
   /**
@@ -337,12 +344,14 @@ export interface CarrierPairing {
  *     (2026-10-12, not asked either — a payment past a day's grace, short of the next day's window, is that day's)
  *     still reading the payment once his "unless" rules the later day out; 73 read it so too. It pays only a day
  *     behind the payment, so it never takes a day still to come out of Upcoming or the forecast, as (a)'s other way
- *     would. FPL's Jul 28 pays Jul 8 when Aug 8 is paid on Aug 8 — and nothing beside Jul 10's on-time Jul 8.
- *     Measured on a what-if copy of his ledger 2026-10-21, his September rent moved from Sep 2 to Sep 20 (−$2,291.21,
- *     11 days before Oct 1): alone, it pays Oct 1 early and September draws Sep 1 missed — the cost above; beside an
- *     on-time Oct 1 rent it is Sep 1's, late, and September draws the utilities paid with it. Paying nothing there
- *     (measured with the redirect turned off) leaves Sep 1's rent and utilities missed beside the $2,291.21 that paid
- *     them; the arrears and Upcoming read the same either way.
+ *     would. FPL's Jul 28 pays Jul 8 when a what-if Aug 8 payment pays Aug 8 — and nothing beside Jul 10's on-time
+ *     Jul 8. Measured on a what-if copy of his ledger 2026-10-21, his September rent moved from Sep 2 to Sep 20
+ *     (−$2,291.21, 11 days before Oct 1): alone, it pays Oct 1 early and September draws Sep 1 missed — the cost above;
+ *     beside an on-time Oct 1 rent it is Sep 1's, late, and September draws the utilities paid with it. Paying nothing
+ *     there (measured with the redirect turned off) leaves Sep 1's rent and utilities missed beside the $2,291.21 that
+ *     paid them; the arrears and Upcoming read the same either way. 🔴 It said "when Aug 8 is paid on Aug 8", no
+ *     what-if named: his ledger holds no Aug 8 FPL payment, and Chase Checking is read through Aug 12 (review of
+ *     302df0c4, L31).
  * Each pin names its default (nearer-due-day.test.ts, billing-carriers.test.ts). Measured on what-if copies of his
  * ledger 2026-10-21, with that day's four statements read: the split, the Oct 22 prepay, Sep 30, Oct 30 against Oct
  * 31 and Sep 20 each read as above. Sep 30's Oct 15 is all unread there, because Wells Fargo is read through Sep 24.
@@ -645,18 +654,21 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
  *
  * ⚖️ "The same period" is the carrier's own day each day of the carried series PAIRS with (`pairingOf`; default (B),
  * built, not asked, 2026-10-30): the day of theirs that falls due with the carrier's opening day — the one the
- * carrier's payment of that day pays, its day nearest that payment, by his decision 76 (`openingOf`) — pairs with it,
- * and each later day of theirs with the carrier's day the same number of steps on. His rent and what it carries both
- * fall due on the 1st, so on his ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and
- * paid Nov 17 opens the utilities on their Dec 1, the rent's Nov 16, and their Jan 1 is its Dec 16; paid ON Nov 16,
- * their Nov 1 is its Nov 16 and their Dec 1 its Dec 16; no payment of it yet, their day nearest the date, a tie the
- * earlier — the rent typed Nov 2, their Nov 1 is its Nov 2 (default built, not asked, 2026-10-29; reviews of 0ac5d059
- * and ec7fd198). 🔴 At ec7fd198 "the day its payment there pays" was read off the date itself, which a payment a day
- * after it need not pay (review of ec7fd198). 🔴 To 46f19f15 each LATER day of theirs was paid by the rent payment
- * nearest it: paid Nov 16, the tie, then Dec 17, a day past it, the rent paid their Nov 1 late and their Jan 1 early,
- * and on Dec 20 December drew their Dec 1 missed, owed $182.21 beside a rent paid on time (a temp database). Now Dec 17
- * pays the rent's Dec 16 and so their Dec 1, and their Jan 1 comes with the rent's Jan 16. A series carried on a step
- * of its own — an annual item inside a monthly rent — keeps the payment nearest each of its days (`pairingOf`).
+ * carrier's payment of that day pays, their day nearest that payment by his decision 76, stepped back as many days as
+ * that payment's own day lies past the opening day (`openingOf`) — pairs with it, and each later day of theirs with
+ * the carrier's day the same number of steps on. His rent and what it carries both fall due on the 1st, so on his
+ * ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and paid Nov 17 opens the
+ * utilities on their Dec 1, the rent's Nov 16, and their Jan 1 is its Dec 16; paid ON Nov 16, their Nov 1 is its Nov
+ * 16 and their Dec 1 its Dec 16; no payment of it yet, their day nearest the date, a tie the earlier — the rent typed
+ * Nov 2, their Nov 1 is its Nov 2 (default built, not asked, 2026-10-29; reviews of 0ac5d059 and ec7fd198). 🔴 At
+ * ec7fd198 "the day its payment there pays" was read off the date itself, which a payment a day after it need not pay
+ * (review of ec7fd198). 🔴 To 46f19f15 each LATER day of theirs was paid by the rent payment nearest it: paid Nov 16,
+ * the tie, then Dec 17, a day past it, the rent paid their Nov 1 late and their Jan 1 early, and on Dec 20 December
+ * drew their Dec 1 missed, owed $182.21 beside a rent paid on time (a temp database). Now Dec 17 pays the rent's Dec 16
+ * and so their Dec 1, and their Jan 1 comes with the rent's Jan 16. A series carried on a step of its own — an annual
+ * item inside a monthly rent — keeps the payment nearest each of its days (`pairingOf`). 🔴 "Their day nearest that
+ * payment" left out the step back (review of 46f19f15, L61): Dec 20's two months open them on their Dec 1, the day
+ * nearest Dec 20 being Jan 1.
  *
  * ⛔ Amounts are not asked: the carrier's payment pays what is billed inside it whatever it adds up to — as a covering
  * posting pays the bill it covers (`overdueForSeries`). Its money is on the carrier's row, counted there, once.
@@ -836,9 +848,12 @@ export function billPaymentsBySeries(
  * ⛔ The due days every grader of a bill's day reads it by (`paymentFor`), keyed by series id — its schedule's steps
  * (`dueDaysOf`: its days either side, `DueDays.before` and `DueDays.after`, its own — billed inside another, it falls
  * due with its carrier) and where it OPENS (`openingOf`: billed inside another, on the day of its own its CARRIER's
- * opening day falls due with, the one the carrier's payment of it pays — the day every projection of it opens on
- * too). The arrears, the calendar and every reader that looks ahead (`stillToComeReader`) each read these, so none can
- * grade the utilities' Oct 1 apart from the rent's.
+ * opening day falls due with, the one the carrier's payment of it pays — on a carrier's date detection gave, the
+ * earlier of that day and its own anchor). Every projection of it opens there only when that lies after its own
+ * anchor (`ProjectableSeries.opensOn`), else at the anchor: always on a date detection gave, and on his whenever that
+ * day is the earlier. The arrears, the calendar and every reader that looks ahead (`stillToComeReader`) each read
+ * these, so none can grade the utilities' Oct 1 apart from the rent's. 🔴 It called that day "the day every
+ * projection of it opens on too" — untrue whenever it lies before the series' own anchor (review of 46f19f15, L58).
  *
  * 🔴 Each grader read a carried series' opening off its own row (review of 4d6ec2ac): a what-if rent at -$2,291.21
  * typed Oct 1, the utilities carried on detection's Oct 1 — his ledger's shape, the rent typed Sep 1 and the utilities
@@ -873,14 +888,15 @@ export function billDueDaysBySeries(
  * ⚖️ Where a bill's schedule OPENS (`DueDays.opensOn`), and whether that day is his — ONE answer for every grader of its
  * days (`billDueDaysBySeries`) and every projection of it (`toProjectable`, `ProjectableSeries.opensOn`): no reader
  * projects a due day of it before it, and every day from it on is a charge (`couldHaveCharged`). Billed on its own,
- * its own (`ownOpening`). Billed inside another — default built, not asked (2026-10-29), read off §6A 59's "by the
- * rent's own test": it is paid by its carrier's payments (`carrierPaymentsBySeries`), so whether a day of it was a
- * charge is the carrier's question —
- *  - the carrier's date HE typed: a day before it is no charge of the rent's, whatever posted before it, nor of what
- *    the rent carries — so none is projected either: its projection opens there when its own date is earlier;
+ * its own (`ownOpening`). Billed inside another — default built, not asked (2026-10-29), read off §6A 59 as recorded,
+ * "paid when the rent's payment of the period posts" (implied): it is paid by its carrier's payments, each by the
+ * rent's own test (`carrierPaymentsBySeries`), so whether a day of it was a charge is the carrier's question —
+ *  - the carrier's date HE typed: a day before it is no charge of the rent's, whatever posted before it, nor a day of
+ *    what the rent carries before the day of its own that falls due with it (below — their Nov 1 for the rent's Nov
+ *    2 is a charge) — so none is projected either: its projection opens on that day when its own date is earlier;
  *  - the carrier's date DETECTION's: a day before it is a charge once a payment has posted, so it says no less than
- *    the carrier's own reading — what it carries opens at the earlier of that date and its own, and its own still
- *    opens its projection, every day of which is a charge.
+ *    the carrier's own reading — what it carries opens at the earlier of its day falling due with that date and its
+ *    own, and its own still opens its projection, every day of which is a charge.
  * A date he typed on what the rent carries alone opens nothing apart from the rent (pinned, "…HIS date on what it
  * carries alone").
  *
@@ -1050,10 +1066,13 @@ function stepsAlike(a: CarrierSchedule, b: CarrierSchedule): boolean {
  * built, not asked, 2026-10-30). ONE reading for every window a reader holds a day in — the arrears' month, Upcoming's
  * days, a month's forecast, /budgets' tail, the page's list and its next date (`projectOccurrences`,
  * `rollForwardNextExpected`) — and for the calendar's verdict on the day (`settledVerdict`). ⚖️ …and the day each of
- * those names or draws it on: the occurrence's `date` (`SeriesOccurrence.date`; its own day is `ownDate`, what a
- * grader asks paid) and the All tab's Next (`nextStillToCome`). 🔴 Held by it but dated by its own day (review of
- * aa05a56d), a reader that re-read the date read another: the category forecast counted their Oct 25 in no month, the
- * dashboard counted their Nov 1 due by a Nov 12 paycheck before the rent's Nov 16, and "next Nov 1" named a day past.
+ * those but the page's sentence names or draws it on: the occurrence's `date` (`SeriesOccurrence.date`; its own day
+ * is `ownDate`, what a grader asks paid) and the All tab's Next (`nextStillToCome`). The sentence names its own day,
+ * the one `rollForwardNextExpected` steps to and its editor saves, and says this one beside it
+ * (`SeriesDetail.nextFallsDueOn`): "around the 1st, due with the rent on the 16th". 🔴 Held by it but dated by its
+ * own day (review of aa05a56d), a reader that re-read the date read another: the category forecast counted their Oct
+ * 25 in no month, the dashboard counted their Nov 1 due by a Nov 12 paycheck before the rent's Nov 16, and "next Nov
+ * 1" named a day past. 🔴 This note once counted the sentence's date among them (review of 933b29e2, L75).
  */
 export function fallsDueOn(pairedWith: CarrierPairing | null | undefined, day: string): string {
   const carrierOn = pairedWith?.carrierDayOf(day) ?? null;
