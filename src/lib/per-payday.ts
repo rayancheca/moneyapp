@@ -38,6 +38,8 @@ import { ratePeriodOf, rateOn, type RateSchedule } from "./series-kind";
  * it — default built, not asked (2026-11-04; `weekBesideExtra`). 🔴 Read as the
  * day, his Oct 15 — the week's $1,141.92 and an off-cycle $200.00 — read "It
  * America LLC (weekly pay) rose by $200.00 between its usual amount and Oct 15."
+ * ⚖️ Its blind spot is his call, open: an extra that recurs — a raise paid as an
+ * entry of its own beside the old rate — reads as no change (`weekBesideExtra`).
  */
 
 /** A lump's reading: the paydays its money paid on its own, and what it paid each. */
@@ -251,6 +253,17 @@ function dayPerPayday(
  * ⛔ The lowest id of the deposits that match: the same row is the week on the calendar, the series page and the posted
  * average, whichever order each read the day's rows in. ⛔ And /spending's notes read the money beside it from the same
  * readings (`moneyBesideTheWeek`).
+ *
+ * ⚖️ ITS BLIND SPOT, HIS CALL OPEN (review of 339b2c7a, 2026-11-04): it never asks whether the extra recurs. A raise or
+ * a supplement paid as an entry of its own the same day, beside the old rate, reads as the week paid to the cent and
+ * money toward no payday, week after week — silent on every surface that says "the amount changed". Four Thursdays,
+ * Oct 1 – 22, each of $1,141.92 and $58.08, read $1,141.92 a week: the calendar `paid`, the posted average $1,141.92 ±
+ * $0.00, no notice. Read as the day (95cdf198), each was $1,200.00, past the week's 2% band (±$22.84): amber, a posted
+ * average of $1,200.00 and four of Worth a look's "rose by $58.08". Only /spending names the $232.32 — "from the
+ * deposits of Thu, Oct 1, 2026, …, went toward no payday" (a temp ledger). Latent on his ledger copy (2026-11-04): Oct
+ * 15's $200.00 is the one deposit beside a week, and his off-cycle money comes under a descriptor of its own
+ * ("…RAYANCHECA RAYAN CHECA", Sep 23's back pay too). Whether a deposit toward no payday on the same weekday several
+ * weeks running is still surfaced is his to choose.
  */
 function weekBesideExtra(
   deposits: readonly ReadableRow[],
