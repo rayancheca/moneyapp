@@ -99,8 +99,8 @@ export function deckSlot(index: number, active: number, count: number): DeckSlot
    * unmounting would throw away every card's DOM on each step, and a hidden
    * card is invisible to anything that reads the page's text. The stack is a
    * presentation, not a filter. (Every card behind the front, parked or not,
-   * is `inert` — covered, so out of the pointer, the Tab order and a screen
-   * reader's cursor; see CardDeck.)
+   * is `inert` — covered, so out of the pointer, the Tab order, a screen
+   * reader's cursor and find-in-page; see CardDeck.)
    */
   const layer = Math.min(depth, VISIBLE_DEPTH + 1);
   return {

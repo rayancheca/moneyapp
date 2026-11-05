@@ -230,6 +230,9 @@ test.describe("the card deck", () => {
      * anything that reads the page. The deck is PRESENTATION — a card behind
      * the front is `inert` (covered, so out of the pointer, the Tab order and a
      * screen reader's cursor; CardDeck.tsx) and its content hidden, never gone.
+     * ⚠️ `inert` takes it out of find-in-page too: ⌘F on the deck finds the
+     * front card's text only, and the grid is the full-text view (recorded in
+     * the 08-27 handoff, 2026-10-30).
      */
     await page.goto("/?cards=deck");
     const inDeck = await page.locator(`${SECTION} h3`).count();

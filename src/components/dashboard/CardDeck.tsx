@@ -50,17 +50,20 @@ import {
  * ## Accessibility
  *
  * The stack is presentation. Every card stays MOUNTED and in the document, in
- * order, so anything reading the page's text still gets all twelve — a deck
- * that unmounted eleven of them would be a filter wearing a stack. The deck is
- * one tab stop that announces its position; the pips are real buttons; and
- * under `prefers-reduced-motion` nothing transitions at all.
+ * order, so the document's text still holds all twelve — a deck that
+ * unmounted eleven of them would be a filter wearing a stack. The deck is one
+ * tab stop that announces its position; the pips are real buttons; and under
+ * `prefers-reduced-motion` nothing transitions at all.
  *
  * ⛔ The cards BEHIND the front are `inert`, as anything covered must be (see
  * the slot below): out of the pointer, the Tab order and a screen reader's
  * cursor, which reads the card on screen as the eye does — every card's name
  * is on its pip, and the grid reads all twelve at once. So every way in steps
  * through `turn`, which hands a focus on the front card to the deck before
- * that card goes behind.
+ * that card goes behind. ⚠️ …and out of find-in-page: ⌘F on the deck finds
+ * the front card's text only — "Paid up front", on The car behind Runway, was
+ * not found on his ledger copy (the review of d27f4f8f). The grid is the
+ * full-text view; the 08-27 handoff's rule now says so.
  */
 
 export interface DeckCard {
@@ -97,12 +100,21 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
    *
    * 🔴 Only an arrow key handed it over, from the key handler: a trackpad swipe (the wheel) after a click on Runway's
    * "What Runway means" left the focus on <body> and ← → dead — the review of 04c5fd30, in headless Chromium.
+   *
+   * ⛔ …and it closes a provenance panel (`popover="auto"`) left open on the card going behind — AFTER the hand-off,
+   * whoever holds the focus. Hidden first, a panel holding the focus hands it back to whatever held it before it
+   * opened, which on WebKit (it never focuses a button on a click) is the page, and the deck would see no focus of its
+   * own to take. 🔴 It floated over the next card: On your cards' "How what you owe is known — 3 of 3 add up" open,
+   * then →, and Eating out came forward under "$2,624.16 across 3 cards…", in a card now inert (the review of
+   * d27f4f8f, his ledger copy 2026-10-29). An ⓘ's tooltip is not the deck's: its open state is `Tooltip`'s, and it
+   * closes on the blur the hand-off causes and on a pointer leaving it.
    */
   const turn = useCallback(
     (to: (current: number) => number) => {
       const deck = deckRef.current;
       const focused = deck?.ownerDocument.activeElement;
       if (deck && focused && focused !== deck && deck.contains(focused)) deck.focus({ preventScroll: true });
+      deck?.querySelectorAll<HTMLElement>('[popover="auto"]:popover-open').forEach((panel) => panel.hidePopover());
       setActive((current) => to(clampIndex(current, count)));
     },
     [count],
@@ -255,7 +267,9 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * baselines (dashboard-light-1024 and both 320s). So a card behind shows its SHEET and nothing on it:
            * `*:*:opacity-0` hides its root's CHILDREN and never its root, because every card's root is its sheet
            * (pinned in CardDeck.test.ts — all twelve on his ledger copy, 2026-10-29). Opacity, not `visibility`:
-           * the text is still the page's, and decision-cards.spec reads it there.
+           * the text is still the page's, and decision-cards.spec reads it there. ⚠️ So the card a drag uncovers
+           * is a bare sheet too, and a step shows the new front's content at once: whether a drag should uncover
+           * it is his call, still open (the review of d27f4f8f, 2026-10-30).
            *
            * ⛔ And it is `inert`: out of the pointer and out of the Tab order. 🔴 Only the pointer was kept out,
            * and a Tab walked every link and button behind the front — 16 and 14 behind Runway on his ledger copy,

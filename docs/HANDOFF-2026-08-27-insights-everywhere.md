@@ -217,6 +217,14 @@ would trap a reader halfway down the dashboard.
 ⛔ **Nothing is unmounted.** Every card stays in the document and in the
 accessibility tree; a deck that hid twelve would be a filter wearing an
 animation. There is a test that the card count is identical in both lenses.
+🔴 **…but since d27f4f8f (2026-10-29) not in the accessibility tree, and not in
+find-in-page** — recorded 2026-10-30, a behaviour change the commit made without
+raising it here. The cards behind the front are `inert` (a Tab walked 16 links
+and 14 buttons hidden behind Runway). Still mounted, still in the document and
+in the grid's count; but ⌘F on the deck finds the front card's text only:
+`window.find("Paid up front")` (The car, behind Runway) came back false on his
+ledger copy, true with `inert` lifted. The grid (`/?cards=grid`) is the
+full-text view.
 
 ⚠️ **Two deliberate rule exceptions, documented at the site**: the container's
 height is animated (the alternative is empty white inside every short card,
