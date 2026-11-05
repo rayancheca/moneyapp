@@ -517,8 +517,8 @@ describe("budgetSectionNotes", () => {
         );
       });
 
-      test("a withheld row whose line can still rise: its spend is a lower bound, no percentage called one", () => {
-        expect(coverage([{ ...FOOD, ...RISES }, row({ categoryPath: "Fees", uncoveredDays: 4 })])).toBe(
+      test("withheld rows whose lines can still rise: their spend is a lower bound, no percentage called one", () => {
+        expect(coverage([{ ...FOOD, ...RISES }, row({ categoryPath: "Fees", uncoveredDays: 4, ...RISES })])).toBe(
           "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 4 days each. " +
             "Their spend is a lower bound, not a measurement.",
         );
@@ -527,6 +527,50 @@ describe("budgetSectionNotes", () => {
           "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 29 days each. " +
             "Of them, 1 has nothing found and not one elapsed day imported, so no spend is shown there either, and " +
             "the others' spend is a lower bound, not a measurement.",
+        );
+      });
+
+      /*
+       * ⚖️ default built, not asked (2026-11-05): where only some of the withheld rows that print a figure can still
+       * have more roll over, the percentages of the rest are floors still, and the note says so of them alone — each
+       * half of its own rows, as the over rows' clause after it does. 🔴 One rising row took "and percentages" from
+       * every one of them (review of f25e0ba9, L93). Measured on his ledger copy 2026-11-05 (10-29b) with two Nov 3
+       * rows added on Chase Sapphire — $50.00 of Cash & ATM, September and October held back ($260.00 may roll over),
+       * and $20.00 of Shopping, its line standing still (7% of $280.00): "…, and the others' spend is a lower bound,
+       * not a measurement." — Shopping's 7% a floor the note stopped calling one.
+       */
+      test("some of them: the percentages of those whose lines stand still are floors still, said of them alone", () => {
+        expect(coverage([{ ...FOOD, ...RISES }, row({ categoryPath: "Fees", uncoveredDays: 4 })])).toBe(
+          "2 of 2 budgets show no verdict because they are grading days the ledger has not reached — 4 days each. " +
+            "Their spend is a lower bound, not a measurement, as is the percentage of one of them; more can still " +
+            "roll over into the other.",
+        );
+        // his twelve at 2026-11-05 with those two rows added: every other one a dash (no November day read, none found)
+        const NOV = { uncoveredDays: 5, noDayRead: true, txnCount: 0 } as const;
+        const MAY_ADD: Record<string, number> = { "Cash & ATM": 26_000, Fees: 3_000, Food: 29_811, Transport: 21_176 };
+        const FOUND = ["Cash & ATM", "Shopping"];
+        const his = HIS.map((r) =>
+          row({
+            ...NOV,
+            categoryPath: r.categoryPath,
+            pace: r.categoryPath === "Housing" ? "at-risk" : "under",
+            txnCount: FOUND.includes(r.categoryPath) ? 1 : 0,
+            rolloverMayAddCents: MAY_ADD[r.categoryPath] ?? 0,
+          }),
+        );
+        expect(coverage(his)).toBe(
+          "12 of 12 budgets show no verdict because they are grading days the ledger has not reached — 5 days each. " +
+            "Of them, 10 have nothing found and not one elapsed day imported, so no spend is shown there either, and " +
+            "the others' spend is a lower bound, not a measurement, as is the percentage of one of them; more can " +
+            "still roll over into the other.",
+        );
+        // …and in the plural, both halves
+        const two = (r: ReturnType<typeof row>) => [r, { ...r, categoryPath: `${r.categoryPath} 2` }];
+        const steady = row({ categoryPath: "Fees", uncoveredDays: 4 });
+        expect(coverage([...two({ ...FOOD, ...RISES }), ...two(steady), { ...steady, categoryPath: "Gifts" }])).toBe(
+          "5 of 5 budgets show no verdict because they are grading days the ledger has not reached — 4 days each. " +
+            "Their spend is a lower bound, not a measurement, as are the percentages of 3 of them; more can still " +
+            "roll over into the other 2.",
         );
       });
 

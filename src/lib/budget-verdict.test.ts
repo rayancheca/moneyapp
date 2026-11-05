@@ -8,12 +8,23 @@ import {
 } from "./budget-verdict";
 import { BUDGET_JARGON } from "./jargon";
 
+/** the line a test's `pct` is taken against where it names none: $100.00 */
+const LINE_CENTS = 10_000;
+
+/**
+ * available − spent at `pct` of `LINE_CENTS` — the row the app builds beside that percentage: `computePace` is over only
+ * at spent ≥ available, so an over row's is never above 0. 🔴 It was 0 under every row, over ones 40% past their line
+ * among them — a row the app cannot build — and an over row whose definition says the line can still rise said so
+ * whatever the rise, 0 keeping `riseCannotUndoOver` false (review of 029d3c41, L114): built so, a $15.00 rise under 140%
+ * of the $100.00 line reads `paceOver`. A test whose reading turns on how far past the line it is says how far.
+ */
+const remainingAt = (pct: number): number => Math.round(LINE_CENTS * (1 - pct));
+
 const verdict = (over: Partial<BudgetVerdictInput> = {}) =>
   budgetVerdict({
     pace: "under",
     pct: 0.2,
-    // read only past the line: met exactly unless a test says how far past it (`riseCannotUndoOver`)
-    remainingCents: 0,
+    remainingCents: remainingAt(over.pct ?? 0.2),
     uncoveredDays: 0,
     spentFromAccounts: 1,
     spentFromWallets: 0,
@@ -43,6 +54,10 @@ describe("budgetVerdict", () => {
     // and exactly on the line is still an overshoot of less than one percent,
     // never "by 0%" — `computePace` turns over at spent >= available
     expect(verdict({ pace: "over", pct: 1 }).headline).toBe("Over budget by <1%");
+    // …and where the bar reads 101% it is "by 1%", though less than one percent past: $2,014.00 of $2,000.00
+    // (review of f25e0ba9, L97: the comment over it said "under one percent is '<1'")
+    expect(verdict({ pace: "over", pct: 2_014_00 / 2_000_00 }).headline).toBe("Over budget by 1%");
+    expect(percentOfBudget(2_014_00 / 2_000_00)).toBe(101);
   });
 
   /*
@@ -423,9 +438,15 @@ describe("budgetVerdict", () => {
       expect(verdict({ pace: "over", pct: 70 / 30, remainingCents: -4_000, ...RISES }).explanation).toBe(
         BUDGET_JARGON.paceOver,
       );
-      // ⛔ a line that can come up to meet the spend — exactly, or past it — can undo "passed the line"
-      for (const remainingCents of [-3_000, -1_000, 0]) {
-        expect(verdict({ pace: "over", pct: 1.2, remainingCents, ...RISES }).explanation).toBe(
+      // ⛔ a line that can come up to meet the spend — exactly, or past it — can undo "passed the line", and a spend at
+      // the line has passed nothing (🔴 0 at 120% of the line was a row the app cannot build; review of 029d3c41, L114)
+      const meets = [
+        [1.2, -3_000],
+        [1.2, -1_000],
+        [1, 0],
+      ] as const;
+      for (const [pct, remainingCents] of meets) {
+        expect(verdict({ pace: "over", pct, remainingCents, ...RISES }).explanation).toBe(
           BUDGET_JARGON.paceOverLineMayRise,
         );
       }
@@ -471,9 +492,12 @@ describe("budgetVerdict", () => {
       const BOTH = { ...BILL, rolloverHeldBackUnderPlan: [AUGUST] };
       expect(verdict({ pace: "over", pct: 1.4, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceOverHeldBackAndBill);
       expect(verdict({ uncoveredDays: 3, ...BOTH }).explanation).toBe(BUDGET_JARGON.paceWithheldHeldBackAndBill);
-      // …and a period held back alone keeps the words it had
+      // …and a period held back alone keeps the words it had — Fees' $15.00 with $21.00 spent: $6.00 past a line that
+      // can still rise $15.00 (on the $100.00 line, $40.00 past it, no later import could undo it: `riseCannotUndoOver`)
       const HELD = { rolloverMayAddCents: 1_500, rolloverHeldBackUnderPlan: [SEPTEMBER] };
-      expect(verdict({ pace: "over", pct: 1.4, ...HELD }).explanation).toBe(BUDGET_JARGON.paceOverLineMayRise);
+      expect(verdict({ pace: "over", pct: 1.4, remainingCents: -600, ...HELD }).explanation).toBe(
+        BUDGET_JARGON.paceOverLineMayRise,
+      );
       expect(verdict({ uncoveredDays: 3, ...HELD }).explanation).toBe(BUDGET_JARGON.paceWithheldLineMayRise);
     });
   });
@@ -490,7 +514,8 @@ describe("budgetCoverageLine — the line a budget row prints under its headline
   const row = (over: Partial<Row> = {}): Row => ({
     pace: "under",
     pct: 0.4,
-    remainingCents: 0,
+    // …beside its percentage, as the app builds it (`remainingAt`)
+    remainingCents: remainingAt(over.pct ?? 0.4),
     uncoveredDays: 29,
     spentFromAccounts: 2,
     spentFromWallets: 0,

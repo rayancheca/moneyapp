@@ -211,7 +211,9 @@ export function spendUnread(
  * under its plan, or read whole with a bill that may have stopped (`lib/rollover-held-back::lineRiseCause`) — the line
  * itself can rise (`lineMayRise`), and only the spend is a floor: 🔴 review of 48475ec4,
  * Food $30.00 rolling from Jul 1 spoke "over budget by at least $10.00" in August, and read $40.00 of $60.00 on the
- * load after July's statement, no Food added.
+ * load after July's statement, no Food added. ⚠️ …and "cannot undo" holds while each closed period's day moves on: the
+ * category's first row on an account imported short of it moves it back, and a rolling line can rise past the spend
+ * (`lineMayRise`'s ⚠️; L26: kept). 🔴 Said flatly here after that ⚠️ was written (review of f25e0ba9, L96).
  *
  * 🔴 Measured on his ledger copy 2026-10-29: all 12 of his monthly budgets had days of October unread — Health
  * and Travel read through Oct 2 (27 days), the other ten through Aug 12 (29) — and the 5 over budget (Entertainment

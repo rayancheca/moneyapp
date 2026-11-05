@@ -707,6 +707,16 @@ const BILLS_ASKED_EVERY_WAY = 8;
  * owing a $100.00 bill that may lapse; the next $100.00 under; the newest held back $500.00 past — carried $100.00,
  * $100.00 still to come, the bill's month unnamed; the old month's statement showing $100.00 more spend, the bill's
  * lapse lifts the line from $100.00 to $200.00. Latent: no budget of his sets a cap (his ledger copy 2026-10-30).
+ * ⚠️ …and "the window read in order" is not exact of one held back for a day before the ledger opens: inside the six
+ * months it shares the newest window (`spentFromSinceFor`) and is walked in order, passed or on its term, yet it comes
+ * before the periods read whole, and older history can bring it in banking less (`carryWays`' ⚠️) — under a cap that
+ * is reached, a bill that lifts the line only there goes unnamed, as beside one in a window of its own. 🔴 Review of
+ * f25e0ba9 (L95), its case run again on these functions at 73890338: a $200.00 cap — June, before the ledger opens,
+ * held back in the newest window with $200.00 left; July read whole, $0.00 left owing a $100.00 bill that may lapse;
+ * August $100.00 under; September held back $500.00 past — carried $100.00, $100.00 still to come, July unnamed; June
+ * banking $150.00, $100.00 or $50.00, July's lapse lifts the line to $200.00, $200.00 or $150.00. Latent: it needs a
+ * ledger opened within the last six months and a capped carry from before its first day — his ledger copy 2026-11-05
+ * opens 2022-08-25, and no budget of his sets a cap.
  *
  * ⚠️ Past `BILLS_ASKED_EVERY_WAY` of them, each is asked with every other let go, with every other still owed, and let
  * go one by one, oldest first — those before it let go and those after it owed. With every other let go, that is exact
