@@ -132,15 +132,20 @@ interface SlotProps {
   "aria-current"?: string;
   inert?: boolean;
   className: string;
+  style?: { transition?: string };
 }
+
+/** What the content of a card fades on, as the deck's classes say it: its opacity, over the step's own duration. */
+const FADE = ["*:*:transition-opacity", "*:*:duration-(--duration-normal)"];
 
 /**
  * A deck of `count`, stepped through its own code — a key, the wheel, a drag, a click — on a page that holds a focus
  * and drops it the way the browser does: ⛔ a focus left inside a card a step sent behind is dropped to the page,
  * because that card is `inert` now. That is the whole failure, and with the focus on the page a key never reaches the
  * deck at all — the next arrow steps nothing. A card can hold a panel (`openPanel`), hidden as the browser hides one.
+ * With `reducedMotion`, the page asks for less motion and the deck is mounted at once, so it has read that.
  */
-function steppedDeck(count: number) {
+function steppedDeck(count: number, { reducedMotion = false }: { reducedMotion?: boolean } = {}) {
   const slots = new HookSlots();
   const ids = Array.from({ length: count }, (_, i) => `card-${i}`);
   const cards = ids.map(card);
@@ -196,6 +201,7 @@ function steppedDeck(count: number) {
       front: slot.props["aria-current"] === "true",
       inert: slot.props.inert === true,
       classes: slot.props.className.split(/\s+/),
+      motion: slot.props.style?.transition,
     }));
 
   // the browser's half of a step: a focus left inside a card that is inert now is dropped to the page
@@ -206,15 +212,21 @@ function steppedDeck(count: number) {
 
   // one gesture a second after the last one ended, so none lands inside the wheel's burst window
   let clock = 1_000;
+  /** the deck mounted, once, as the page mounts it */
+  let mounted = false;
+  const mount = (): void => {
+    if (mounted) return;
+    mounted = true;
+    // the deck listens for the wheel in an effect, and reduced motion reads its media query in another
+    const query = { matches: reducedMotion, addEventListener: () => undefined, removeEventListener: () => undefined };
+    vi.stubGlobal("window", { matchMedia: () => query });
+    draw();
+    slots.mount();
+  };
+  if (reducedMotion) mount();
   /** the deck's wheel listener, mounted once as the page mounts it */
   const wheelListener = (): ((event: unknown) => void) => {
-    if (!listeners.has("wheel")) {
-      // the deck listens for the wheel in an effect, and reduced motion reads its media query in another
-      const query = { matches: false, addEventListener: () => undefined, removeEventListener: () => undefined };
-      vi.stubGlobal("window", { matchMedia: () => query });
-      draw();
-      slots.mount();
-    }
+    mount();
     const listener = listeners.get("wheel");
     if (!listener) throw new Error("the deck listens for no wheel");
     return listener;
@@ -260,15 +272,51 @@ function steppedDeck(count: number) {
           [inert, "inert"],
           [classes.includes("overflow-hidden") && classes.includes("*:h-full"), "clipped to the front"],
           [classes.includes("*:*:opacity-0"), "its sheet only"],
+          [FADE.every((fade) => classes.includes(fade)), "its content fades in"],
         ];
         return `${id}: ${marks
           .filter(([on]) => on)
           .map(([, mark]) => mark)
           .join(", ")}`;
       }),
-    /** the deck with `front` in front, as it must be drawn: that card whole and live, every other its sheet, inert */
+    /**
+     * the deck with `front` in front, as it must be drawn: that card whole and live — what is on it fading in as it
+     * comes forward, unless the page asks for less motion — and every other its sheet, inert
+     */
     inFront: (front: string): string[] =>
-      ids.map((id) => `${id}: ${id === front ? "in front" : "behind, inert, clipped to the front, its sheet only"}`),
+      ids.map(
+        (id) =>
+          `${id}: ${
+            id !== front
+              ? "behind, inert, clipped to the front, its sheet only"
+              : reducedMotion
+                ? "in front"
+                : "in front, its content fades in"
+          }`,
+      ),
+    /** one card's slot now: its classes, and the transition the deck's own style gives it */
+    slot: (id: string) => {
+      const slot = slotsNow().find((s) => s.id === id);
+      if (!slot) throw new Error(`no ${id} in the deck`);
+      return slot;
+    },
+    /** a press on the front card's own text (one that starts on a control is that control's), the pointer held */
+    grab: () =>
+      handler("onPointerDown")({
+        pointerId: 1,
+        clientX: 200,
+        timeStamp: clock,
+        target: { closest: () => null },
+        currentTarget: { setPointerCapture: () => undefined },
+      }),
+    /** the held pointer moved to `dx` px from where it was pressed */
+    pull: (dx: number) => handler("onPointerMove")({ pointerId: 1, clientX: 200 + dx, timeStamp: clock + 100 }),
+    /** the held pointer let go at `dx`, where it last moved to — so the distance alone decides, never a fling */
+    letGo: (dx: number) =>
+      gesture(() => handler("onPointerUp")({ pointerId: 1, clientX: 200 + dx, timeStamp: clock + 200 })),
+    /** the held pointer taken by the browser at `dx` — a vertical pan it claims, a touch it cancels */
+    lose: (dx: number) =>
+      gesture(() => handler("onPointerCancel")({ pointerId: 1, clientX: 200 + dx, timeStamp: clock + 200 })),
     /** a key, pressed where the focus is: with the focus on the page, or on a pip, the deck never hears it */
     press: (key: string) =>
       gesture((preventDefault) => {
@@ -557,6 +605,109 @@ test("after every step, whichever way it was taken, the card in front is whole a
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+/**
+ * ⚖️ default built, not asked (2026-11-05): a drag uncovers the card directly behind — his 2026-08-27 ask, "a swipe
+ * like in tinder", is a swipe that uncovers the next card. 🔴 Since d27f4f8f it uncovered a bare sheet: a drag on Runway
+ * showed The car as an empty card until it let go (the review of d27f4f8f) — "$1,306.79 a month, all in", behind Runway
+ * on his ledger copy, 2026-11-05. Only that card, and only while the drag is on: Earned vs banked, two back, stays its
+ * sheet, and every card behind stays `inert` — the reveal is the eye's, never the Tab key's or find-in-page's.
+ */
+describe("a drag uncovers the card directly behind the front", () => {
+  /** the deck with card-0 in front and card-1 uncovered beside it: what is on card-1 shows, and it is still inert */
+  const uncovering = [
+    "card-0: in front, its content fades in",
+    "card-1: behind, inert, clipped to the front",
+    "card-2: behind, inert, clipped to the front, its sheet only",
+    "card-3: behind, inert, clipped to the front, its sheet only",
+  ];
+
+  test.each([
+    { way: "left, toward the next card", dx: -120 },
+    // a drag right brings the LAST card forward when it lets go, but what it uncovers is the card behind the front
+    { way: "right, toward the card before", dx: 120 },
+  ])("a drag $way shows what is on the card directly behind, and nothing two back", ({ dx }) => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(dx);
+    expect(deck.drawn()).toEqual(uncovering);
+  });
+
+  test("⛔ a press that has not moved uncovers nothing, and a drag brought back to its start covers it again", () => {
+    // a click on the front card's text, or a vertical pan the browser claims before the pointer moves sideways, must
+    // not flash the next card's content into the stack's edge
+    const deck = steppedDeck(4);
+    deck.grab();
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+    deck.pull(-80);
+    expect(deck.drawn()).toEqual(uncovering);
+    deck.pull(0);
+    expect(deck.drawn()).toEqual(deck.inFront("card-0"));
+  });
+
+  test.each([
+    { ending: "let go short of a step, snapping back", end: "letGo" as const, dx: -60, front: "card-0" },
+    { ending: "taken by the browser (pointercancel)", end: "lose" as const, dx: -60, front: "card-0" },
+    // the card it uncovered comes forward already showing: its content never went, so the fade has nothing to fade
+    { ending: "let go past a step", end: "letGo" as const, dx: -200, front: "card-1" },
+    { ending: "let go past a step back", end: "letGo" as const, dx: 200, front: "card-3" },
+  ])("the sheet comes back the moment the drag ends — $ending", ({ end, dx, front }) => {
+    const deck = steppedDeck(4);
+    deck.grab();
+    deck.pull(dx);
+    expect(deck.drawn()).toEqual(uncovering);
+    deck[end](dx);
+    expect(deck.drawn()).toEqual(deck.inFront(front));
+  });
+});
+
+/**
+ * ⚖️ default built, not asked (2026-11-05): a step fades the content of the card it brings forward in over the
+ * step's own 300 ms, so an arrow, a pip or a swipe no longer pops it in at full strength at the start of the move.
+ * Opacity only, the compositor's; and the card a step sends behind drops its content AT ONCE — faded out, it would
+ * show through the card coming forward, still part-clear as the move starts.
+ */
+describe("a step fades in what is on the card it brings forward", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("over the step's own 300 ms, on its opacity alone — and the card sent behind drops its content at once", () => {
+    const deck = steppedDeck(4);
+    deck.focusOn("the deck");
+    expect(deck.slot("card-1").classes).toContain("*:*:opacity-0");
+    deck.press("ArrowRight");
+
+    const front = deck.slot("card-1");
+    expect(front.classes).not.toContain("*:*:opacity-0");
+    // the opacity the step lifts is the one that transitions — never a transition of everything on the card
+    expect(front.classes.filter((c) => c.startsWith("*:*:transition"))).toEqual(["*:*:transition-opacity"]);
+    // …for as long as the step moves the card: the duration the deck's own style moves it by, 300 ms
+    const step = /opacity var\((--duration-[\w-]+)\)/.exec(front.motion ?? "")?.[1];
+    expect(step).toBe("--duration-normal");
+    expect(front.classes).toContain(`*:*:duration-(${step})`);
+    const tokens = fs.readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
+    expect(tokens).toMatch(/--duration-normal:\s*300ms;/);
+
+    const behind = deck.slot("card-0");
+    expect(behind.classes).toContain("*:*:opacity-0");
+    expect(behind.classes.filter((c) => c.startsWith("*:*:transition") || c.startsWith("*:*:duration"))).toEqual([]);
+  });
+
+  test("⛔ under reduced motion it appears at once, as the step itself moves at once", () => {
+    const deck = steppedDeck(4, { reducedMotion: true });
+    deck.focusOn("the deck");
+    deck.press("ArrowRight");
+    expect(deck.position()).toBe("card-1 — card 2 of 4");
+    expect(deck.drawn()).toEqual([
+      "card-0: behind, inert, clipped to the front, its sheet only",
+      "card-1: in front",
+      "card-2: behind, inert, clipped to the front, its sheet only",
+      "card-3: behind, inert, clipped to the front, its sheet only",
+    ]);
+    expect(deck.slot("card-1").classes.filter((c) => c.startsWith("*:*:"))).toEqual([]);
+    // the deck already moves nothing under reduced motion: no card's own style transitions either
+    for (const id of ["card-0", "card-1", "card-2", "card-3"]) expect(deck.slot(id).motion, id).toBe("none");
+  });
 });
 
 /** A card written out: its `id`, and the component its `node` is one element of — or null when it is not that. */

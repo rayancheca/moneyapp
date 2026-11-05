@@ -226,6 +226,11 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
   const width = deckRef.current?.getBoundingClientRect().width ?? 0;
   const tilt = dragging ? dragTilt(drag, width) : 0;
   const motion = reduced ? "none" : "transform var(--duration-normal) var(--ease-out-expo), opacity var(--duration-normal) ease";
+  // what is on the card a step brings forward fades in on the step's own duration — and at once, as the step moves,
+  // under reduced motion (the slot below)
+  const fadeIn = reduced ? "" : "*:*:transition-opacity *:*:duration-(--duration-normal)";
+  // a drag is on once the front card has moved off the card behind it, not while a press has merely landed
+  const pushed = dragging && drag !== 0;
 
   return (
     <div className="space-y-3">
@@ -267,15 +272,32 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
            * baselines (dashboard-light-1024 and both 320s). So a card behind shows its SHEET and nothing on it:
            * `*:*:opacity-0` hides its root's CHILDREN and never its root, because every card's root is its sheet
            * (pinned in CardDeck.test.ts — all twelve on his ledger copy, 2026-10-29). Opacity, not `visibility`:
-           * the text is still the page's, and decision-cards.spec reads it there. ⚠️ So the card a drag uncovers
-           * is a bare sheet too, and a step shows the new front's content at once: whether a drag should uncover
-           * it is his call, still open (the review of d27f4f8f, 2026-10-30).
+           * the text is still the page's, and decision-cards.spec reads it there.
+           *
+           * ⚖️ default built, not asked (2026-11-05): …all but the card DIRECTLY behind, while a drag has pushed
+           * the front off it. He asked on 2026-08-27 for "a swipe like in tinder" — a swipe that uncovers the next
+           * card — and since d27f4f8f a drag on Runway uncovered The car as an empty sheet until it let go (the
+           * review of d27f4f8f); it uncovers "$1,306.79 a month, all in" and its rows now (his ledger copy,
+           * 2026-11-05). That card only: Earned vs banked, two back, stays its sheet, or its text would show
+           * through The car, drawn at 0.8. Only once the pointer has moved: a press on the front card, or a
+           * vertical pan the browser claims, must not flash the next card into the edge. The sheet comes back the
+           * moment the drag ends or is cancelled, and the card stays `inert` throughout — the reveal is the eye's.
+           *
+           * …and the card a step brings forward fades what is on it in over the step's own 300 ms
+           * (`--duration-normal`, on its opacity alone) rather than popping it in at the start of the move. The
+           * transition sits on the FRONT card only, so the card a step sends behind drops its content at once —
+           * faded out, it would show through the card coming forward, still part-clear as the move starts — and
+           * the card a drag uncovered comes forward already showing, with nothing to fade. Under reduced motion it
+           * appears at once, as the step does. None of the thirteen cards the page deals puts a transition of its
+           * own on a child of its sheet for this one to replace (read 2026-11-05).
            *
            * ⛔ And it is `inert`: out of the pointer and out of the Tab order. 🔴 Only the pointer was kept out,
            * and a Tab walked every link and button behind the front — 16 and 14 behind Runway on his ledger copy,
            * 2026-10-29, each one a focus ring drawn on a card nobody could see.
            */
           const stretched = !isFront && height !== null ? height : undefined;
+          const uncovered = pushed && slot.depth === 1;
+          const sheet = uncovered ? "overflow-hidden *:h-full" : "overflow-hidden *:h-full *:*:opacity-0";
           return (
             <div
               key={card.id}
@@ -284,7 +306,7 @@ export function CardDeck({ cards, ariaLabel }: { cards: readonly DeckCard[]; ari
               }}
               aria-current={isFront ? "true" : undefined}
               inert={isFront ? undefined : true}
-              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? "" : "overflow-hidden *:h-full *:*:opacity-0"}`}
+              className={`absolute inset-x-0 top-0 *:min-w-0 ${isFront ? fadeIn : sheet}`}
               style={{
                 height: stretched,
                 zIndex: slot.zIndex,
