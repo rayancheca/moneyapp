@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { periodBounds } from "./dates";
 import {
   lineMayRise,
   lineRiseCause,
@@ -15,6 +16,9 @@ import {
 
 /** the graded window's first day — where a day outside its year would carry the year */
 const REF = "2026-10-01";
+
+/** a month of 2026 as the carry walks it (`periodBounds`): first day to last */
+const month = (m: string) => periodBounds(`2026-${m}-01`, "monthly");
 
 /*
  * ⚖️ Decision 67 (2026-10-13): a closed period not read whole banks nothing until its statements land. The panel names
@@ -42,9 +46,20 @@ describe("rolloverHeldBackSentence — what a rolling budget is waiting on", () 
   });
 
   test("more are counted between the first and the last", () => {
-    const held = ["07", "08", "09"].map((m) => ({ start: `2026-${m}-01`, end: `2026-${m}-28` }));
+    const held = ["07", "08", "09"].map(month);
     expect(rolloverHeldBackSentence(held, "monthly", "2026-10-01")).toBe(
       "3 months, July 2026 to September 2026, are not fully imported, so nothing rolls over from them yet.",
+    );
+  });
+
+  /*
+   * ⛔ …only where they run unbroken: "3 months, March 2026 to October 2026," spans eight. A month held back for days
+   * before the ledger opens (`services/budgets::carryInto`) sits apart from the newest ones, with the months read whole
+   * between them.
+   */
+  test("periods with a gap between them are named each, never counted between the first and the last", () => {
+    expect(rolloverHeldBackSentence(["03", "09", "10"].map(month), "monthly", "2026-11-01")).toBe(
+      "March 2026, September 2026 and October 2026 are not fully imported, so nothing rolls over from them yet.",
     );
   });
 
@@ -143,7 +158,7 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
     expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: [august, SEPTEMBER] }))).toBe(
       "more can still roll over from August 2026 and September 2026 once they are fully imported",
     );
-    const held = ["07", "08", "09"].map((m) => ({ start: `2026-${m}-01`, end: `2026-${m}-28` }));
+    const held = ["07", "08", "09"].map(month);
     expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: held }))).toBe(
       "more can still roll over from 3 months, July 2026 to September 2026, once they are fully imported",
     );
@@ -153,6 +168,41 @@ describe("lineMayRise and rolloverMayRiseClause — a line that can still rise, 
     };
     expect(rolloverMayRiseClause(row({ ...week, budget: { period: "weekly" } }))).toBe(
       "more can still roll over from the week of Sep 28 once it is fully imported",
+    );
+  });
+
+  /*
+   * ⛔ Counted between the first and the last only where they run unbroken. 🔴 The periods held back still under their
+   * plan leave out those between them already past it (review of ca938320, L24), so a run of five held back with
+   * August and October past their plans read "more can still roll over from 3 months, July 2026 to November 2026, once
+   * they are fully imported" — five months spanned, three counted — and five days of eleven "5 days, Oct 10 – Oct 20,"
+   * (review of f25e0ba9, L98). Latent on his ledger copy 2026-11-05: his 9 rolling budgets carry from Sep 1, 2026, so
+   * no more than September and October are held back.
+   */
+  test("periods with a gap between them are named each — the ones past their plans between them left out", () => {
+    const gapped = ["07", "09", "11"].map(month);
+    const december = { start: "2026-12-01" };
+    expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: gapped, bounds: december }))).toBe(
+      "more can still roll over from July 2026, September 2026 and November 2026 once they are fully imported",
+    );
+    const days = ["10", "12", "15", "18", "20"].map((d) => ({ start: `2026-10-${d}`, end: `2026-10-${d}` }));
+    const daily = {
+      rolloverHeldBackUnderPlan: days,
+      budget: { period: "daily" },
+      bounds: { start: "2026-10-21" },
+    } as const;
+    expect(rolloverMayRiseClause(row(daily))).toBe(
+      "more can still roll over from Oct 10, Oct 12, Oct 15, Oct 18 and Oct 20 once they are fully imported",
+    );
+    // …a bill's wait, in the panel's words as in the row's
+    expect(rolloverBillMayLapseSentence(gapped, "monthly", december.start)).toBe(
+      "More can still roll over from July 2026, September 2026 and November 2026 once their statements land, if a " +
+        "bill subtracted from them has stopped.",
+    );
+    // ⛔ …and a run with no gap is still counted between its first and its last
+    const unbroken = ["09", "10", "11"].map(month);
+    expect(rolloverMayRiseClause(row({ rolloverHeldBackUnderPlan: unbroken, bounds: december }))).toBe(
+      "more can still roll over from 3 months, September 2026 to November 2026, once they are fully imported",
     );
   });
 
@@ -317,15 +367,13 @@ describe("rolloverWaitsSentence — whose day the carry waits on, as it asked it
      * …and the run's: handed one anyway, the panel makes neither up — it cannot word a day it was not given, and
      * throws. 🔴 Review of efdf2de0 (L33): this asked whether `bare` has a `cash`, true of the literal whatever the
      * panel does, so with `?? { spentFromSince: reference, spentFromWallets: 1 }` put back it stayed green over
-     * "…spent only from a cash wallet since Oct 1, …" — one wallet, and the graded window's first day.
+     * "…spent only from a cash wallet since Oct 1, …" — one wallet, and the graded window's first day. 🔴 …and then
+     * only that one made-up fact failed it: with `?? { spentFromSince: "2026-04-01", spentFromWallets: 2 }` it stayed
+     * green over "…spent only from cash wallets since Apr 1, …", and the throw it leaned on was a TypeError from
+     * wording an undefined day (review of f25e0ba9, L94). ⛔ Whatever is made up, nothing is said: the panel throws,
+     * by its own guard.
      */
-    let said = "";
-    try {
-      said = rolloverWaitsSentence(bare, REF);
-    } catch {
-      // nothing said: no wallet and no day of its own to say
-    }
-    expect(said).not.toMatch(/a cash wallet|since Oct 1/);
+    expect(() => rolloverWaitsSentence(bare, REF)).toThrow(/a cash-only day carries the facts its row is worded from/);
     // …and one that carries them is worded from them, never from the graded window's first day
     const cash = { spentFromSince: "2026-04-01", spentFromWallets: 2 };
     const sentence = rolloverWaitsSentence({ whose: "cash-only", ancestor: null, cash }, REF);

@@ -246,6 +246,10 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
 
   // A row is under-measured on the SAME rule the row itself uses: `over` is
   // exempt, because already exceeding the plan is a fact more data cannot undo.
+  // ⚠️ …while each closed period's day moves on: the category's first row on an
+  // account imported short of it moves it back, and a rolling line can rise past
+  // the spend (`lineMayRise`'s ⚠️; L26: kept — said flatly here after that ⚠️ was
+  // written, review of f25e0ba9, L96). It bounds "no later import" below too.
   // ⚖️ So is a row spent only from cash wallets (owner, 2026-09-15): no statement
   // is coming for it, so it is not grading days the ledger has yet to reach — and
   // the test is the row's own, `spentOnlyFromCashWallets`.
@@ -299,12 +303,12 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
     const unread = uncovered.filter((r) => spendUnread(r)).length;
     /*
      * ⚖️ default built, not asked (2026-10-29): a row whose line can still rise (`lineMayRise`) has a percentage that
-     * is no lower bound — its spend still is — so where one of the rows shown is such a row, the note calls only their
-     * spend one; the row's own line says what can still roll over. ⛔ A dash shows neither, so it is not counted.
+     * is no lower bound — its spend still is — so the note calls only its spend one; the row's own line says what can
+     * still roll over. ⚖️ …the rest's percentages are floors still, said of them alone (`withheldFloors`, default built,
+     * not asked, 2026-11-05). ⛔ A dash shows neither, so it is not counted.
      */
-    const pcts = uncovered.some((r) => !spendUnread(r) && lineMayRise(r))
-      ? "spend is a lower bound, not a measurement"
-      : "spend and percentages are lower bounds, not measurements";
+    const figures = uncovered.filter((r) => !spendUnread(r));
+    const pcts = withheldFloors(figures.length, figures.filter((r) => lineMayRise(r)).length);
     /*
      * ⚖️ default built, not asked (2026-11-04): the dashes are counted by what makes them dashes — nothing found AND
      * not one elapsed day read (`spendUnread`) — so the number is the one he can check against the rows printing "—",
@@ -339,6 +343,27 @@ export function budgetSectionNotes(input: BudgetNoteInput): SectionNote[] {
   }
 
   return notes;
+}
+
+/**
+ * "spend and percentages are lower bounds, not measurements" — what the `n` withheld rows that print a figure are, where
+ * `rises` of them have a line that can still rise (`lineMayRise`): spend a floor, a percentage against it none.
+ *
+ * ⚖️ default built, not asked (2026-10-29): where every one of them can, only their spend is called a lower bound.
+ * ⚖️ default built, not asked (2026-11-05): …where only some of them can, each half is said of its own rows, as the over
+ * rows' clause after it says its halves (`overReadInPart`): the rest's percentages are floors still. 🔴 One rising row
+ * took "and percentages" from all of them (review of f25e0ba9, L93). Measured on his ledger copy 2026-11-05 (10-29b)
+ * with two Nov 3 rows added on Chase Sapphire — $50.00 of Cash & ATM, September and October held back, and $20.00 of
+ * Shopping, its line standing still: "…, and the others' spend is a lower bound, not a measurement." — Shopping's 7% of
+ * $280.00 a floor the note stopped calling one. Latent on the copy as it is: all 12 rows print "—".
+ */
+function withheldFloors(n: number, rises: number): string {
+  if (rises === 0) return "spend and percentages are lower bounds, not measurements";
+  const spend = "spend is a lower bound, not a measurement";
+  if (rises === n) return spend;
+  const steady = n - rises;
+  const pcts = steady === 1 ? "as is the percentage of one of them" : `as are the percentages of ${steady} of them`;
+  return `${spend}, ${pcts}; more can still roll over into the other${rises === 1 ? "" : ` ${rises}`}`;
 }
 
 /**

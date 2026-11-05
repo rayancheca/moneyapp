@@ -171,9 +171,13 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
   const rises = cause !== null;
   if (pace === "over") {
     // The headline % must say WHAT it measures: 108% of a budget is "over BY
-    // 8%", never "over budget · 108%", which reads as 108% over. Under one
-    // percent is "<1" rather than a rounded "0", which would claim the line was
-    // met exactly. ⛔ The bar's percentage less the line (`percentOfBudget`).
+    // 8%", never "over budget · 108%", which reads as 108% over. Where the bar
+    // reads 100% — less than half a percent past the line, as `percentOfBudget`
+    // rounds it — it is "<1" rather than a rounded "0", which would claim the
+    // line was met exactly; past that, the bar's percentage less the line, from
+    // "1". ⛔ One rounding (`percentOfBudget`). 🔴 This said "under one percent
+    // is '<1'" after that rounding made $2,014.00 of $2,000.00 "by 1%", beside
+    // the bar's "(101% of budget)" (review of f25e0ba9, L97).
     const overPct = percentOfBudget(pct) - 100;
     return {
       headline: `Over budget by ${overPct < 1 ? "<1" : overPct}%`,
@@ -255,7 +259,10 @@ export function budgetVerdict(input: BudgetVerdictInput): BudgetVerdict {
    * a budgeting tool cannot afford, so the verdict is withheld rather than
    * guessed. `over` is exempt above: already exceeding the budget on partial
    * data is a fact more data cannot undo — though not how far (`floors`), nor past a line that can still rise
-   * (`lineMayRise`, ⚖️ 2026-10-29), whose percentage below is no floor either.
+   * (`lineMayRise`, ⚖️ 2026-10-29), whose percentage below is no floor either. ⚠️ "Cannot undo" holds while each closed
+   * period's day moves on: the category's first row on an account imported short of it moves it back, and a rolling
+   * line can rise past the spend (`lineMayRise`'s ⚠️; L26: kept). 🔴 Said flatly here after that ⚠️ was written
+   * (review of f25e0ba9, L96).
    * ⛔ The floor test itself (`spendIsAFloor`): past the two branches above it is `uncoveredDays > 0`.
    */
   if (floors) {

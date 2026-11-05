@@ -3,7 +3,7 @@ import { ROLLOVER_SUBTRACTS } from "./arrears-reading";
 import { monthLabel } from "./calendar-math";
 import { budgetCoverageFact } from "./budget-coverage";
 import type { CategoryCoverageFacts, CategoryReach } from "./category-reach";
-import type { PeriodBounds } from "./dates";
+import { addDays, type PeriodBounds } from "./dates";
 import { formatDayShortIn } from "./format-date";
 
 /**
@@ -149,6 +149,9 @@ function accountsImported(whose: string): string {
 export function rolloverWaitsSentence(readOn: RolloverReadOn, reference: string): string {
   const { ancestor } = readOn;
   if (readOn.whose === "cash-only") {
+    // ⛔ the type requires them; handed a day without them anyway, nothing is said — no wallet or day is made up for it
+    // (🔴 it threw a TypeError by accident, wording an undefined day; review of f25e0ba9, L94)
+    if (readOn.cash === undefined) throw new Error("a cash-only day carries the facts its row is worded from");
     const facts = { importedThroughOn: null, spentFromAccounts: 0, bounds: { start: reference } };
     const spent = budgetCoverageFact({ ...facts, ...readOn.cash, namedFor: ancestor ?? undefined });
     return ancestor === null
@@ -180,28 +183,40 @@ function periodName(p: PeriodBounds, period: BudgetPeriodKind, reference: string
 
 /**
  * "September 2026", "July 2026 and August 2026", "3 months, July 2026 to September 2026," — the closed periods a carry
- * waits on (never none): held back, or read whole with a bill that may still lapse. Named both or counted between the
- * first and the last, days and weeks by their days ("4 days, Oct 10 – Oct 13,"). ⛔ One naming for the panel's
- * sentences (`rolloverHeldBackSentence`, `rolloverBillMayLapseSentence`) and the row's clause
- * (`rolloverMayRiseClause`), so the two cannot name one wait two ways.
+ * waits on (never none): held back, or read whole with a bill that may still lapse. Named each, or — three or more
+ * running unbroken — counted between the first and the last, days and weeks by their days ("4 days, Oct 10 – Oct
+ * 13,"). ⛔ One naming for the panel's sentences (`rolloverHeldBackSentence`, `rolloverBillMayLapseSentence`) and the
+ * row's clause (`rolloverMayRiseClause`), so the two cannot name one wait two ways.
+ *
+ * ⛔ Counted only where unbroken: a count beside a span says every period in it. 🔴 The periods held back still under
+ * their plan leave out those between them past it (`RolloverRiseInput.rolloverHeldBackUnderPlan`; review of ca938320,
+ * L24), so July, September and November read "3 months, July 2026 to November 2026," — five spanned, three counted —
+ * and five days of eleven "5 days, Oct 10 – Oct 20," (review of f25e0ba9, L98); a month held back for days before the
+ * ledger opens sits apart from the newest ones too. ⚖️ default built, not asked (2026-11-05): a run with a gap is
+ * named each, as two always were — "July 2026, September 2026 and November 2026". Latent on his ledger copy
+ * 2026-11-05: his 9 rolling budgets carry from Sep 1, 2026, and no more than September and October are held back.
  */
 function periodsNamed(periods: readonly PeriodBounds[], period: BudgetPeriodKind, reference: string): string {
   const first = periods[0]!;
   const last = periods[periods.length - 1]!;
   const named = (p: PeriodBounds): string => periodName(p, period, reference);
-  const span =
-    period === "monthly" || period === "annual"
-      ? `${named(first)} to ${named(last)}`
-      : `${formatDayShortIn(first.start, reference)} – ${formatDayShortIn(last.end, reference)}`;
-  if (periods.length === 1) return named(first);
-  if (periods.length === 2) return `${named(first)} and ${named(last)}`;
-  return `${periods.length} ${PERIOD_NOUN[period]}, ${span},`;
+  const unbroken = periods.every((p, k) => k === 0 || addDays(periods[k - 1]!.end, 1) === p.start);
+  if (periods.length > 2 && unbroken) {
+    const span =
+      period === "monthly" || period === "annual"
+        ? `${named(first)} to ${named(last)}`
+        : `${formatDayShortIn(first.start, reference)} – ${formatDayShortIn(last.end, reference)}`;
+    return `${periods.length} ${PERIOD_NOUN[period]}, ${span},`;
+  }
+  const names = periods.map(named);
+  return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]!}`;
 }
 
 /**
  * "September 2026 is not fully imported, so nothing rolls over from it yet." — null when nothing is held back. Several
- * are named both, or counted between the first and the last ("3 months, July 2026 to September 2026, …"; days and
- * weeks by their days, "4 days, Oct 10 – Oct 13, …"). `reference` is the graded window's first day.
+ * are named each, or — running unbroken — counted between the first and the last ("3 months, July 2026 to September
+ * 2026, …"; days and weeks by their days, "4 days, Oct 10 – Oct 13, …") (`periodsNamed`). `reference` is the graded
+ * window's first day.
  */
 export function rolloverHeldBackSentence(
   heldBack: readonly PeriodBounds[],
@@ -276,9 +291,14 @@ export function lineMayRise(row: Pick<RolloverRiseInput, "rolloverMayAddCents">)
 }
 
 /**
- * The line can still rise (`lineMayRise`) — but by less than how far past it the spend already is: whatever the closed
- * periods it rolls over from bank as their statements land, the spend stays past it. False for a row not past its line,
- * and where the line can come up to meet the spend: met exactly, the spend has not passed it.
+ * The most the line can still rise (`rolloverMayAddCents`) is less than how far past it the spend already is: whatever
+ * the closed periods it rolls over from bank as their statements land, the spend stays past it. False for a row not past
+ * its line, and where the line can come up to meet the spend: met exactly, the spend has not passed it.
+ *
+ * ⚠️ True, too, of a line that cannot rise at all — $0.00 is less than any over — so it says nothing of whether the line
+ * can still rise: `lineMayRise` does, and its one caller asks that first (`budgetVerdict`: `cause === null ||` it).
+ * 🔴 This said "The line can still rise (`lineMayRise`) — but by less than …", which the body never checks
+ * (review of 029d3c41, L113).
  *
  * ⚖️ default built, not asked (2026-11-04): an over row's definition then says no later import can undo it (`paceOver`,
  * `budgetVerdict`), as a line standing still does — and how far past it stays no floor: the row speaks the bare over
