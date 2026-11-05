@@ -36,7 +36,7 @@ import { Money } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
-import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
+import { ErrorBanner, errorParam, REFUSAL_SHOWN, refusalShownFields } from "@/components/ui/ErrorBanner";
 import { formatCents } from "@/lib/money";
 import { acceptGapAction, unimportFileAction, uploadStatementsAction } from "./actions";
 
@@ -199,6 +199,8 @@ export default async function ImportsPage({
             a file is always safe: duplicates are a guaranteed no-op.
           </p>
           <form action={uploadStatementsAction} className="flex flex-wrap items-center gap-3">
+            {/* while a refusal shows, a press that lands clears it (`backToImports`) */}
+            {error ? <input type="hidden" name={REFUSAL_SHOWN} value="1" /> : null}
             {/* `min-w-0` on both boxes: a file input's min-content is its
                 button plus the filename text — 318px here, against 288px of
                 page at the 320 floor. As a flex item the label defaults to that
@@ -316,7 +318,7 @@ export default async function ImportsPage({
                         label (WCAG 2.5.3) and adds only which row it acts on */}
                     <ConfirmActionButton
                       action={acceptGapAction}
-                      fields={{ statementPeriodId: p.id }}
+                      fields={{ statementPeriodId: p.id, ...refusalShownFields(error) }}
                       triggerLabel="Accept as-is"
                       triggerAriaLabel={`Accept as-is — ${p.accountName}, ${p.periodStart} to ${p.periodEnd}`}
                       triggerClassName="rounded-md border border-line px-2.5 py-1 text-xs text-ink-muted transition-colors duration-(--duration-fast) hover:border-line-strong hover:text-ink"
@@ -432,7 +434,7 @@ export default async function ImportsPage({
                       <td className="py-1.5 text-right">
                         <ConfirmActionButton
                           action={unimportFileAction}
-                          fields={{ importFileId: f.id }}
+                          fields={{ importFileId: f.id, ...refusalShownFields(error) }}
                           formClassName="inline"
                           triggerLabel="un-import"
                           triggerAriaLabel={`un-import ${importRowSubject(f.fileName, qualifierById.get(f.id) ?? null)}`}
