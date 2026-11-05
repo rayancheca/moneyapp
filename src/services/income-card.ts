@@ -15,6 +15,7 @@ import { addCalendarMonths, compareDates, diffDays, monthKey, periodBounds, toda
 import { formatDayLong, formatDayShortIn, formatMonthYear } from "@/lib/format-date";
 import { monthIncomeLink, type IncomeLink } from "@/lib/income-basis";
 import { formatCents } from "@/lib/money";
+import { dayWindowLabel } from "@/lib/period";
 import { paydaysNotBankedYet, wentBackOutPhrase, type WentBackOut } from "@/lib/pay-shortfall";
 import {
   ACCOUNT_NOT_READ,
@@ -23,9 +24,11 @@ import {
   NOT_CHECKED,
   noIncomeDayCheckedNote,
   notLookedForDeposits,
+  ON_DAYS_ALREADY_CHECKED,
   paidEarlyAside,
   payNotBankedYet,
   sharedFrontier,
+  theOther,
   theOtherFall,
   unbankedIncomeFrontierClause,
   type UnbankedFrontier,
@@ -432,6 +435,11 @@ export interface IncomeCard {
   pay: IncomePayLine[];
   totals: Gap & { impliedCents: number; bankedCents: number };
   /**
+   * What the subtotal of several pay lines is called (`reachedLabel`): "Reached a bank", and of nothing banked
+   * "Reached an account the ledger reads" — the scope the headline over it says the same zero in.
+   */
+  bankedLabel: string;
+  /**
    * Banked ÷ implied as a whole percentage, occasionally above 100.
    *
    * ⛔ Null when nothing was implied. `x / 0` is `Infinity`, which renders as
@@ -500,10 +508,27 @@ const paydayWord = (n: number): string => (n === 1 ? "payday" : "paydays");
  * The window is already named by `summaryFor` as a trailing clause. The row
  * names its OWN span instead, which is the only one it measured, and a reader
  * can now check it: Jun 4 to Aug 27 is twelve weeks, and thirteen Thursdays.
+ *
+ * ⛔ Dated at both ends or neither: inside today's year in the card's day ("Jun 4 – Oct 29"), and where an end is
+ * not, in the house range form (`dayWindowLabel`), each year said once. 🔴 Review of ffb1b2d3 (LOW): read Jan 8, 2027,
+ * each end spelled against today read "19 paydays, Sep 3, 2026 – Jan 7" — his ledger copy that day, "28 paydays, Jul 2,
+ * 2026 – Jan 7".
  */
-function paydaysLabelFor(paydays: number, firstOn: string | null, lastOn: string | null, day: DayWord): string {
+function paydaysLabelFor(
+  paydays: number,
+  firstOn: string | null,
+  lastOn: string | null,
+  day: DayWord,
+  today: string,
+): string {
   if (paydays === 0 || firstOn === null || lastOn === null) return "no paydays in this window";
-  const span = firstOn === lastOn ? day(firstOn) : `${day(firstOn)} – ${day(lastOn)}`;
+  const thisYear = [firstOn, lastOn].every((d) => d.slice(0, 4) === today.slice(0, 4));
+  const span =
+    firstOn === lastOn
+      ? day(firstOn)
+      : thisYear
+        ? `${day(firstOn)} – ${day(lastOn)}`
+        : dayWindowLabel(firstOn, lastOn);
   return `${paydays} ${paydayWord(paydays)}, ${span}`;
 }
 
@@ -668,7 +693,7 @@ function staleChecked(
   matched: readonly UnattachedMatch[],
   day: DayWord,
 ): string {
-  const covered = "on days already checked";
+  const covered = ON_DAYS_ALREADY_CHECKED;
   /*
    * ⛔ …and "not banked yet" only of the paydays no row matches either: a row of a payday still inside its days to land
    * is named with the others, never "its pay is not banked yet" — and then the paydays it is named with are said to
@@ -684,7 +709,8 @@ function staleChecked(
       : matchedOfWords(matched, pastCount, day) +
         (matched.length >= pastCount
           ? ""
-          : `, and for the other ${pastCount - matched.length} the pay did not reach ${ACCOUNT_READ}`);
+          : // "the other one" of one (`theOther`) — 🔴 "for the other 1" (review of ffb1b2d3, LOW)
+            `, and for ${theOther(pastCount - matched.length)} the pay did not reach ${ACCOUNT_READ}`);
   const after = (dayNamed: boolean): string =>
     unlooked <= 0
       ? ""
@@ -792,7 +818,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
       name: r.seriesName,
       impliedCents: r.impliedCents,
       paydays: r.periodsCovered,
-      paydaysLabel: paydaysLabelFor(r.periodsCovered, r.firstPeriodOn, r.lastPeriodOn, cardDay),
+      paydaysLabel: paydaysLabelFor(r.periodsCovered, r.firstPeriodOn, r.lastPeriodOn, cardDay, today),
       bankedCents: r.bankedCents,
       wentBackOut: r.wentBackOut ?? [],
       basis: r.basis,
@@ -869,6 +895,7 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     summary: summaryFor(bankedSharePct, totals.impliedCents, totals.bankedCents, windowFrom),
     pay,
     totals,
+    bankedLabel: reachedLabel(totals.bankedCents),
     bankedSharePct,
     postedThisMonthCents,
     noIncomeDayRead: expectation.noIncomeDayRead,
@@ -896,6 +923,22 @@ export function incomeCard(db: AppDatabase, today: string = todayIso()): IncomeC
     today,
   };
 }
+
+/**
+ * ⚖️ What the subtotal under several pay lines is called: "Reached a bank" of money the ledger read in one, and of none
+ * the absence in the headline's scope — `ACCOUNT_READ`, "Nothing has reached an account the ledger reads"
+ * (`summaryFor`'s zero, the one test both read). ⚖️ default built, not asked (2026-11-05): Default A's own rule of
+ * 2026-10-30, a deposit the ledger read "reached a bank" and only an absence is scoped to where the ledger looks.
+ * 🔴 Review of ffb1b2d3 (LOW): two confirmed weekly schedules, nothing banked in the window, read Jan 20, 2027 — the
+ * card said "Nothing has reached an account the ledger reads, against $34,800.00 …" over "Reached a bank $0.00 of
+ * $34,800.00 implied". Latent on his ledger copy 2026-11-05: one pay line, so no subtotal.
+ */
+function reachedLabel(bankedCents: number): string {
+  return nothingReached(bankedCents) ? `Reached ${ACCOUNT_READ}` : "Reached a bank";
+}
+
+/** Nothing banked: what the headline and the subtotal say in the accounts the ledger reads (`ACCOUNT_READ`). */
+const nothingReached = (bankedCents: number): boolean => bankedCents === 0;
 
 /**
  * The sentence under the headline.
@@ -936,7 +979,7 @@ function summaryFor(
         : `though ${formatCents(bankedCents)} of attributed deposits landed inside it`;
     return `No payday from a confirmed schedule falls inside this window, ${deposits}, so there is nothing to reconcile yet. ${measured}`;
   }
-  if (bankedCents === 0) {
+  if (nothingReached(bankedCents)) {
     return `Nothing has reached ${ACCOUNT_READ}, against ${formatCents(impliedCents)} the confirmed schedule implies you earned. ${measured}`;
   }
   if (bankedCents === impliedCents) {

@@ -299,8 +299,8 @@ export function dueDayIsRead(dueOn: string, reading: DueDayReading): boolean {
  * WHETHER THE LEDGER HAS LOOKED FOR A PAYDAY'S DEPOSIT: `checkedThrough` is the last day every account the pay lands
  * in NOW has been checked through (`checkedThroughBySeries`, the day every pay sentence names — `LAST_CHECKED_DAY`), or
  * null when one of them has no checked record. A payday ON that day was looked for: a deposit dated on it is in the
- * records. No grace in the split — the pay's sentences give none; only "never reached a bank" waits out a payday's
- * days to land (`paydayLandingIsRead`).
+ * records. No grace in the split — the pay's sentences give none; only "never reached an account the ledger reads"
+ * waits out a payday's days to land (`paydayLandingIsRead`).
  *
  * ⛔ THE ONE PREDICATE for whether a passed payday was looked for: the calendar's "not banked yet" against "the ledger
  * has not looked for its deposit" (`settledVerdict`, `not_looked_for`), and the checked half of the passed paydays
@@ -324,11 +324,12 @@ export function paydayIsRead(paydayOn: string, checkedThrough: string | null): b
  * reach the settlement's anchor clause gives a deposit: no deposit can still answer it on a day the ledger has not
  * read.
  *
- * ⛔ THE ONE PREDICATE behind "never reached a bank" against "not banked yet", for a payday no deposit settled: the
- * forecast's note and the pay series' own page (`pastGraceOccurrenceCount`), the dashboard's Earned vs banked and
- * /spending's shortfall note (`paydaysNotBankedYet`). 🔴 Review of 878c3d5: it reached the first two alone — Thu Sep 3
- * checked through Sat Sep 5 read "Pay not banked yet" on the forecast, and "$1,000.00 of it never reached a bank" on
- * the dashboard and "none of it reached a bank" on /spending, while a deposit on Sun Sep 6 would still have paid it.
+ * ⛔ THE ONE PREDICATE behind "never reached an account the ledger reads" against "not banked yet", for a payday no
+ * deposit settled: the forecast's note and the pay series' own page (`pastGraceOccurrenceCount`), the dashboard's
+ * Earned vs banked and /spending's shortfall note (`paydaysNotBankedYet`). 🔴 Review of 878c3d5: it reached the first
+ * two alone — Thu Sep 3 checked through Sat Sep 5 read "Pay not banked yet" on the forecast, and "$1,000.00 of it never
+ * reached a bank" on the dashboard and "none of it reached a bank" on /spending, while a deposit on Sun Sep 6 would
+ * still have paid it.
  */
 export function paydayLandingIsRead(paydayOn: string, toleranceDays: number, checkedThrough: string | null): boolean {
   return paydayIsRead(addDays(paydayOn, toleranceDays), checkedThrough);
@@ -367,8 +368,8 @@ export interface OccurrenceReading {
  *
  * ⛔ …and `unattached`, the row the one rule matched to this day (`services/unattached-match`, asked of the days
  * `asksForUnattachedMatch` names), outranks the absence it would answer: "matched_unattached", the row named — never a
- * red ✕, never "never reached a bank" nor "not banked yet", and never paid by it. A day nobody has read keeps its own
- * reason, a row or not.
+ * red ✕, never "never reached an account the ledger reads" nor "not banked yet", and never paid by it. A day nobody has
+ * read keeps its own reason, a row or not.
  */
 export function settledVerdict(
   kind: SeriesKind,
@@ -407,7 +408,8 @@ export function settledVerdict(
 /**
  * THE DAYS THE ONE RULE IS ASKED ABOUT (`services/unattached-match`) — a past occurrence no posting paid that another
  * surface would call absent: a payday the ledger has CHECKED (`paydayIsRead` — "with no deposit" on the forecast's note,
- * the tile, /budgets and Earned vs banked; inside its days to land "not banked yet", past them "never reached a bank"),
+ * the tile, /budgets and Earned vs banked; inside its days to land "not banked yet", past them "never reached an
+ * account the ledger reads"),
  * and a due day read with its grace (`dueDayIsRead` — the arrears' read half, "has not posted"). ⛔ The calendar asks
  * exactly these — the income mirror (`unbankedIncomeForSeries`) and the pay readings (`paydaysNoDepositPaidInFull`) the
  * same of a payday — so a row is never spent on a day no other surface would match it to. 🔴 Review of de31d22 (HIGH):

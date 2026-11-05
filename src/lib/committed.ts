@@ -22,7 +22,7 @@
  */
 
 import type { Cadence } from "@/db/schema/recurring";
-import { arrearsTail, HAS_NOT_POSTED, type ArrearsReading } from "@/lib/arrears-reading";
+import { arrearsTail, billsPronoun, HAS_NOT_POSTED, type ArrearsReading } from "@/lib/arrears-reading";
 import type { UnattachedMatch } from "@/lib/unattached-match";
 import { addCalendarMonths, compareDates, daysInMonthOf, monthKey, periodBounds, withDayOfMonth } from "@/lib/dates";
 import { formatDayShortIn, formatMonthYear, monthWindowLabel } from "@/lib/format-date";
@@ -495,16 +495,23 @@ export function committedBillsNamed(lines: readonly CommittedLine[]): string | n
  * posted" (his decisions 60 and 65): "$45.00 never posted" on the e2e runway beside the math table's "came due … and
  * has not posted". The words are the builder's now (`HAS_NOT_POSTED`), and no other can be passed.
  *
+ * ⛔ …and its rows "not attached to them" of several bills (`billsPronoun`, by payment, `overdueCount`): rows are
+ * attached to bills, while "it" is the money the sentence is said of — "no statement has covered it yet". 🔴 Review of
+ * ffb1b2d3 (LOW): with Breezeline's −$50.00 due Oct 8 and its row on Oct 10 beside the lease's Oct 15 row, read Oct 29,
+ * it read "…rows of $50.00 on Oct 10 and $695.04 on Oct 15 that are not attached to it", while /budgets' page note said
+ * "them" of the same rows. His ledger copy 2026-11-05 reads "A further $2,291.21 came due earlier this month and no
+ * statement has covered it yet." — two bills, no row, unchanged.
+ *
  * Null when nothing is late — silence, never "nothing came due".
  */
 export function arrearsSentence(book: ArrearsBook): string | null {
   if (book.overdueCents <= 0) return null;
-  const tail = arrearsTail(arrearsReadingOf(book), HAS_NOT_POSTED);
+  const tail = arrearsTail(arrearsReadingOf(book), HAS_NOT_POSTED, "it", billsPronoun(book.overdueCount));
   return `A further ${formatCents(book.overdueCents)} came due earlier this month${tail}.`;
 }
 
 /** The book figures `arrearsSentence` and its tone read — the in-grace part absent for none of it. */
-type ArrearsBook = Pick<CommittedOutflows, "overdueCents" | "overdueUnreadCents"> &
+type ArrearsBook = Pick<CommittedOutflows, "overdueCents" | "overdueUnreadCents" | "overdueCount"> &
   Partial<Pick<CommittedOutflows, "overdueInGraceCents" | "overdueUnattached">>;
 
 /**

@@ -74,9 +74,10 @@ export function IncomeCard({ data }: { data: IncomeCardData }) {
             series the subtotal is the row above it repeated, and a total that
             restates its only operand teaches the reader nothing while looking
             like a second measurement. */}
+        {/* …called what the service calls it (`bankedLabel`): of nothing banked, in the headline's scope */}
         {named && (
           <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5">
-            <dt className="font-medium">Reached a bank</dt>
+            <dt className="font-medium">{data.bankedLabel}</dt>
             <dd className="shrink-0 text-right">
               <Money cents={totals.bankedCents} className="font-semibold" />
               <span className="block text-[11px] text-ink-faint">

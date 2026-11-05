@@ -363,7 +363,7 @@ describe("arrears — never posted only of days the ledger has read", () => {
   });
 
   test("nothing late, nothing said", () => {
-    expect(arrearsSentence({ overdueCents: 0, overdueUnreadCents: 0 })).toBeNull();
+    expect(arrearsSentence({ overdueCents: 0, overdueUnreadCents: 0, overdueCount: 0 })).toBeNull();
   });
 
   /*
@@ -372,19 +372,19 @@ describe("arrears — never posted only of days the ledger has read", () => {
    * "was expected by now and has not posted". One word for the read half, from the one builder (`HAS_NOT_POSTED`).
    */
   test("days the ledger has read say it has not posted, in every surface's words", () => {
-    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 0 })!;
+    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 0, overdueCount: 2 })!;
     expect(s).toBe("A further $2,296.20 came due earlier this month and has not posted.");
     expect(s).not.toContain("never posted");
   });
 
   test("days no checked statement covers say so in /budgets' words, never 'has not posted'", () => {
-    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 229620 })!;
+    const s = arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 229620, overdueCount: 2 })!;
     expect(s).toBe("A further $2,296.20 came due earlier this month and no statement has covered it yet.");
     expect(s).not.toContain("not posted");
   });
 
   test("a mix names each part by what the ledger can say of it", () => {
-    expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 210900 })).toBe(
+    expect(arrearsSentence({ overdueCents: 229620, overdueUnreadCents: 210900, overdueCount: 2 })).toBe(
       "A further $2,296.20 came due earlier this month: $187.20 has not posted, and no statement has covered the other $2,109.00 yet.",
     );
   });

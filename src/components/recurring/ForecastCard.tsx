@@ -453,8 +453,8 @@ export function ForecastCard({ forecast: f }: ForecastCardProps) {
 
       {/* 🔴 THE ASYMMETRY, NAMED. A bill that came due and never posted IS a
           component here; a payday that came and went unbanked deliberately is
-          not, because cash pay that never reaches a bank cannot be counted as
-          arriving (`fixedComponents` argues it at length). So this card sums a
+          not, because pay that never reaches an account the ledger reads cannot
+          be counted as arriving (`fixedComponents` argues it at length). So this card sums a
           different set of days from the month strip directly below it, and on
           2026-09-04 the two read "-$426.60" and "as scheduled +$620.40" —
           $1,047.00 apart, which is exactly what `committed`'s own docstring says

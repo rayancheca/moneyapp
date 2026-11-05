@@ -1,6 +1,6 @@
 import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import type { UnattachedMatch } from "@/lib/unattached-match";
-import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
+import { arrearsClause, billsPronoun, NOT_POSTED } from "@/lib/arrears-reading";
 import { floorFigure } from "@/lib/budget-verdict";
 
 /**
@@ -66,6 +66,8 @@ export interface BudgetDeactivateInput {
   spentIsAFloor: boolean;
   /** bills due on or before today — late, or due today and not yet posted */
   overdueCents: number;
+  /** how many bills — payments, not series — `overdueCents` is (`overdueBillsOf`): what its rows are not attached to */
+  overdueBills: number;
   /** of `overdueCents`, the part on days no checked statement has reached (`BudgetPaceStatus.overdueUnreadCents`) */
   overdueUnreadCents: number;
   /** of `overdueUnreadCents`, the part no statement keeps unread (`BudgetPaceStatus.overdueInGraceCents`) */
@@ -100,6 +102,8 @@ export function budgetDeactivateLines(
                 unattached: input.overdueUnattached,
               },
               NOT_POSTED,
+              "it",
+              billsPronoun(input.overdueBills),
             )}`,
             value: formatCents(input.overdueCents),
           },

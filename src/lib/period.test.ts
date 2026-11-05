@@ -20,6 +20,7 @@ import {
   subBuckets,
   switchGranularityParams,
   type ResolvedPeriod,
+  windowLabelOn,
 } from "./period";
 
 const TODAY = "2026-07-08";
@@ -627,6 +628,47 @@ describe("calendarWindowLabel — a calendar period by its name, any other windo
     expect(calendarWindowLabel("2026-10-02", "2026-10-31")).toBe("Oct 2 – 31, 2026");
     expect(calendarWindowLabel("2026-10-01", "2026-11-30")).toBe("Oct 1 – Nov 30, 2026");
     expect(calendarWindowLabel("2025-10-01", "2026-10-31")).toBe("Oct 1, 2025 – Oct 31, 2026");
+  });
+});
+
+/*
+ * ⛔ ONE WINDOW, ONE NAME ON ONE PAGE: the page's own window is called by the label `resolvePeriod` titles that page
+ * with — a custom window that is a whole month by its two ends, the year to date and All time by theirs — and only
+ * the days short of it by `calendarWindowLabel`. 🔴 Review of ffb1b2d3 (LOW): `?from=2026-11-01&to=2026-11-30`, 30
+ * unread days, was titled "Nov 1 – 30, 2026" and carded "Not one day of Nov 1 – 30, 2026 …", while /spending's graph
+ * called the same days "November 2026".
+ */
+describe("windowLabelOn — the page's own window by the page's label, any other by calendarWindowLabel", () => {
+  test("a custom window that is a whole month, quarter or year keeps the page's two ends", () => {
+    for (const [from, to] of [
+      ["2026-11-01", "2026-11-30"],
+      ["2026-10-01", "2026-12-31"],
+      ["2026-01-01", "2026-12-31"],
+    ] as const) {
+      const page = resolvePeriod({ from, to }, TODAY);
+      expect(page.granularity).toBe("custom");
+      expect(windowLabelOn(page, from, to)).toBe(page.label);
+      expect(windowLabelOn(page, from, to)).toBe(dayWindowLabel(from, to));
+    }
+  });
+
+  test("a keyed page, the year to date and All time say their own label", () => {
+    for (const params of [{ period: "2026-10" }, { period: "2026-Q4" }, { period: "2026" }, { period: "YTD" }]) {
+      const page = resolvePeriod(params, TODAY);
+      expect(windowLabelOn(page, page.from, page.to)).toBe(page.label);
+    }
+    const ytd = resolvePeriod({ period: "YTD" }, TODAY);
+    expect(windowLabelOn(ytd, ytd.from, ytd.to)).toBe("2026 to date");
+    const all = resolvePeriod({ period: "ALL" }, TODAY, "2022-09-20");
+    expect(windowLabelOn(all, all.from, all.to)).toBe("All time");
+  });
+
+  test("days short of the page's window are named as any window is", () => {
+    const custom = resolvePeriod({ from: "2026-10-01", to: "2026-11-30" }, TODAY);
+    expect(windowLabelOn(custom, "2026-10-01", "2026-10-31")).toBe("October 2026");
+    expect(windowLabelOn(custom, "2026-10-01", "2026-10-14")).toBe("Oct 1 – 14, 2026");
+    const ytd = resolvePeriod({ period: "YTD" }, TODAY);
+    expect(windowLabelOn(ytd, "2026-01-01", "2026-03-31")).toBe("Q1 2026");
   });
 });
 

@@ -165,7 +165,7 @@ describe("a payday the ledger has not looked for says so on the calendar — as 
    * "not banked yet", however long ago: his cash weeks beside the dashboard's "never reached a bank" for the same
    * paydays (reading the app, 2026-10-14). Checked through its days to land, a payday never reached a bank.
    */
-  test("the weeks on or before Sep 24 were looked for — Aug 13 and Aug 20 never reached a bank", () => {
+  test("the weeks on or before Sep 24 were looked for — Aug 13 and Aug 20 never reached an account", () => {
     const before = unsettledPaydays().filter((d) => compareDates(d.slice(0, 10), "2026-09-24") <= 0);
     expect(before).toContain("2026-08-13 never_banked");
     expect(before).toContain("2026-08-20 never_banked");

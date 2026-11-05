@@ -23,10 +23,10 @@ import { paydaySettlement } from "./payday-settlement";
 import { recurringCalendar } from "./recurring-calendar";
 
 /**
- * "Never reached a bank" is said of a payday only once the ledger has checked it through its DAYS TO LAND — its
- * series' own tolerance after it, the reach the settlement's anchor clause gives a deposit — on every surface that
- * says it: the forecast's note and the pay series' own page (`pastGraceOccurrenceCount`), the dashboard's Earned vs
- * banked and /spending's shortfall note.
+ * "Never reached an account the ledger reads" (`NEVER_REACHED`) is said of a payday only once the ledger has checked it
+ * through its DAYS TO LAND — its series' own tolerance after it, the reach the settlement's anchor clause gives a
+ * deposit — on every surface that says it: the forecast's note and the pay series' own page
+ * (`pastGraceOccurrenceCount`), the dashboard's Earned vs banked and /spending's shortfall note.
  *
  * 🔴 Review of 878c3d5 (the grace rule reached 2 of its 4 readers): weekly $1,000.00 paid through Thu Aug 27, Chase
  * read through Sat Sep 5, today Sep 15 — the forecast called Thu Sep 3 "Pay not banked yet", while the dashboard said
@@ -34,8 +34,8 @@ import { recurringCalendar } from "./recurring-calendar";
  * of the same payday, whose deposit could still land on Sun Sep 6.
  *
  * ⛔ A payday a deposit SETTLED is not one of them, inside its days to land or not: on his ledger copy 2026-10-21 Wells
- * Fargo is checked through Thu Sep 24, whose payday the Sep 24 deposit paid, and Earned vs banked's "$11,117.00 of it
- * never reached a bank" (decision 55's figure) must not move.
+ * Fargo is checked through Thu Sep 24, whose payday the Sep 24 deposit paid, and the $11,117.00 Earned vs banked says
+ * never reached an account the ledger reads (decision 55's figure) must not move.
  */
 
 let dir: string;
@@ -199,7 +199,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   });
 
   // ⛔ A date window has two ends: Sun Sep 6, three days on, is the last of Sep 3's days to land
-  test("…and checked through Sep 6, its last day to land, every surface says it never reached a bank", () => {
+  test("…and checked through Sep 6, its last day to land, every surface says it never reached an account", () => {
     paidThrough("2026-08-27");
     readThrough("2026-09-06");
     const s = surfaces();
@@ -220,7 +220,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   });
 
   // ⚖️ …by its OWN series' tolerance: a schedule given 5 days waits 5
-  test("a schedule given 5 days to land is not banked yet through Sep 7, and never reached a bank from Sep 8", () => {
+  test("a schedule given 5 days to land: not banked yet through Sep 7, and from Sep 8 it never reached one", () => {
     bundle.db.update(recurringSeries).set({ toleranceDays: 5 }).where(eq(recurringSeries.id, SERIES)).run();
     paidThrough("2026-08-27");
     readThrough("2026-09-07");
@@ -286,13 +286,32 @@ describe("a payday checked on its day but not through its days to land never 'ne
       "It America LLC (weekly pay) implies $2,000.00 of earnings over Sep 3 – 10, 2026 and none of it reached an " +
         `account the ledger reads, through Sat, Sep 5, 2026; the other payday falls after that, ${CHECKED_DAY}. ` +
         "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
-        "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+        "of them fall on days already checked, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
         "cash, paid into an " +
         "account the ledger does not read, the schedule has ended, the ledger has not looked for its deposit, or Sep " +
         "3's days to land run past Sat, Sep 5, 2026, " +
         `${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count deposits, so they ` +
         "cannot tell you which.",
     ]);
+  });
+
+  /*
+   * ⛔ …and its checked paydays in the verdict's words, "fall on days already checked" (`ON_DAYS_ALREADY_CHECKED`): the
+   * sentence is schedule-wide, the silence the verdict counts — the checked day still named after them, the only place
+   * the sentence names it. 🔴 Review of ffb1b2d3 (LOW): on the e2e seed read Jul 8 the card said "3 of them fall on days
+   * already checked — so the pay did not reach a bank; …" and /spending's year note, of the same three paydays, "…, and
+   * 3 of them fall on days the records cover, through Tue, Jun 30, 2026 — …", the card's wording 87a440d0 retired.
+   */
+  test("/spending's stale note says the verdict's checked paydays in the verdict's words", () => {
+    paidThrough("2026-08-06");
+    readThrough("2026-09-05");
+
+    expect(incomeCard(bundle.db, TODAY)!.pay[0]!.verdict).toContain(" fall on days already checked — ");
+    for (const [from, to] of STALE_WINDOWS) {
+      const sentence = staleSentence(from, to);
+      expect(sentence).toContain(", and 4 of them fall on days already checked, through Sat, Sep 5, 2026 — ");
+      expect(sentence).not.toContain("records");
+    }
   });
 
   /*
@@ -309,7 +328,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
     const sentence =
       "Across the whole schedule, 5 expected paydays have passed since the last deposit on Thu, Aug 6, 2026, and 4 " +
-      "of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+      "of them fall on days already checked, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
       "cash, paid into an account the ledger does not read, the schedule has ended, the ledger has not looked for its " +
       "deposit, or Sep 3's days to land run past " +
       `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
@@ -375,7 +394,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
 
     const sentence =
       "Across the whole schedule, 15 expected paydays have passed and nothing attributed to it has ever banked, and " +
-      "14 of them fall on days the records cover, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
+      "14 of them fall on days already checked, through Sat, Sep 5, 2026 — that money was held as cash, spent as " +
       "cash, paid into an account the ledger does not read, the schedule has ended, the ledger has not looked for its " +
       "deposit, or Sep 3's days to land run past " +
       `Sat, Sep 5, 2026, ${CHECKED_DAY} — so its pay is not banked yet. The income figures on this page count ` +
@@ -387,7 +406,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   });
 
   // ⛔ …and checked through Sun Sep 6, Sep 3's last day to land, the verdict is the one it always was
-  test("checked through Sep 6, the stale verdict counts all 4 checked paydays as not having reached a bank", () => {
+  test("checked through Sep 6, the stale verdict counts all 4 checked paydays as not having reached an account", () => {
     paidThrough("2026-08-06");
     readThrough("2026-09-06");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;
@@ -425,7 +444,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   const NOT_ANSWERED = "Whether it was earned is a different question, and this card cannot answer it.";
   const SEP_10 = "the other one falls after Sep 5 — so the ledger has not looked for its deposit.";
 
-  test("14 days to land: Aug 13 and Aug 20 did not reach a bank; the days to land of Aug 27 and Sep 3 run past", () => {
+  test("14 days to land: Aug 13 and 20 did not reach an account; the days to land of Aug 27 and Sep 3 run past", () => {
     expect(raisedFromAug13(14)).toBe(
       `${STALE} 2 of them, and their days to land, fall on days already checked — so the pay did not reach an ` +
         `account the ledger reads; the days to land of Aug 27 and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their ` +
@@ -434,7 +453,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   });
 
   // ⛔ "1 of them … falls", never "1 of them fall"
-  test("21 days to land: Aug 13 alone did not reach a bank", () => {
+  test("21 days to land: Aug 13 alone did not reach an account the ledger reads", () => {
     expect(raisedFromAug13(21)).toBe(
       `${STALE} 1 of them, and its days to land, falls on days already checked — so the pay did not reach an account ` +
         `the ledger reads; the days to land of Aug 20, Aug 27, and Sep 3 run past Sep 5, ${CHECKED_DAY} — so their ` +
@@ -443,7 +462,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
   });
 
   // ⛔ …and with none past its days to land, no "did not reach a bank" at all
-  test("28 days to land: every checked silent payday is inside them, and none did not reach a bank", () => {
+  test("28 days to land: every checked silent payday is inside them, and none did not reach an account", () => {
     expect(raisedFromAug13(28)).toBe(
       `${STALE} 4 of them fall on days already checked, but the days to land of Aug 13, Aug 20, Aug 27, and Sep 3 ` +
         `run past Sep 5, ${CHECKED_DAY} — so their pay is not banked yet; ${SEP_10} ${NOT_ANSWERED}`,
@@ -472,7 +491,7 @@ describe("a payday checked on its day but not through its days to land never 'ne
    * bank" into $9,975.08, Sep 24's paid $1,141.92 among the pay "the ledger has not looked for"
    * (`paydaysNotBankedYet`).
    */
-  test("a payday settled inside its days to land moves nothing — the unpaid one before it never reached a bank", () => {
+  test("a payday settled inside its days to land moves nothing — the unpaid one before it never reached one", () => {
     paidThrough("2026-08-20");
     deposit("2026-09-03");
     readThrough("2026-09-05");
@@ -586,7 +605,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
     );
     expect(ytd).toContain(
       "Across the whole schedule, 15 expected paydays have passed and nothing attributed to it has ever banked, and " +
-        "14 of them fall on days the records cover, through Sat, Sep 5, 2026 —",
+        "14 of them fall on days already checked, through Sat, Sep 5, 2026 —",
     );
   });
 
@@ -708,7 +727,7 @@ describe("the silence the verdict and /spending's stale note count, and the mone
 describe("a stale verdict names every payday of its silence — one past the checked day is not looked for", () => {
   const NOT_ANSWERED = "Whether it was earned is a different question, and this card cannot answer it.";
 
-  test("the reviewer's shape: two did not reach a bank, one is not banked yet, one is not looked for", () => {
+  test("the reviewer's shape: two did not reach an account, one is not banked yet, one is not looked for", () => {
     paidThrough("2026-08-06");
     readThrough("2026-09-05");
     const line = incomeCard(bundle.db, TODAY)!.pay[0]!;

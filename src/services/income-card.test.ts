@@ -253,7 +253,7 @@ describe("incomeCard", () => {
     });
   });
 
-  describe("the difference says never reached a bank only of paydays the ledger has read", () => {
+  describe("the difference says never reached an account the ledger reads only of paydays the ledger has read", () => {
     test("a difference wholly on read paydays keeps the plain label", () => {
       addSeries();
       addTxn(PAY_START, 100_000);
@@ -325,7 +325,7 @@ describe("incomeCard", () => {
       expect(line.verdict).toContain("1 payday has passed since the last deposit on Aug 13.");
     });
 
-    test("an unchecked landing account cannot say any of it never reached a bank", () => {
+    test("an unchecked landing account cannot say any of it never reached an account the ledger reads", () => {
       addSeries();
       addTxn(PAY_START, 100_000);
       // no daily_balances at all for CHASE
@@ -571,6 +571,25 @@ describe("incomeCard", () => {
     expect(card.pay[0]!.paydaysLabel).toBe("1 payday, Aug 20");
   });
 
+  /*
+   * ⛔ A span is dated at both ends or neither: inside today's year in the card's day ("Jun 4 – Aug 20"), and where an
+   * end is not, in the house range form (`dayWindowLabel`), each year said once. 🔴 Review of ffb1b2d3 (LOW): read Jan
+   * 8, 2027, the card spelled each end against today and said "19 paydays, Sep 3, 2026 – Jan 7" — a range dated at
+   * one end; his ledger copy read that day says "28 paydays, Jul 2, 2026 – Jan 7".
+   */
+  test("a span across a year names both years, and one in a past year names it once", () => {
+    addSeries({ nextExpectedOn: "2026-09-03" });
+    addTxn("2026-09-03", 100_000);
+    coverThrough(CHASE, "2026-09-01", "2027-01-08");
+
+    const across = incomeCard(bundle.db, "2027-01-08")!.pay[0]!;
+    expect(across.paydaysLabel).toBe(`${across.paydays} paydays, Sep 3, 2026 – Jan 7, 2027`);
+    // read on the last day of 2026, every payday lies inside today's year: no year at all
+    expect(incomeCard(bundle.db, "2026-12-31")!.pay[0]!.paydaysLabel).toBe("17 paydays, Sep 3 – Dec 24");
+    // …and read the next Wednesday, every one of them a year back: the year once, at the end
+    expect(incomeCard(bundle.db, "2027-01-06")!.pay[0]!.paydaysLabel).toBe("18 paydays, Sep 3 – Dec 31, 2026");
+  });
+
   /**
    * ⛔ NEGATIVE ZERO. `-0` formats as "-$0.00" while every total stays correct,
    * because `-0 + 0 === 0` — it is invisible to arithmetic and visible only on
@@ -605,6 +624,45 @@ describe("incomeCard", () => {
     expect(card.totals.gapMagnitudeCents).toBeGreaterThan(0);
     expect(card.totals.gapLabel).toBe("more than this window implies you earned");
     expect(card.summary).toContain("more than the confirmed schedule implies");
+  });
+
+  /*
+   * ⚖️ The subtotal of two schedules says one zero in the headline's scope: nothing banked is an absence, said of the
+   * accounts the ledger reads (`bankedLabel`) — what did reach one "reached a bank", the ledger read it there (Default
+   * A, 2026-10-30). 🔴 Review of ffb1b2d3 (LOW): two confirmed weekly schedules, nothing banked in the window, read Jan
+   * 20, 2027: "Nothing has reached an account the ledger reads, against $34,800.00 …" over "Reached a bank $0.00 of
+   * $34,800.00 implied". Latent on his ledger copy 2026-11-05: one pay line, so no subtotal.
+   */
+  describe("two schedules: the subtotal says what reached a bank, and of nothing, where the ledger looked", () => {
+    const TUTORING = "series-tutoring";
+    const cardText = (): string =>
+      renderToStaticMarkup(createElement(IncomeCard, { data: incomeCard(bundle.db, TODAY)! }))
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ");
+
+    beforeEach(() => {
+      addSeries();
+      addSeries({ id: TUTORING, name: "Tutoring (weekly pay)" });
+      coverThrough(CHASE, "2026-01-01", TODAY);
+    });
+
+    test("nothing banked in the window: 'Reached an account the ledger reads $0.00', under the headline's words", () => {
+      // each schedule's last deposit before the window opens (Feb 1)
+      addTxn("2026-01-08", 100_000);
+      addTxn("2026-01-09", 100_000, { seriesId: TUTORING });
+      const card = incomeCard(bundle.db, TODAY)!;
+      expect(card.pay).toHaveLength(2);
+      expect(card.summary).toMatch(/^Nothing has reached an account the ledger reads, against /);
+      expect(cardText()).toContain("Reached an account the ledger reads $0.00 of ");
+      expect(cardText()).not.toContain("Reached a bank");
+    });
+
+    test("something banked: 'Reached a bank', as the headline says it", () => {
+      addTxn(PAY_START, 100_000);
+      addTxn(PAY_START, 100_000, { seriesId: TUTORING });
+      expect(incomeCard(bundle.db, TODAY)!.summary).toContain("reached a bank");
+      expect(cardText()).toContain("Reached a bank $2,000.00 of ");
+    });
   });
 
   /**

@@ -22,7 +22,7 @@ import {
 } from "@/lib/cash-flow-cumulative";
 import { UNREACHED_PHRASE, type UnreachedKind } from "@/lib/empty-period";
 import { formatCents, formatCentsSigned } from "@/lib/money";
-import { calendarWindowLabel } from "@/lib/period";
+import { windowLabelOn } from "@/lib/period";
 import { noIncomeDayCheckedIn, type NamedWindow } from "@/lib/unbanked-income";
 import type { CashFlow, SpendingProjection } from "@/services/spending";
 
@@ -49,6 +49,8 @@ function formatTick(cents: number): string {
 interface CashFlowGraphProps {
   data: CashFlow;
   projection?: SpendingProjection | null;
+  /** the page's own label for its window (`ResolvedPeriod.label`) — what its title and Income card call these days */
+  periodLabel: string;
 }
 
 /**
@@ -70,7 +72,8 @@ interface CashFlowGraphProps {
  * $0.00 · Spent $1,603.00 · Net −$1,603.00", Wells Fargo checked through Sep 24.
  * ⚖️ …of the days it sums (`incomeUnread`, `runningIncomeUnreadDays`), "not one day of Sep 26 – Oct 31, 2026 has been
  * checked …", never of its axis label (2026-10-29). 🔴 His ledger copy 2026-10-29: "not one day through Sep 26–30 …".
- * ⚖️ …named as the caption names them (`namedDays`): a whole month "October 2026", never "Oct 1 – 31, 2026".
+ * ⚖️ …named as the caption names them (`namedDays`): a whole month "October 2026", never "Oct 1 – 31, 2026" — and the
+ * page's own window by the page's own label.
  */
 export function RunningTotalTooltip({
   point: row,
@@ -78,6 +81,7 @@ export function RunningTotalTooltip({
   incomeUnread,
   hasRefunds,
   priorLabel,
+  page,
 }: {
   point: CashCumulativePoint;
   unreached: UnreachedKind | null;
@@ -85,6 +89,8 @@ export function RunningTotalTooltip({
   incomeUnread: { from: string; to: string } | null;
   hasRefunds: boolean;
   priorLabel: string | null;
+  /** the page's window and its label (`namedDays`) */
+  page: NamedWindow;
 }) {
   const dash = <span className="text-ink-faint">—</span>;
   const unread = incomeUnread !== null;
@@ -118,7 +124,7 @@ export function RunningTotalTooltip({
           </div>
           {unread && (
             <div className="mt-1 text-ink-muted first-letter:uppercase">
-              {noIncomeDayCheckedIn(namedDays(incomeUnread))}
+              {noIncomeDayCheckedIn(namedDays(incomeUnread, page))}
             </div>
           )}
         </>
@@ -135,11 +141,12 @@ export function RunningTotalTooltip({
 
 /**
  * The days a running Income sums where nobody has looked, as a §6A 68 sentence names them (`noIncomeDayCheckedIn`): a
- * calendar month, quarter or year by its name, any other window by its two ends (`calendarWindowLabel`). ⛔ One naming
- * for the hover and the caption, so the two cannot name one run apart.
+ * calendar month, quarter or year by its name, any other window by its two ends (`calendarWindowLabel`) — and the
+ * page's own window by the page's label (`windowLabelOn`), as its title and Income card name it. ⛔ One naming for the
+ * hover and the caption, so the two cannot name one run apart.
  */
-function namedDays(days: { from: string; to: string }): NamedWindow {
-  return { ...days, label: calendarWindowLabel(days.from, days.to) };
+function namedDays(days: { from: string; to: string }, page: NamedWindow): NamedWindow {
+  return { ...days, label: windowLabelOn(page, days.from, days.to) };
 }
 
 /** recharts' own dot radius — the size it gives a series of a single point */
@@ -164,7 +171,7 @@ export function lonePointDot(values: readonly (number | null)[], color: string):
   };
 }
 
-export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
+export function CashFlowGraph({ data, projection, periodLabel }: CashFlowGraphProps) {
   const { buckets } = data;
   const priorLabel = projection?.prior?.label ?? null;
 
@@ -188,6 +195,8 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
   const incomeUnread = runningIncomeUnreadDays(buckets);
   // …and the whole run's days, the last point's: what the caption says the lines leave undrawn
   const unreadRun = [...incomeUnread.values()].at(-1) ?? null;
+  // the page's own window — the buckets tile it exactly (`subBuckets`) — under the page's own label (`namedDays`)
+  const page: NamedWindow = { from: buckets[0]!.from, to: buckets.at(-1)!.to, label: periodLabel };
 
   return (
     <figure className="m-0" aria-label="Running totals for the period — cumulative income, spending, and net">
@@ -232,6 +241,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
                     incomeUnread={incomeUnread.get(row.key) ?? null}
                     hasRefunds={hasRefunds}
                     priorLabel={priorLabel}
+                    page={page}
                   />
                 );
               }}
@@ -305,7 +315,7 @@ export function CashFlowGraph({ data, projection }: CashFlowGraphProps) {
             Income card saying "Sep 25, 2026 has not been checked …" — the chart lens's caption went through the rule. */}
         {unreadRun !== null && (
           <span className="basis-full text-ink-faint">
-            Income and Net are not drawn while {noIncomeDayCheckedIn(namedDays(unreadRun))}.
+            Income and Net are not drawn while {noIncomeDayCheckedIn(namedDays(unreadRun, page))}.
           </span>
         )}
       </figcaption>

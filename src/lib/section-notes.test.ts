@@ -1164,7 +1164,7 @@ describe("cashEarningsSectionNotes", () => {
     const [note] = notes({ ...checked, periodsSinceBanked: 14 });
     expect(note!.body).toContain("none of it reached an account the ledger reads.");
     expect(note!.body).toContain("14 expected paydays have passed");
-    expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
+    expect(note!.body).toContain("9 of them fall on days already checked, through 2026-08-12");
   });
 
   /*
@@ -1185,7 +1185,7 @@ describe("cashEarningsSectionNotes", () => {
 
   test("…of one payday, its deposit", () => {
     const [note] = notes({ ...checked, periodsSinceBanked: 10 });
-    expect(note!.body).toContain("9 of them fall on days the records cover, through 2026-08-12");
+    expect(note!.body).toContain("9 of them fall on days already checked, through 2026-08-12");
     expect(note!.body).toContain(", or the ledger has not looked for its deposit. ");
   });
 
@@ -1492,10 +1492,10 @@ describe("cashEarningsSectionNotes", () => {
       );
     });
 
-    test("several, before the part the records cover", () => {
+    test("several, before the paydays already checked", () => {
       expect(notes({ ...checked, silencePaidEarly: ["2026-06-11", "2026-06-18"] })[0]!.body).toContain(
         "11 expected paydays have passed since the last deposit on 2026-06-05 (not counting Jun 11 and Jun 18, which " +
-          "were paid early), and 9 of them fall on days the records cover, through 2026-08-12 — ",
+          "were paid early), and 9 of them fall on days already checked, through 2026-08-12 — ",
       );
     });
 
@@ -1560,7 +1560,7 @@ describe("cashEarningsSectionNotes", () => {
     test("the silence's rows, named in a window whose claim names none of them", () => {
       expect(body({ ...checked, unattachedPaydays: [match("2026-08-06"), match("2026-08-13")] })).toContain(
         `and none of it reached ${ACCOUNT_READ}. Across the whole schedule, 11 expected paydays have passed since the ` +
-          "last deposit on 2026-06-05, and 9 of them fall on days the records cover, through 2026-08-12 — that money " +
+          "last deposit on 2026-06-05, and 9 of them fall on days already checked, through 2026-08-12 — that money " +
           "sits in rows of $1,046.00 on Aug 6 and Aug 13 that are not attached to it, was held as cash, spent as cash, ",
       );
     });
@@ -1753,7 +1753,7 @@ describe("cashEarningsSectionNotes", () => {
         shortfall: { ...AUGUST, ...over },
       });
 
-    test("August: the payday a later deposit paid is named with that deposit, the rest never reached a bank", () => {
+    test("August: the payday a later deposit paid is named with that deposit, the rest never reached one it reads", () => {
       const out = august();
       expect(out).toHaveLength(1);
       expect(out[0]!.id).toBe("cash-earnings-shortfall-It America LLC (weekly pay)");
@@ -1855,6 +1855,16 @@ describe("cashEarningsSectionNotes", () => {
         ": $1,047.00 (Aug 6) was paid early, by the deposit of 2026-07-30, $2,188.92 (Aug 20 and Aug 27) was paid by " +
           "the deposit of 2026-09-24, and $1,047.00 never reached an account the ledger reads.",
       );
+    });
+
+    // ⛔ …each year said once (`formatDaysYearOnce`), as every list of days a pay sentence names (review of ffb1b2d3)
+    test("paydays a deposit after the window paid, in a year not its last read payday's, say that year once", () => {
+      const [note] = august({
+        firstReadOn: "2026-12-24",
+        lastReadOn: "2027-01-07",
+        paidOutside: [{ depositOn: "2027-01-12", paydays: ["2026-12-24", "2026-12-31"], cents: 200_000, early: false }],
+      });
+      expect(note!.body).toContain("$2,000.00 (Dec 24 and Dec 31, 2026) was paid by the deposit of 2027-01-12");
     });
 
     test("every read payday paid, some from outside the window: no 'never'", () => {

@@ -177,6 +177,28 @@ export function unreadWaitsOnDaysToPost(split: ArrearsSplit): boolean {
 export type ArrearsPronoun = "it" | "them";
 
 /**
+ * What rows matched to a sum of due payments are "not attached to": the bill of one payment, "it" — the bills of
+ * several, "them" — counted as /budgets counts its bills, by payment (`overdueBillsOf`). ⛔ Rows are attached to bills,
+ * never to money: a sentence whose own pronoun is the money — the runway's "A further $X came due … and no statement
+ * has covered it yet", a budget row's "$X expected by now …" and its Deactivate dialog — keeps that for its unread
+ * words and says its rows in this (`arrearsTail`'s `rowsPronoun`). 🔴 Review of ffb1b2d3 (LOW): with Breezeline's
+ * −$50.00 due Oct 8 and its row on Oct 10 beside the lease's Oct 15 row, read Oct 29, the runway read "…rows of $50.00
+ * on Oct 10 and $695.04 on Oct 15 that are not attached to it", while /budgets' page note said "them" of the same rows.
+ */
+export function billsPronoun(payments: number): ArrearsPronoun {
+  return payments === 1 ? "it" : "them";
+}
+
+/**
+ * How many bills a budget's arrears are: occurrences, not series — a quarterly bill can be twice overdue — so the count
+ * and the money it describes are summed from the same payments. /budgets' page note counts its bills by it
+ * (`budgetNoteRow`), and a row names its rows' bills by it (`billsPronoun`).
+ */
+export function overdueBillsOf(overdue: readonly { occurrenceCount: number }[]): number {
+  return overdue.reduce((n, o) => n + o.occurrenceCount, 0);
+}
+
+/**
  * `DAYS_TO_POST_NOT_OVER` of one bill ("it"); of several ("them"), "the days their payments have to post are not over
  * yet" — as "no statement has covered them yet" is said of them. 🔴 /budgets' page note said the one-bill words of
  * several: "3 bills totalling $2,336.21 due by today and the days a payment has to post are not over yet" (review of
@@ -188,10 +210,15 @@ function daysToPostNotOver(pronoun: ArrearsPronoun): string {
 
 /**
  * A mixed split in the runway's voice: "$R <notPosted>, and no statement has covered the other $U yet" — or, when it
- * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet".
+ * waits on no statement, "…, and the days a payment has to post for the other $U are not over yet". `rowsPronoun` is
+ * what the rows of its read half are not attached to (`billsPronoun`).
  */
-export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords, pronoun: ArrearsPronoun = "it"): string {
-  const read = readHalfWords(split, notPosted, true, pronoun);
+export function splitClause(
+  split: ArrearsSplit,
+  notPosted: NotPostedWords,
+  rowsPronoun: ArrearsPronoun = "it",
+): string {
+  const read = readHalfWords(split, notPosted, true, rowsPronoun);
   const unread = formatCents(split.unreadCents);
   if (unreadWaitsOnDaysToPost(split)) {
     return `${read}, and the days a payment has to post for the other ${unread} are not over yet`;
@@ -204,19 +231,23 @@ export function splitClause(split: ArrearsSplit, notPosted: NotPostedWords, pron
  * of it has — "the days a payment has to post are not over yet" when it waits on no statement — and both halves by
  * amount for a mix: the words after "Oct 1 —" in the Next column and after "Already due this month," in the End dialog
  * (`seriesEndLines`) and after "Due this period by today," in /budgets' (`budgetDeactivateLines`).
+ *
+ * `pronoun` is what the unread words are said of — the sentence's own subject — and `rowsPronoun` what the rows of the
+ * read half are not attached to: the bills the sum is of (`billsPronoun`), the sentence's subject by default.
  */
 export function arrearsClause(
   reading: ArrearsReading,
   notPosted: NotPostedWords,
   pronoun: ArrearsPronoun = "it",
+  rowsPronoun: ArrearsPronoun = pronoun,
 ): string {
   const split = arrearsSplit(reading);
-  if (split.kind === "read") return readHalfWords(split, notPosted, false, pronoun);
+  if (split.kind === "read") return readHalfWords(split, notPosted, false, rowsPronoun);
   if (split.kind === "unread") {
     if (unreadWaitsOnDaysToPost(split)) return daysToPostNotOver(pronoun);
     return noStatementHasCovered(pronoun);
   }
-  return splitClause(split, notPosted, pronoun);
+  return splitClause(split, notPosted, rowsPronoun);
 }
 
 /**
@@ -229,8 +260,9 @@ export function arrearsTail(
   reading: ArrearsReading,
   notPosted: NotPostedWords,
   pronoun: ArrearsPronoun = "it",
+  rowsPronoun: ArrearsPronoun = pronoun,
 ): string {
-  const clause = arrearsClause(reading, notPosted, pronoun);
+  const clause = arrearsClause(reading, notPosted, pronoun, rowsPronoun);
   return arrearsSplit(reading).kind === "mixed" ? `: ${clause}` : ` and ${clause}`;
 }
 

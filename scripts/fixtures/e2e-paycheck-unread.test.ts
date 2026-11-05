@@ -232,6 +232,17 @@ describe("the e2e fixture's Jul 3 payday, after Chase Total Checking's Jun 30 �
         "the ledger reads, through Tue, Jun 30, 2026; the other payday falls after that, the last day every account " +
         "that pay lands in has been checked through.",
     );
+    // ⛔ …and the silence both notes close on, in the verdict's words for its three checked paydays (review of
+    // ffb1b2d3: "…, and 3 of them fall on days the records cover, through Tue, Jun 30, 2026 — …")
+    for (const [from, to] of [
+      ["2026-07-01", "2026-07-31"],
+      ["2026-01-01", "2026-12-31"],
+    ] as const) {
+      expect(note(from, to)).toContain(
+        "Across the whole schedule, 4 expected paydays have passed since the last deposit on Fri, May 8, 2026, and 3 " +
+          "of them fall on days already checked, through Tue, Jun 30, 2026 — ",
+      );
+    }
   });
 
   /*

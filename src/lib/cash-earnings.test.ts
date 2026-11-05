@@ -568,7 +568,7 @@ describe("cashEarnings — the invariant", () => {
  * $20,557.44, $7,156.60 banked (the Jun 5 $400.00 that paid no payday among it), $2,283.84 of it past the checked day.
  */
 describe("payGap", () => {
-  test("his ledger: $11,117.00 of it never reached a bank, the other $2,283.84 not looked for", () => {
+  test("his ledger: $11,117.00 of it never reached an account, the other $2,283.84 not looked for", () => {
     expect(payGap(2_055_744, 715_660, 228_384)).toEqual({
       gapCents: 1_340_084,
       unreadGapCents: 228_384,
@@ -600,7 +600,7 @@ describe("payGap", () => {
  * land, "never reached a bank" for the rest (review of 878c3d5).
  */
 describe("unbankedSplit", () => {
-  test("the paydays inside their days to land are not banked yet; the rest never reached a bank", () => {
+  test("the paydays inside their days to land are not banked yet; the rest never reached an account", () => {
     expect(unbankedSplit(260_000 + 100_000, 100_000)).toEqual({ notBankedYetCents: 100_000, neverCents: 260_000 });
   });
 

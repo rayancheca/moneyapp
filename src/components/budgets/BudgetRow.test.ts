@@ -1015,6 +1015,31 @@ describe("BudgetRow — the arrears line says the runway's split, in its tone", 
       / \$2,285\.70 was expected by now and the days a payment has to post are not over yet\.$/,
     );
   });
+
+  /*
+   * ⛔ The rows of several bills' due days are "not attached to them" — on the line, in the spoken row and in the
+   * Deactivate dialog alike — counted as /budgets' page note counts its bills, by payment (`overdueBillsOf`); the
+   * line's own pronoun stays the money's. 🔴 Review of ffb1b2d3 (LOW): the row said two bills' rows "are not attached
+   * to it" while the page note above it said "them" of the same rows.
+   */
+  test("rows matched to several due days are not attached to them, on the line, aloud and in the dialog", () => {
+    // weekly from Aug 1 and read through Aug 5: Aug 1 read, Aug 8 not — then both read, each matched by a row
+    const status = housingWithBill({ cents: 5_000, readThrough: "2026-08-05", weekly: true });
+    const rowOf = (day: string) => ({ date: day, row: { id: `r-${day}`, postedOn: day, amountCents: -5_000 } });
+    const matched = {
+      ...status,
+      overdueUnreadCents: 0,
+      overdueInGraceCents: 0,
+      overdueUnattached: [rowOf("2026-08-01"), rowOf("2026-08-08")],
+    };
+    expect(matched.overdue.reduce((n, o) => n + o.occurrenceCount, 0)).toBe(2);
+    const html = render(matched);
+    const rows = "rows of $50.00 on Aug 1 and Aug 8 that are not attached to them";
+    expect(arrearsLine(html).text).toBe(`$100.00 expected by now and matched to the cent by ${rows} · Rent Aug 1`);
+    expect(spoken(html).endsWith(` $100.00 was expected by now and is matched to the cent by ${rows}.`)).toBe(true);
+    expect(html).toContain(`Due this period by today, matched to the cent by ${rows}`);
+    expect(html).not.toContain("not attached to it");
+  });
 });
 
 /**

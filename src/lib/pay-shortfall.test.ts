@@ -928,7 +928,7 @@ describe("payShortfall — a read payday still inside its days to land is not ba
     expect(year(CHECKED)).toMatchObject({ notBankedYetCents: 0, notBankedYetPaydays: [], neverBankedCents: 1_111_700 });
   });
 
-  test("checked through Fri Oct 2: Oct 1 is not banked yet, and what never reached a bank does not move", () => {
+  test("checked through Fri Oct 2: Oct 1 is not banked yet, and what never reached an account does not move", () => {
     expect(year("2026-10-02")).toMatchObject({
       notBankedYetCents: PAYROLL,
       notBankedYetPaydays: ["2026-10-01"],
@@ -937,7 +937,7 @@ describe("payShortfall — a read payday still inside its days to land is not ba
   });
 
   // ⛔ A date window has two ends: Sat Oct 3 still waits, Sun Oct 4 — three days on — is the last day to land
-  test("Sat Oct 3 still waits; checked through Sun Oct 4, Oct 1 never reached a bank", () => {
+  test("Sat Oct 3 still waits; checked through Sun Oct 4, Oct 1 never reached an account the ledger reads", () => {
     expect(year("2026-10-03")).toMatchObject({ notBankedYetCents: PAYROLL, neverBankedCents: 1_111_700 });
     expect(year("2026-10-04")).toMatchObject({
       notBankedYetCents: 0,
