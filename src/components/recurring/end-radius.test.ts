@@ -19,7 +19,7 @@ const base: SeriesEndInput = {
   overdueOn: null,
   overdueCount: 0,
   nextChargeOn: "2026-10-01",
-  oneChargeOn: null,
+  oneCharge: false,
   endsOn: null,
   linkedCount: 4,
 };
@@ -111,7 +111,7 @@ describe("seriesEndLines", () => {
 
   // ⚖️ §6A 56: one charge leaves as that charge, never "/ yr" — worded by what it posts, as every line here is
   test("a schedule of one charge leaves the forecast as its one charge — or its one deposit", () => {
-    const once: SeriesEndInput = { ...base, annualized: { cents: 7_274, once: true }, oneChargeOn: "2026-11-11" };
+    const once: SeriesEndInput = { ...base, annualized: { cents: 7_274, once: true }, oneCharge: true };
     expect(value(once, "Leaving the forecast")).toBe("~$72.74, its one charge");
     expect(value({ ...once, kind: "income" }, "Leaving the forecast")).toBe("~$72.74, its one deposit");
     const year: SeriesEndInput = { ...base, annualized: { cents: 7_274, once: false } };
@@ -123,7 +123,7 @@ describe("seriesEndLines", () => {
    * form off `oneChargeOn` alone while the slot also asks for the charge's amount (review of 89f235d).
    * ⚠️ A PIN, NOT A REPRODUCED DEFECT: no real page reaches the first case — `annualizedCentsOf` returns no figure
    * without an amount, and the page's amount is the same effective one (`toProjectable`), so the two gates agreed on
-   * every ledger (review of d54c28e). It keeps them from drifting, nothing more. `upcomingValue`'s `oneChargeOn` gate
+   * every ledger (review of d54c28e). It keeps them from drifting, nothing more. `upcomingValue`'s `oneCharge` gate
    * splits from it only on the same unreachable input.
    */
   test("the line takes its form from the page's own figure, never a second gate", () => {
@@ -401,14 +401,44 @@ describe("seriesEndLines — worded by kind", () => {
    */
   test("a schedule of one charge: 'once on Nov 11, 2026', never a span from a day to itself", () => {
     const day = "2026-11-11";
-    const once: SeriesEndInput = { ...base, nextChargeOn: day, endsOn: day, oneChargeOn: day };
+    const once: SeriesEndInput = { ...base, nextChargeOn: day, endsOn: day, oneCharge: true };
     expect(value(once, "Upcoming charges off the calendar")).toBe("once on Nov 11, 2026");
     expect(value({ ...once, kind: "income" }, "Upcoming deposits off the calendar")).toBe("once on Nov 11, 2026");
     // past its one day nothing is scheduled, as of any series
     expect(value({ ...once, nextChargeOn: null }, "Upcoming charges off the calendar")).toBe("none scheduled");
-    expect(value({ ...once, oneChargeOn: null }, "Upcoming charges off the calendar")).toBe(
+    expect(value({ ...once, oneCharge: false }, "Upcoming charges off the calendar")).toBe(
       "every charge from Nov 11, 2026 to Nov 11, 2026",
     );
+  });
+
+  /*
+   * ⚖️ (B) …on the day its list names it on, the day it falls due — billed inside another, its carrier's later day —
+   * never its own (`SeriesEndInput.oneCharge`). 🔴 Review of 78d64f6a (L77's what-if): the utilities as one charge on
+   * Nov 1, due with the rent's Nov 16 — "once on Nov 1, 2026" beside "Next expected Nov 16, 2026" (his ledger copy
+   * 2026-11-05).
+   */
+  test("a carried one charge is upcoming on the day it falls due, its list's — never its own day", () => {
+    const page = {
+      kind: "bill" as const,
+      status: "confirmed" as const,
+      annualizedCents: 18_221,
+      nextExpectedAmountCents: -18_221,
+      overdue: null,
+      nextExpected: [{ date: "2026-11-16", ownDate: "2026-11-01" }] as never[],
+      oneChargeOn: "2026-11-01",
+      endsOn: "2026-11-01",
+      lastFallsDueOn: "2026-11-16",
+      linkedTxns: [] as never[],
+    };
+    expect(value(seriesEndInput(page), "Upcoming charges off the calendar")).toBe("once on Nov 16, 2026");
+    // billed on its own, its day is its own — as it read
+    const own = { ...page, nextExpected: [{ date: "2026-11-11", ownDate: "2026-11-11" }] as never[] };
+    expect(value(seriesEndInput({ ...own, oneChargeOn: "2026-11-11" }), "Upcoming charges off the calendar")).toBe(
+      "once on Nov 11, 2026",
+    );
+    // ⛔ …and its day is the charge's, never where its schedule stops: one charge with its end past its day
+    const endsLater = { ...own, oneChargeOn: "2026-11-11", endsOn: "2026-12-05", lastFallsDueOn: null };
+    expect(value(seriesEndInput(endsLater), "Upcoming charges off the calendar")).toBe("once on Nov 11, 2026");
   });
 
   test("Nothing is deleted — the deposits of his pay stay in the ledger, the charges of a bill", () => {

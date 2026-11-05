@@ -11,7 +11,7 @@ import {
   type ArrearsReading,
 } from "@/lib/arrears-reading";
 import { addCalendarMonths, compareDates, diffDays, isoWeekday } from "@/lib/dates";
-import { endsInsideHorizon } from "@/lib/committed";
+import { endsInsideHorizon, seriesStopsOn, type SeriesEndDays } from "@/lib/committed";
 import { dayWindowLabel } from "@/lib/period";
 import { wholeToleranceDays } from "@/lib/recurring-step";
 import { formatCents } from "@/lib/money";
@@ -993,27 +993,6 @@ function annualizedEnd(endsOn: string | null, today: string): string | null {
   // stopped already: no year ahead of it, so no figure under which to say so (above)
   if (compareDates(endsOn, today) < 0) return null;
   return endsInsideHorizon(endsOn, addCalendarMonths(today, MONTHS_IN_YEAR)) ? endsOn : null;
-}
-
-/** What every reader of a series' end reads of it: the end he typed, and the later day its last charge falls due on. */
-export interface SeriesEndDays {
-  endsOn: string | null;
-  /** ⚖️ (B) billed inside another, the day its last charge inside the end falls due on when after it, else null */
-  lastFallsDueOn: string | null;
-}
-
-/**
- * ⚖️ (B) The day a series STOPS, as every reader dates its days — by the day each falls due (`SeriesOccurrence.date`):
- * its end, or, billed inside another on its carrier's step, the later day its last charge inside that end falls due on
- * (`lastFallsDueOn`), the day its list names that charge by. ONE day for every reader that names it: the end badge
- * (`seriesEndBadge`), the Annualized qualifier and the All tab's short form (`annualizedCaveat`, `annualizedEndNote`)
- * and the End dialog's span (`seriesEndInput`). 🔴 Each read its own (review of 99bd525a): the rent typed Nov 16 and
- * paid Nov 16, the utilities' end typed Dec 10 — on Dec 5 their page read "Ends Dec 10, 2026" and "this one stops on
- * Dec 10, 2026" above "Next expected Dec 16, 2026" and an End dialog "every charge from Dec 16, 2026 to Dec 16, 2026"
- * (his ledger copy 2026-11-04, the same what-if).
- */
-export function seriesStopsOn<End extends string | null>(s: SeriesEndDays & { endsOn: End }): string | End {
-  return s.lastFallsDueOn ?? s.endsOn;
 }
 
 /**

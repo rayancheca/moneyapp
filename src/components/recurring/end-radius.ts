@@ -2,6 +2,7 @@ import type { BlastRadiusLine } from "@/components/ui/blast-radius";
 import type { UnattachedMatch } from "@/lib/unattached-match";
 import type { SeriesKind } from "@/db/schema/recurring";
 import { arrearsClause, NOT_POSTED } from "@/lib/arrears-reading";
+import { seriesStopsOn } from "@/lib/committed";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import {
   seriesDrawsAsRecurring,
@@ -10,7 +11,7 @@ import {
   type SeriesStatusForCopy,
 } from "@/lib/series-evidence";
 import type { SeriesDetail } from "@/services/recurring-detail";
-import { annualizedFigure, longDate, seriesStopsOn } from "./labels";
+import { annualizedFigure, longDate } from "./labels";
 
 /**
  * What ending a series actually costs — the lines under "End this series".
@@ -85,11 +86,18 @@ export interface SeriesEndInput {
   /** the next occurrence's day, or null when nothing more is projected */
   nextChargeOn: string | null;
   /**
-   * The day of its ONE charge when its whole schedule holds one (`SeriesDetail.oneChargeOn`), else null. ⚖️ §6A 56
-   * (2026-10-08): it is upcoming "once on Nov 11, 2026", as its page's "charges once on Nov 11" — 🔴 not "every charge
-   * from Nov 11, 2026 to Nov 11, 2026" (review of 7a3c702, the balance's dialog on his ledger copy 2026-10-13).
+   * Its whole schedule holds ONE charge (`SeriesDetail.oneChargeOn`). ⚖️ §6A 56 (2026-10-08): it is upcoming "once on
+   * Nov 11, 2026", as its page's "charges once on Nov 11" — 🔴 not "every charge from Nov 11, 2026 to Nov 11, 2026"
+   * (review of 7a3c702, the balance's dialog on his ledger copy 2026-10-13).
+   *
+   * ⚖️ (B) …on the day its list names it on (`nextChargeOn`), the day it FALLS DUE and comes off the calendar — billed
+   * inside another, the carrier's later day, the day its badge says it stops on; never its own, which only its page's
+   * sentence names, with that day beside it. A flag, so no caller can hand the dialog its own day. 🔴 Review of
+   * 78d64f6a (L77's what-if): the utilities as one charge on Nov 1, the rent retyped Nov 16 — Oct 30 to Nov 16 the
+   * dialog read "Upcoming charges off the calendar: once on Nov 1, 2026" beside "Ends Nov 16, 2026" and "Next expected
+   * Nov 16, 2026", and from Nov 2 a day gone by the calendar holds nothing on (his ledger copy 2026-11-05).
    */
-  oneChargeOn: string | null;
+  oneCharge: boolean;
   /**
    * Where its span runs to: the last day the series can occur — or, billed inside another, the later day its last
    * charge inside that end falls due on (`SeriesDetail.lastFallsDueOn`); null = open-ended. ⚖️ (B) Its first day is the
@@ -140,7 +148,7 @@ export function seriesEndInput(
     overdueOn: data.overdue?.date ?? null,
     overdueCount: data.overdue?.occurrenceCount ?? 0,
     nextChargeOn: data.nextExpected[0]?.date ?? null,
-    oneChargeOn: data.oneChargeOn,
+    oneCharge: data.oneChargeOn !== null,
     // the day it stops as its list dates it — its badge's and its Annualized qualifier's (`seriesStopsOn`)
     endsOn: seriesStopsOn(data),
     linkedCount: data.linkedTxns.length,
@@ -220,10 +228,13 @@ export function seriesEndReassurance(kind: SeriesKind): string {
   );
 }
 
-/** The upcoming clause — a span, never a count off a capped preview; a schedule of one charge, its day (§6A 56). */
+/**
+ * The upcoming clause — a span, never a count off a capped preview; a schedule of one charge, its day (§6A 56): the day
+ * its list names, as the span's first is (`SeriesEndInput.oneCharge`).
+ */
 function upcomingValue(input: SeriesEndInput): string {
   if (input.nextChargeOn === null) return "none scheduled";
-  if (input.oneChargeOn !== null) return `${ONE_CHARGE_WORD} on ${longDate(input.oneChargeOn)}`;
+  if (input.oneCharge) return `${ONE_CHARGE_WORD} on ${longDate(input.nextChargeOn)}`;
   const every = `every ${seriesPostingWords(input.kind).posting} from ${longDate(input.nextChargeOn)}`;
   return input.endsOn === null ? `${every} on` : `${every} to ${longDate(input.endsOn)}`;
 }

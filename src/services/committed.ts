@@ -7,6 +7,7 @@ import {
   heaviestMonth,
   heaviestMonthEnding,
   monthHorizon,
+  seriesStopsOn,
   spendArithmeticCaption,
   withinMonthHorizon,
   type CommittedOccurrence,
@@ -38,7 +39,7 @@ import { incomeExpectation } from "./budgets";
 import { CAR_LEASE_TERM_MONTHS, isUpfrontCarRow, readUpfrontCarRule, upfrontCarRule } from "./car-upfront";
 import { silenceMeasuredThroughBySeries } from "./cash-earnings";
 import { averagedMonths } from "./read-in-full";
-import { oneChargeDays, scheduledOccurrences, seriesStaleness } from "./recurring";
+import { oneChargeDays, scheduledOccurrences, seriesEndDays, seriesStaleness } from "./recurring";
 import { seriesIdsNotDrawnAsRecurring } from "./recurring-link";
 import { cashFlowByPeriod } from "./spending";
 
@@ -272,33 +273,53 @@ function moneyOutSeriesIds(db: AppDatabase): Set<string> {
   return new Set(rows.filter((r) => kinds.has(r.kind) && !isAgentsSeries(agentsCash, r)).map((r) => r.id));
 }
 
-/** What a committed book reads of a series beyond its occurrences — its own end day, and whether it is one charge. */
+/** What a committed book reads of a series beyond its occurrences — the day it stops, and whether it is one charge. */
 type SeriesTerms = Pick<CommittedOccurrence, "endsOn" | "oneCharge">;
 
 /** A series the book has no row for: no end day, not one charge. */
 const NO_TERMS: SeriesTerms = { endsOn: null, oneCharge: false };
 
-/**
- * Every live series' own end day and one-charge reading, by id — read once, for every leg of both books.
- *
- * ⚖️ The one-charge reading is `oneChargeDays`, the one every cadence printer and the subscriptions card ask (§6A 56),
- * so the runway cannot level as monthly a series the card beside it files a one-off.
- */
-function termsBySeries(db: AppDatabase): Map<string, SeriesTerms> {
-  const rows = db
-    .select()
-    .from(recurringSeries)
-    .where(inArray(recurringSeries.status, ["detected", "confirmed"]))
-    .all();
-  const oneCharge = oneChargeDays(db, rows);
-  return new Map(rows.map((r) => [r.id, { endsOn: r.userEndsOn ?? null, oneCharge: oneCharge.has(r.id) }] as const));
+/** Every live series, each with the carrier it is billed with — read once for every leg of a book. */
+function liveSeriesRows(db: AppDatabase) {
+  return withBillingCarriers(
+    db,
+    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
+  );
 }
 
 /**
- * ⚠️ `endsOn` is `userEndsOn` and nothing else, because that is the only end day
- * the ledger holds — `projectOccurrences` clamps its own walk on exactly this
- * column (`recurring.ts`), so a line that says it stops inside the horizon and
- * the occurrences that stop there are reading one fact, not two that agree.
+ * Every live series' stop day and one-charge reading, by id — read once, for every leg of both books.
+ *
+ * ⚖️ The one-charge reading is `oneChargeDays`, the one every cadence printer and the subscriptions card ask (§6A 56),
+ * so the runway cannot level as monthly a series the card beside it files a one-off.
+ *
+ * ⚖️ (B) …and the stop day is the one its page names (`seriesStopsOn` of `seriesEndDays`): its end, or, billed inside
+ * another, the later day its last charge inside it falls due on — so the runway's lead sentence and the car card's
+ * name the day its badge does, and ask whether it stops inside the window of that day as its Annualized qualifier does
+ * (`endsInsideHorizon`). 🔴 It read the end he typed (review of 78d64f6a): the rent retyped Nov 16 and paid Nov 16 and
+ * Dec 16, the utilities' end typed Feb 10, 2027 — on Jan 12, Jan 20 and Feb 1 the runway read "Rent utilities & fees
+ * stops inside that window — evidenced through Feb 10, 2027" beside their page's "Ends Feb 16, 2027" (his ledger copy
+ * 2026-11-05, the same what-if). Latent on his ledger: nothing of his billed inside another has an end.
+ */
+function termsBySeries(
+  db: AppDatabase,
+  rows: ReturnType<typeof liveSeriesRows>,
+  today: string,
+): Map<string, SeriesTerms> {
+  const oneCharge = oneChargeDays(db, rows);
+  return new Map(
+    rows.map((r) => {
+      const terms: SeriesTerms = { endsOn: seriesStopsOn(seriesEndDays(r, today)), oneCharge: oneCharge.has(r.id) };
+      return [r.id, terms] as const;
+    }),
+  );
+}
+
+/**
+ * ⚠️ `endsOn` is the day the series STOPS (`termsBySeries`): `userEndsOn`, the only end day the ledger holds and the one
+ * `projectOccurrences` clamps its own walk on (`recurring.ts`) — or, billed inside another, the later day the last
+ * charge that walk holds falls due on. So a line that says it stops inside the horizon and the occurrences that stop
+ * there read one end: the walk's last day on or before it, and the day that one falls due.
  */
 function toCommitted(
   o: {
@@ -424,8 +445,10 @@ export function committedBook(
   const horizon = monthHorizon(today, months);
   const to = horizon.nominalEnd;
   const moneyOut = moneyOutSeriesIds(db);
-  // each series' end day and one-charge reading, for both legs (`termsBySeries`)
-  const terms = termsBySeries(db);
+  // every live series with its carrier, read once — its terms below, and the late leg's evidence
+  const live = liveSeriesRows(db);
+  // each series' stop day and one-charge reading, for both legs (`termsBySeries`)
+  const terms = termsBySeries(db, live, today);
 
   /*
    * ⛔ THE SCHEDULE, PAID OR NOT (`scheduledOccurrences`) — a rate, as above: a bill paid early is still one of the N.
@@ -482,14 +505,10 @@ export function committedBook(
    * contradiction of a card that reports no arrears on the same day.
    */
   const late = arrearsThisMonth(db, moneyOut, today);
-  // each with the carrier it is billed with — a late line is evidenced by its carrier's postings too (§6A 59)
-  const lateRows = withBillingCarriers(
-    db,
-    db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
-  );
-  // late only on days the ledger has checked — the forward leg's occurrences carry the same reading
+  // late only on days the ledger has checked — the forward leg's occurrences carry the same reading; each with the
+  // carrier it is billed with (`liveSeriesRows`): a late line is evidenced by its carrier's postings too (§6A 59)
   const checkedThrough = silenceMeasuredThroughBySeries(db, today);
-  const staleById = new Map(lateRows.map((s) => [s.id, seriesStaleness(s, today, checkedThrough(s.id))]));
+  const staleById = new Map(live.map((s) => [s.id, seriesStaleness(s, today, checkedThrough(s.id))]));
 
   const overdue: CommittedOccurrence[] = late.series.map((s) => ({
     seriesId: s.id,
@@ -503,7 +522,7 @@ export function committedBook(
     // `BudgetTailSeries.cadence` is the occurrence's own, from the same
     // projection walk the forward leg reads
     cadence: s.cadence as Cadence,
-    // its end day and one-charge reading — a one charge owed is still its own single payment (§6A 56)
+    // its stop day and one-charge reading — a one charge owed is still its own single payment (§6A 56)
     ...(terms.get(s.id) ?? NO_TERMS),
     // how far the ledger has read it, and what no statement keeps unread — `arrearsThisMonth` carries both, for
     // `arrearsSentence`
@@ -675,8 +694,9 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   // a twelve-month horizon opened on the 29th, 30th or 31st ran a day short of
   // twelve whole months for every car bill anchored below that day.
   const horizon = monthHorizon(today, months);
-  // ⚖️ the runway's own reading of each series (`termsBySeries`) — a one charge is one here too (§6A 56)
-  const carTerms = termsBySeries(db);
+  // ⚖️ the runway's own reading of each series (`termsBySeries`) — a one charge is one here too (§6A 56), and the day
+  // it stops is the one its page names
+  const carTerms = termsBySeries(db, liveSeriesRows(db), today);
 
   // ⛔ the schedule, paid or not (`scheduledOccurrences`): the lease paid two days early is still this month's lease
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring

@@ -13,7 +13,8 @@ import { ledgerOpens, ledgerReaches } from "./observation-frontier";
 import { strippedDescriptionKey } from "@/lib/description-key";
 import { todayIso } from "@/lib/dates";
 import { formatDayShortIn } from "@/lib/format-date";
-import { oneChargeDays } from "./recurring";
+import { withBillingCarriers } from "./billing-carriers";
+import { oneChargeDueDays } from "./recurring";
 import {
   merchantProfile,
   type MerchantProfile,
@@ -382,7 +383,8 @@ export interface MerchantIntelligence {
   /**
    * the recurring series this merchant bills HIM through, when it has one — never one on the agent's cash.
    * `oneChargeLabel` is the day of its ONE charge, spelled for a sentence ("Nov 11"), when its whole schedule holds
-   * one (`oneChargeDays`, ⚖️ §6A 56) — then it is billed once, not at its cadence.
+   * one (`oneChargeDays`, ⚖️ §6A 56) — then it is billed once, not at its cadence — on the day it falls due (⚖️ (B),
+   * `oneChargeDueDays`).
    */
   cadence: { seriesId: string; name: string; cadence: string; status: string; oneChargeLabel: string | null } | null;
 }
@@ -459,8 +461,10 @@ export function merchantIntelligence(
     )
     .all()
     .find((s) => !isAgentsSeries(agentsCash, s));
-  // ⚖️ §6A 56 — "Billed once, on Nov 11, as …" for a schedule of one charge, by the one reading every printer asks
-  const oneChargeOn = series === undefined ? undefined : oneChargeDays(db, [series]).get(series.id);
+  // ⚖️ §6A 56 — "Billed once, on Nov 11, as …" for a schedule of one charge, by the one reading every printer asks: on
+  // the day it falls due (`oneChargeDueDays`), with the carrier it is billed with
+  const oneChargeOn =
+    series === undefined ? undefined : oneChargeDueDays(db, withBillingCarriers(db, [series])).get(series.id);
 
   return {
     // `rows.length` is what the page's heading counts; `visits` is what this

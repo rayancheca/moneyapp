@@ -18,7 +18,7 @@ import { COMMITTED_KINDS, SPEND_BASELINE_MONTHS, baselineWindow } from "./commit
 import {
   effectiveSeries,
   hasStoppedForecasting,
-  oneChargeDays,
+  oneChargeDueDays,
   scheduleHasEnded,
   seriesStaleness,
   type SeriesStaleness,
@@ -160,7 +160,11 @@ export interface SubscriptionLine {
 export interface OneOffLine {
   seriesId: string;
   name: string;
-  /** the day of its one charge (`oneChargeDays`) */
+  /**
+   * the day of its one charge — ⚖️ (B) the day it FALLS DUE (`oneChargeDueDays`): billed inside another, its carrier's
+   * later day, the day Upcoming beside it lists. 🔴 "once · Nov 1" among what is still to come, of a charge due with the
+   * rent's Nov 16, from Nov 2 a day gone by (review of 78d64f6a, L77's what-if on his ledger copy 2026-11-05).
+   */
   on: string;
   /** "once · Nov 11" — `oneChargePhrase`, the words every cadence slot prints for it */
   cadenceLabel: string;
@@ -352,8 +356,9 @@ export function subscriptionsCard(
   const { fromMonth, toMonth } = window;
   const posted = postedBySeries(db, `${fromMonth}-01`, `${toMonth}-31`);
 
-  // ⚖️ §6A 56: a schedule of one charge is a one-off, never a monthly line — the rule every cadence printer asks
-  const oneCharge = oneChargeDays(db, rows);
+  // ⚖️ §6A 56: a schedule of one charge is a one-off, never a monthly line — the rule every cadence printer asks, on
+  // the day it falls due (`oneChargeDueDays`)
+  const oneCharge = oneChargeDueDays(db, rows);
 
   const live: SubscriptionLine[] = [];
   const lapsed: SubscriptionLine[] = [];
