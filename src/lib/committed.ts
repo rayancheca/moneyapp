@@ -47,7 +47,7 @@ export type CommittedOrigin = keyof typeof COMMITTED_ORIGIN_LABEL;
 export interface CommittedOccurrence {
   seriesId: string;
   name: string;
-  /** iso date */
+  /** iso date — the day it FALLS DUE (`SeriesOccurrence.date`): billed inside another, the carrier's later day */
   date: string;
   /** net-worth signed: NEGATIVE is money out, as everywhere else in the app */
   amountCents: number;
@@ -142,6 +142,8 @@ export interface CommittedLine {
    * The day of its LAST payment inside the horizon, or null when it has none there (arrears only). Of a ONE-CHARGE line
    * (§6A 56) the day of that charge, which `endsOn` need not be: a schedule is one charge with its end anywhere before
    * the step after it (`isOneCharge`) — and the car card says "charges once on <day>" of it (`heaviestMonthEnding`).
+   * ⚖️ (B) The day it FALLS DUE, as the book holds each (`CommittedOccurrence.date`): billed inside another, the
+   * carrier's later day.
    */
   lastPaymentOn: string | null;
   /**
@@ -761,6 +763,11 @@ export function heaviestMonth(occurrences: readonly CommittedOccurrence[]): Heav
  * inside the next 12 months — evidenced through Nov 11, 2026, with no renewal in the ledger" over November's $767.78
  * (copies of his ledger 2026-10-13). ⚠️ AND NOT LEFT OUT OF THE LEAD: dated by the next commitment instead, a book with a
  * one charge on a premium's Dec 11 dates December's $1,125.36 "after Jan 11, 2027" — a January that bills $1,052.62.
+ * ⚖️ (B) Its day is the one the book holds it on, the day it FALLS DUE (`SeriesOccurrence.date`): billed inside
+ * another, the carrier's later day — the subscriptions card's "once · Nov 16". 🔴 The book held its own day (review of
+ * cd58b3d1, L135): the utilities as one charge on Nov 1 filed under Car, the rent retyped Nov 16, Car insurance ended
+ * — "Rent utilities & fees charges once on Nov 1, 2026 — …" on Oct 30 and Nov 1, and nothing of it from Nov 2 (his
+ * ledger copy 2026-11-05, the same what-if).
  */
 export function heaviestMonthEnding(
   book: { lines: readonly CommittedLine[] },

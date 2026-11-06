@@ -757,7 +757,7 @@ export function seriesDetail(
     billedWith: s.billedWith,
     // its end and the later day its last charge falls due on, off its status as the All tab and the runway read them —
     // never the forecast's lapse (`seriesEndDays`, `lastFallsDueAfterItsEnd`)
-    ...seriesEndDays(s, today),
+    ...seriesEndDays(s),
     scheduleRanOutOn: scheduleRanOutOn(s, today),
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),

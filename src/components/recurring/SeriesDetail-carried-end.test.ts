@@ -265,6 +265,86 @@ describe("⛔ the runway names the day what the rent carries stops on — its pa
     }
   });
 
+  /*
+   * ⛔ …and the window it says they stop inside holds what of theirs is still to come by the day each falls due — the
+   * rent's later day (`scheduledOccurrences`), as their page lists them — so the sentence names them to the day their
+   * last charge falls due, and counts what their list holds. 🔴 Review of cd58b3d1 (L139): the window held their own
+   * days, so on Jan 12 the runway read "…so it is billed once rather than throughout, and counts $15.18 a month here"
+   * beside their page listing Jan 16 and Feb 16, and from Feb 2 to Feb 16 it named them not at all, their Feb 16
+   * $182.21 neither still to come nor owed (his ledger copy 2026-11-05, the same what-if).
+   */
+  test("⛔ ending Feb 10: billed twice on Jan 12, once Feb 2 to the rent's Feb 16 — as their page lists them", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-16",
+    );
+    endOn("2027-02-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    /** [the day the lead sentence says they are evidenced through, how often it says they are billed] — or null */
+    const leadOn = (today: string): [string, string] | null => {
+      const card = words(renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, today) })));
+      const lead = new RegExp(
+        "Rent utilities & fees stops inside that window — evidenced through ([A-Z][a-z]{2} \\d{1,2}, \\d{4}), with " +
+          "no renewal in the ledger — so it is billed (once|\\d+ times) rather than throughout",
+      );
+      const said = card.match(lead);
+      return said === null ? null : [said[1]!, said[2]!];
+    };
+    expect(leadOn("2027-01-12")).toEqual(["Feb 16, 2027", "2 times"]);
+    expect(seriesDetail(bundle.db, UTIL, "2027-01-12")!.nextExpected.map((o) => o.date)).toEqual([
+      "2027-01-16",
+      "2027-02-16",
+    ]);
+    for (const day of ["2027-02-02", "2027-02-11", "2027-02-16"]) {
+      expect(leadOn(day), day).toEqual(["Feb 16, 2027", "once"]);
+      expect(seriesDetail(bundle.db, UTIL, day)!.nextExpected.map((o) => o.date), day).toEqual(["2027-02-16"]);
+    }
+  });
+
+  /*
+   * ⛔ …and once their last charge has fallen due, the line that owes it stops on that day still — the day their badge
+   * names, "Ended Feb 16, 2027" — never back on the end he typed: ONE day for the line and the page (`seriesStopsOn` of
+   * `seriesEndDays`). 🔴 Review of cd58b3d1 (L136): the day its last charge falls due was read only while it was still
+   * to come (`lastFallsDueAfterItsEnd`), so from Feb 17 the book's line read ends 2027-02-10 beside a page reading
+   * "Ended Feb 16, 2027"; and with their end typed Dec 10, from Dec 17 2026-12-10 beside "Ended Dec 16, 2026" (his
+   * ledger copy 2026-11-05, both what-ifs). Nothing prints it: an owed line lowers no rate (`endingLead`), and the car
+   * book has no arrears.
+   */
+  test("⛔ owed once it has fallen due, the line stops on the day their badge names — 'Ended Feb 16, 2027'", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-16",
+    );
+    endOn("2027-02-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2027-02-17", "2027-02-20"]) {
+      const line = committedBook(bundle.db, day).lines.find((l) => l.seriesId === UTIL)!;
+      expect([line.endsOn, line.occurrences, line.overdueCents], day).toEqual(["2027-02-16", 0, 18_221]);
+      expect(badgeOn(day), day).toEqual(["Ended Feb 16, 2027"]);
+    }
+  });
+
+  test("⛔ …and ending Dec 10, owed from Dec 17: the line stops on Dec 16, as 'Ended Dec 16, 2026'", () => {
+    rentPaidNov16();
+    endOn("2026-12-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2026-12-17", "2026-12-20"]) {
+      const line = committedBook(bundle.db, day).lines.find((l) => l.seriesId === UTIL)!;
+      expect([line.endsOn, line.occurrences, line.overdueCents], day).toEqual(["2026-12-16", 0, 18_221]);
+      expect(badgeOn(day), day).toEqual(["Ended Dec 16, 2026"]);
+    }
+  });
+
   // ⛔ …and the car card's sentence asks the same book's day (`termsBySeries`, one reading for both books)
   test("filed under Car, the car card's sentence names that day too", () => {
     rentPaidNov16();

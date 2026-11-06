@@ -35,6 +35,7 @@ import { outsidePortfolioCashAccountIds } from "./accounts";
 import { isAgentsSeries } from "./analytics";
 import {
   billingCarriers,
+  fallsDueDayOfMonth,
   fallsDueOn,
   openingOf,
   pairingOf,
@@ -1142,7 +1143,7 @@ export function listSeries(db: AppDatabase, today: string = todayIso()): SeriesV
         evidence: seriesEvidence(s, today, checkedThrough(s.id)),
         annualizedCents: annualizedCentsOf(s, today, checkedThrough(s.id)),
         // its end, and the later day its last charge falls due on — its page's and the runway's (`seriesEndDays`)
-        ...seriesEndDays(s, today),
+        ...seriesEndDays(s),
         oneChargeOn: oneCharge.get(s.id) ?? null,
         billedWith: s.billedWith,
       } satisfies SeriesView;
@@ -1190,8 +1191,11 @@ export interface SeriesOccurrence {
    * ⛔ It exists because `date` alone cannot answer whether an occurrence is
    * inside a window of whole calendar months. February clamps the 28th, 29th,
    * 30th and 31st onto ONE date, and those four series need different answers
-   * at the boundary — see `MonthHorizon` in `lib/committed`. ⚠️ It is `ownDate`'s day: asked only of the series' own
-   * days (`scheduledOccurrences`, `projectOwnDays`), where `date` is `ownDate`.
+   * at the boundary — see `MonthHorizon` in `lib/committed`. ⚖️ (B) It is `date`'s day: billed inside another and
+   * falling due on its carrier's later day, the carrier's — of one date both fall on, the later of the two
+   * (`fallsDueDayOfMonth`) — so the committed book's twelve months (`scheduledOccurrences`) admit a day of what the
+   * rent carries as they admit the rent's day it falls due with. 🔴 It was `ownDate`'s, asked only of own days, until
+   * that book held each day by `date` (review of cd58b3d1, L139).
    */
   anchorDayOfMonth: number | null;
   /**
@@ -1919,8 +1923,16 @@ export function scheduleRanOutOn(
  * ⚖️ (B) The day the LAST charge inside a schedule's end falls due on, when that is AFTER the end itself — billed inside
  * another on its carrier's step, its last own day on or before the end (the walk applies the end to its own days,
  * `walkOccurrences`), due with the carrier's later day it pairs with (`fallsDueOn`) — else null: billed on its own, the
- * end is never before its last charge. Null with no end, nothing paired, or that charge already past today. Where the
- * End dialog's span runs to (`SeriesDetail.lastFallsDueOn`), so it never runs back from the day its list names first.
+ * end is never before its last charge. Null with no end or nothing paired. Where the End dialog's span runs to
+ * (`SeriesDetail.lastFallsDueOn`), so it never runs back from the day its list names first.
+ *
+ * ⛔ …whatever day it is asked on — walked from its end: once that charge has fallen due it is still the day the
+ * series stopped, the one its badge names ("Ended Feb 16, 2027", `scheduleRanOutOn`) and the committed book's line
+ * that owes it carries (`termsBySeries`). 🔴 Walked from today, it was null once that charge was past (review of
+ * cd58b3d1, L136): the rent retyped Nov 16 and paid Nov 16 and Dec 16, the utilities' end typed Feb 10, 2027 — from
+ * Feb 17 the runway's book owed their Feb 1 on a line stopping on Feb 10, beside their page's "Ended Feb 16, 2027"
+ * (his ledger copy 2026-11-05, the same what-if). Nothing printed it: the badge and both Annualized qualifiers read a
+ * day gone by as gone.
  *
  * ⛔ …and the day it stops wherever that is named (`seriesStopsOn`): its end badge, still to come, and the Annualized
  * qualifier on its page and the All tab (`SeriesView.lastFallsDueOn`) — so read off its STATUS, never the forecast's
@@ -1933,15 +1945,15 @@ export function scheduleRanOutOn(
  */
 export function lastFallsDueAfterItsEnd(
   s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind; status: SeriesStatus } & CarriedBy,
-  today: string,
 ): string | null {
   const end = s.userEndsOn;
   if (!end || seriesIsOver(s.status)) return null;
   const series = toProjectable(s);
   if (!series.pairedWith) return null;
-  // the carrier's day an own day on or before the end pairs with lies within a step of it
+  // its last own day on or before the end falls due on or after it, and the carrier's day it pairs with lies within a
+  // step of it
   const plan = stepPlan(series.cadence, series.intervalDaysAvg, series.anchorDay ?? null);
-  const last = projectOccurrences(series, today, stepFrom(end, plan, 1)).at(-1);
+  const last = projectOccurrences(series, end, stepFrom(end, plan, 1)).at(-1);
   return last !== undefined && compareDates(last.date, end) > 0 ? last.date : null;
 }
 
@@ -1951,12 +1963,12 @@ export function lastFallsDueAfterItsEnd(
  * (`listSeries`) and the committed books (`termsBySeries`), so the day each names it stopping on (`seriesStopsOn`) is
  * one day. 🔴 The books read the end alone (review of 78d64f6a): the runway's "evidenced through Feb 10, 2027" beside
  * a page reading "Ends Feb 16, 2027" (his ledger copy 2026-11-05, the rent retyped Nov 16, the utilities' end Feb 10).
+ * ⛔ The same two days whatever day they are asked on — the schedule's, as its end is (`lastFallsDueAfterItsEnd`).
  */
 export function seriesEndDays(
   s: ProjectionOverrides & { id: string; name: string; kind: SeriesKind; status: SeriesStatus } & CarriedBy,
-  today: string,
 ): SeriesEndDays {
-  return { endsOn: s.userEndsOn ?? null, lastFallsDueOn: lastFallsDueAfterItsEnd(s, today) };
+  return { endsOn: s.userEndsOn ?? null, lastFallsDueOn: lastFallsDueAfterItsEnd(s) };
 }
 
 /**
@@ -2018,14 +2030,14 @@ export function oneChargeDays(
 /**
  * ⚖️ (B) `oneChargeDays`, each day the day that ONE charge FALLS DUE (`fallsDueOn`): billed inside another on its
  * carrier's step, the carrier's later day it pairs with — the day its list, its badge (`seriesStopsOn`), its End dialog
- * and the calendar name it on; billed on its own, its own day. The day every reader that names it dates it by but two:
+ * and the calendar name it on; billed on its own, its own day. The day every reader that names it dates it by but one:
  * "once · Nov 16" wherever a cadence slot prints it (`oneChargePhrase` — the subscriptions card, the category page,
  * the attach picker), the merchant page's "once, on Nov 16," and the staleness sentence's "expected once on Nov 16,
- * 2026" (`SeriesStaleness.oneChargeOn`). Its page's sentence names its own day (`oneChargeDays`), the one its editor
- * saves, with this one beside it — "charges once on Nov 1, due with the rent on Nov 16" — and asks this rule nothing;
- * ⚠️ and the car card's "charges once on …" names the day its rate counts it on, its own (`heaviestMonthEnding`'s
- * `lastPaymentOn`, the committed book's months are its own days — `scheduledOccurrences`). Latent: no car series is
- * billed inside another. ⛔ The row's carrier is REQUIRED, `toProjectable`'s reason.
+ * 2026" (`SeriesStaleness.oneChargeOn`) — and the car card's "charges once on Nov 16, 2026", off the day the committed
+ * book holds it on (`heaviestMonthEnding`'s `lastPaymentOn`: `scheduledOccurrences` holds each day by the day it falls
+ * due; 🔴 its own day until the review of cd58b3d1, L135). Its page's sentence names its own day (`oneChargeDays`), the
+ * one its editor saves, with this one beside it — "charges once on Nov 1, due with the rent on Nov 16" — and asks this
+ * rule nothing. ⛔ The row's carrier is REQUIRED, `toProjectable`'s reason.
  *
  * 🔴 Review of 78d64f6a (L77's what-if): the utilities as one charge on Nov 1, the rent retyped Nov 16, read through Nov
  * 9 — from Oct 30 to Nov 16 their page read "Ends Nov 16, 2026" over "Next expected Nov 16, 2026" and the calendar drew
@@ -2067,8 +2079,11 @@ export function oneChargeDueDays(
  * 16 came (46f19f15's known gap) — and, owed no earlier than that, it would have been in no window at all until Nov 17.
  * 🔴 Held by this day but dated by its own (review of aa05a56d), a reader that re-read `date` read another day — the
  * category forecast re-filtered their Oct 25, held in November with the rent's Nov 1, out of November, and it was
- * counted in no month. A reader that MATCHES a row of its own against a series' own days, or a rate that counts them
- * — the first-posting rule, the committed book — reads `projectOwnDays`. A grader asks `ownDate` paid.
+ * counted in no month. ⛔ …and the committed book's twelve months, a rate, hold it by this day too
+ * (`scheduledOccurrences`), so they and the arrears abut on today for it. 🔴 Held by its own days there (review of
+ * cd58b3d1, L139), a day of theirs whose own day had passed before the rent's day it falls due with was in neither leg.
+ * A reader that MATCHES a row of its own against a series' own days — the first-posting rule — reads
+ * `projectOwnDays`. A grader asks `ownDate` paid.
  */
 export function projectOccurrences(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
   return walkOccurrences(series, from, to, series.pairedWith ?? null);
@@ -2077,7 +2092,8 @@ export function projectOccurrences(series: ProjectableSeries, from: string, to: 
 /**
  * `projectOccurrences` held and dated by each occurrence's OWN day, whatever day it falls due on: the series' own days
  * inside [from, to], `date` each one's `ownDate` — what the first-posting rule matches a row of the series' own
- * against, and the days a rate counts (`scheduledOccurrences`). Billed on its own, the two are one walk.
+ * against. Billed on its own, the two are one walk. ⛔ Never a rate's: what is still owed falls due on `date`
+ * (`scheduledOccurrences`).
  */
 export function projectOwnDays(series: ProjectableSeries, from: string, to: string): SeriesOccurrence[] {
   return walkOccurrences(series, from, to, null);
@@ -2142,7 +2158,8 @@ function walkOccurrences(
       // ⚖️ its own day's rate (§6A 55) — a cash week at $1,047.00, a payroll week at $1,141.92. Never null: a series
       // with no rate now projected nothing above.
       amountCents: rateOn(series, ownDate)!,
-      anchorDayOfMonth,
+      // ⚖️ (B) …and the day of the month `date` is billed on: on its carrier's later day, the carrier's
+      anchorDayOfMonth: fallsDueDayOfMonth(pairedWith, ownDate, anchorDayOfMonth),
       staleness: series.staleness,
     });
   }
@@ -2363,16 +2380,22 @@ export function upcomingOccurrences(
  * reads $1,933.25 a month on the day it was paid early — the sawtooth `committedBook` measured and refused. A list of
  * what is still to pay reads `upcomingOccurrences`.
  *
- * ⚖️ …held by each one's OWN day (`projectOwnDays`), the days a rate counts — never the day a day of what the rent
- * carries falls due with the rent's (`fallsDueOn`, a list's question): the committed book admits its months by their
- * own days (`withinMonthHorizon`), so one window for both ends keeps N payments in N months.
+ * ⚖️ …held by the day each FALLS DUE (`projectOccurrences`, `fallsDueOn`), as the arrears hold what came due before
+ * today — so the committed book's two legs abut on today for what the rent carries too: a day of theirs is in its
+ * twelve months until the rent's day it falls due with, and owed from the day after. Its months admit each by the day
+ * of the month that day is billed on (`SeriesOccurrence.anchorDayOfMonth`, `withinMonthHorizon`), so one window for
+ * both ends keeps N payments in N months — as many of theirs as of the rent's. 🔴 Held by their OWN days (review of
+ * cd58b3d1, L139), a day of theirs whose own day had passed while the rent's was still to come was in neither leg:
+ * the rent retyped Nov 16 and paid Nov 16 and Dec 16, their end typed Feb 10, 2027 — the runway's twelve months held
+ * $38,634.83 on Feb 1 and $38,452.62 from Feb 2 to Feb 16, their Feb 16 $182.21 neither still to come nor owed, and
+ * from Feb 2 no sentence named them (his ledger copy 2026-11-05, the same what-if).
  */
 export function scheduledOccurrences(
   db: AppDatabase,
   today: string = todayIso(),
   windowDays = 30,
 ): SeriesOccurrence[] {
-  return forecastWalk(db, today, windowDays, projectOwnDays)
+  return forecastWalk(db, today, windowDays)
     .flatMap((w) => w.projected)
     .sort(byDayThenName);
 }
@@ -2382,14 +2405,9 @@ const byDayThenName = (a: SeriesOccurrence, b: SeriesOccurrence): number =>
 
 /**
  * The series the forecast carries, each with what its schedule holds in `[today, today + windowDays − 1]` — held by
- * the day each falls due on (`projectOccurrences`), or by its own day for a rate (`scheduledOccurrences`).
+ * the day each falls due on (`projectOccurrences`), for a list and a rate alike (`scheduledOccurrences`).
  */
-function forecastWalk(
-  db: AppDatabase,
-  today: string,
-  windowDays: number,
-  project: typeof projectOccurrences = projectOccurrences,
-) {
+function forecastWalk(db: AppDatabase, today: string, windowDays: number) {
   const live = withBillingCarriers(
     db,
     db.select().from(recurringSeries).where(inArray(recurringSeries.status, ["detected", "confirmed"])).all(),
@@ -2415,7 +2433,7 @@ function forecastWalk(
     .filter((s) => !isAgentsSeries(agentsCash, s))
     .map((s) => ({
       series: s,
-      projected: project(
+      projected: projectOccurrences(
         toProjectable(s, seriesStaleness(s, today, checkedThrough(s.id), oneCharge.get(s.id) ?? null)),
         today,
         to,
