@@ -82,6 +82,43 @@ describe("the posted average leaves money back out — the page, the All tab, th
     });
   });
 
+  /*
+   * ⛔ …and two days of money back or more are named in ONE list, in the plural: "were", "are not counted" — never
+   * "was" of two (`moneyBackWords`). 🔴 Every popover test held one such day, so its plural went unread: mutated to
+   * "was" and `notCounted(1)`, all 282 tests of this file, posted-average.test.ts, provenance.test.ts and
+   * SeriesDetail.test.ts still passed (review of 78d64f6a, L132). What-if credits on Breezeline (internet): his ledger
+   * holds none (his ledger copy 2026-11-05: no row linked to a bill or subscription of his is money back).
+   */
+  test("two days of money back: 'Sep 1's $12.50 and Oct 12's $50.00 were money back … and are not counted'", () => {
+    const rows: (readonly [string, number])[] = [
+      ["2026-06-20", -4_032],
+      ...["07", "08", "09", "10"].map((m) => [`2026-${m}-10`, -5_000] as const),
+      ["2026-09-01", 1_250],
+      ["2026-10-12", 5_000],
+    ];
+    const breezeline = seed("Breezeline (internet)", -5_000, rows);
+    // …the five payments averaged as before, both credits left out
+    expect(seriesDetail(bundle.db, breezeline, NOV4)!.postedAvgCents).toBe(-4_806);
+    const p = popover(breezeline);
+    expect(p.headline).toContain(
+      "— so any single figure for it is an average, not a repeat. Sep 1's $12.50 and Oct 12's $50.00 were money " +
+        "back, toward no due day, and are not counted. ⚠️",
+    );
+    expect(p.sources[1]).toMatchObject({
+      label: "7 tagged postings in the ledger",
+      detail: "5 payments: 2 different amounts, -$50.00 to -$40.32 · 2 on Sep 1 and Oct 12, toward no due day",
+    });
+    // …and three, "A, B and C"
+    const three = seed("Breezeline (internet)", -5_000, [...rows, ["2026-08-20", 500]]);
+    expect(popover(three).headline).toContain(
+      " Aug 20's $5.00, Sep 1's $12.50 and Oct 12's $50.00 were money back, toward no due day, and are not counted.",
+    );
+    expect(popover(three).sources[1]).toMatchObject({
+      label: "8 tagged postings in the ledger",
+      detail: "5 payments: 2 different amounts, -$50.00 to -$40.32 · 3 on Aug 20, Sep 1 and Oct 12, toward no due day",
+    });
+  });
+
   /* …beside ONE payment, the two tagged postings are not "one payment" either */
   test("one payment and money back: 'Its one payment was -$40.00', the credit named — never one payment of two", () => {
     const gym = seed("Gym", -4_000, [

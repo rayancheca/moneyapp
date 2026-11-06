@@ -660,10 +660,10 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
  *
  * ⚖️ "The same period" is the carrier's own day each day of the carried series PAIRS with (`pairingOf`; default (B),
  * built, not asked, 2026-10-30): the day of theirs that falls due with the carrier's opening day — the one the
- * carrier's payment of that day pays, their day nearest that payment by his decision 76, stepped back as many days as
- * that payment's own day lies past the opening day (`openingOf`) — pairs with it, and each later day of theirs with
- * the carrier's day the same number of steps on. His rent and what it carries both fall due on the 1st, so on his
- * ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and paid Nov 17 opens the
+ * carrier's payment of that day pays, their day nearest that payment by his decision 76, stepped back as many of their
+ * own due days as that payment's own day lies past the opening day (`openingOf`) — pairs with it, and each later day of
+ * theirs with the carrier's day the same number of steps on. His rent and what it carries both fall due on the 1st, so
+ * on his ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and paid Nov 17 opens the
  * utilities on their Dec 1, the rent's Nov 16, and their Jan 1 is its Dec 16; paid ON Nov 16, their Nov 1 is its Nov
  * 16 and their Dec 1 its Dec 16; no payment of it yet, their day nearest the date, a tie the earlier — the rent typed
  * Nov 2, their Nov 1 is its Nov 2 (default built, not asked, 2026-10-29; reviews of 0ac5d059 and ec7fd198). 🔴 At
@@ -1041,6 +1041,14 @@ function earlierOf(a: string | null, b: string | null): string | null {
  * that steps apart from the carrier's (`stepPlan`): an annual item carried inside a monthly rent. Then the payment
  * nearest each of its days pays it, as before (A) — on the safe side: no pairing hands next year's day of it to next
  * month's rent payment (pinned in nearer-due-day-paired.test.ts, "…on the rent's step only").
+ *
+ * ⚠️ The carrier's END is not read (`CarrierSchedule` has none): a day of its own pairs with the carrier's day the same
+ * number of steps on even where the carrier's end has closed that day. The rent typed Nov 16 and paid Nov 16, its own
+ * end typed Nov 30, the utilities' Dec 10, read through Dec 19: on Nov 20, Dec 5, Dec 11 and Dec 16 their page reads
+ * "Ends Dec 16, 2026" above "Next expected Dec 16, 2026" beside the rent's "Ended Nov 16, 2026" — a rent day its
+ * schedule no longer holds — and from Dec 17 they are owed $182.21 (his ledger copy 2026-11-05, the what-if; review of
+ * 78d64f6a, L133). The safe direction holds: owed, never dropped. Which day such a day falls due on is his call, open
+ * (2026-11-05). Latent on his ledger: neither has an end.
  */
 export function pairingOf(s: SeriesOverrides & CarriedBy): CarrierPairing | null {
   const carrier = s.billedWith;

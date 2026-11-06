@@ -1015,7 +1015,8 @@ export function annualizedEndNote(s: SeriesEndDays, today: string): string | nul
 /**
  * The series page's end badge: "Ends Jan 11, 2027" while a date is still to come, and once its schedule has ended —
  * the All tab's "Ended", the card's "Its schedule has ended — every date it holds has come" — "Ended" with the day it
- * RAN OUT (`scheduleRanOutOn`), its last date on or before the end.
+ * RAN OUT (`scheduleRanOutOn`), its last date on or before the end, dated by the day it falls due: billed inside
+ * another, the carrier's later day, past the end too (below).
  *
  * ⛔ ONE TENSE FOR ONE FACT, off the fact the card states, never the end day alone. 🔴 The tense read the end day: an
  * end between two due days — Car insurance ending Jan 5, 2027, its last date Dec 11 — read "Ends Jan 5, 2027" from

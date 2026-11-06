@@ -2037,8 +2037,8 @@ function nettedDetail(netted: readonly Occurrence[], today: string): string {
  * (`averagedPayments`; default built, not asked, 2026-11-04) — named after the payments are counted, in the Amount
  * history's words for the same bar (`TOWARD_NO_DUE_DAY`), so the words still account for every tagged row: " Oct 12's
  * $50.00 was money back, toward no due day, and is not counted." "" with none, as on every series of his ledger (a copy
- * of it, 2026-11-04). 🔴 Review of 23e9c5d1: counted as a payment, Breezeline's +$50.00 credit read "Its 6 tagged
- * postings … were 3 different amounts, from -$50.00 to $50.00" beside a bar saying it paid no charge.
+ * of it, 2026-11-04). 🔴 Review of 23e9c5d1: counted as a payment, a what-if +$50.00 credit of Breezeline's read "Its
+ * 6 tagged postings … were 3 different amounts, from -$50.00 to $50.00" beside a bar saying it paid no charge.
  */
 function moneyBackWords(days: readonly Occurrence[], today: string): string {
   if (days.length === 0) return "";

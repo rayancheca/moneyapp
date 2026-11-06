@@ -1579,7 +1579,7 @@ export function seriesStaleness(
   s: SeriesOverrides & EvidenceSource,
   today: string = todayIso(),
   checkedThrough?: string | null,
-  // its one charge's day, from `oneChargeDays` — a reader that discloses staleness passes it (`oneChargeOn`)
+  // the day its one charge falls due (`oneChargeDueDays`) — a reader that discloses staleness passes it (`oneChargeOn`)
   oneChargeOn?: string | null,
 ): SeriesStaleness {
   // Deliberately NOT stepPlan(): this measures how old the EVIDENCE is, which
@@ -1859,9 +1859,10 @@ export function scheduleHasEnded(s: SeriesOverrides & CarriedBy, today: string):
 
 /**
  * The day a schedule its end has closed RAN OUT (`scheduleHasEnded`): its last date on or before its end, on the
- * anchor's rhythm as the walk steps it, never before its last charge (`lastMatchedOn`) nor past its end — null while
- * a date is still to come, or while that last date is (an anchor typed past its end whose rhythm's last day has not
- * come).
+ * anchor's rhythm as the walk steps it, dated by the day it falls due (`fallsDueOn`) — billed inside another on its
+ * carrier's step, the carrier's later day it pairs with, which can lie past the end — never before its last charge
+ * (`lastMatchedOn`) nor past the later of its end and that day — null while a date is still to come, or while that
+ * last date is (an anchor typed past its end whose rhythm's last day has not come).
  *
  * ⛔ The end badge's day once the schedule is over (`seriesEndBadge`): not the end itself, which can fall between two
  * due days. 🔴 Car insurance ending Jan 5, 2027 holds Dec 11 and nothing after; from Dec 12 its page read "Ends Jan 5,
@@ -1874,14 +1875,15 @@ export function scheduleHasEnded(s: SeriesOverrides & CarriedBy, today: string):
  * 5) read "Ends Jan 5, 2027" beside "Its schedule has ended" again, and "Ended Jan 5, 2027" from Jan 6 where the
  * unposted shape read "Ended Dec 11, 2026" (review of 7a3c702, on a copy of his ledger set up so).
  *
- * ⛔ …and never before its LAST CHARGE, nor past its end. The walk back lands on the last posting only when detection's
- * anchor sits one step after a posting on or before the end, and two shapes break that. 🔴 posted_on is the SETTLE day
- * (his Aug 11 premium is in the ledger as Aug 12): a last premium due on the end can post after it, and with Dec 11 and
- * Jan 12 linked to Car insurance, detection's anchor Feb 12 and his real Jan 11 end, the walk stepped past Jan 12 to
- * "Ended Dec 12, 2026" — a day nothing posted (review of b350ceb, a copy of his ledger asked Jan 13 and Feb 1). 🔴 A
- * day-stepped anchor is the last posting plus the MEDIAN gap while the walk steps the AVERAGE: biweekly, last Dec 4,
- * median 14, average 14.6, end Dec 10 — the walk landed on Dec 3, the day before the charge. A charge after the end is
- * the end's own: "Ended Jan 11, 2027", as 7a3c702 read it and as his typed anchor does.
+ * ⛔ …and never before its LAST CHARGE, nor past its end — billed inside another, nor past the later day its last date
+ * falls due on (below). The walk back lands on the last posting only when detection's anchor sits one step after a
+ * posting on or before the end, and two shapes break that. 🔴 posted_on is the SETTLE day (his Aug 11 premium is in the
+ * ledger as Aug 12): a last premium due on the end can post after it, and with Dec 11 and Jan 12 linked to Car
+ * insurance, detection's anchor Feb 12 and his real Jan 11 end, the walk stepped past Jan 12 to "Ended Dec 12, 2026" —
+ * a day nothing posted (review of b350ceb, a copy of his ledger asked Jan 13 and Feb 1). 🔴 A day-stepped anchor is the
+ * last posting plus the MEDIAN gap while the walk steps the AVERAGE: biweekly, last Dec 4, median 14, average 14.6, end
+ * Dec 10 — the walk landed on Dec 3, the day before the charge. A charge after the end is the end's own: "Ended Jan 11,
+ * 2027", as 7a3c702 read it and as his typed anchor does.
  *
  * ⛔ …and its days are the ones `scheduleHasEnded` asks (`steppedSchedule`): billed inside another, never one before
  * where its carrier opens it — a schedule opening past its end held no date and ran out on none ("Ended before …") —
