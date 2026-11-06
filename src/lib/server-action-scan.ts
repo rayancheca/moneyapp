@@ -6,7 +6,8 @@ import { resolveSpecifier, type SourceTree } from "./client-bundle-graph";
 /**
  * The server actions in src, and where each file binds one: the scan behind the gates that read a server action where
  * it is used — every press settled where it is made (hooks/useAction.test.ts), every form that stays on its page
- * taking away a refusal it shows (app/refusal-landing.test.ts).
+ * taking away a refusal it shows (app/refusal-landing.test.ts). And what each file imports (`importsIn`), so a gate can
+ * follow a prop from the page that hands it to the form that reads it: each form is handed the refusal its page shows.
  *
  * ⛔ ONE scan, as status-rule-scan.ts is for a status rule: a second gate resolving imports its own way would have to be
  * found and mended apart. A server action is an exported async function of a `"use server"` module; a file binds one by
@@ -28,6 +29,8 @@ export interface ServerActionScan {
   readonly files: readonly ScannedFile[];
   /** each server action's declaration, by `file#name` */
   readonly actions: ReadonlyMap<string, ts.FunctionDeclaration>;
+  /** the local names `file`'s named imports bind, each with the `file#name` in src it resolves to */
+  importsIn(file: ScannedFile): ReadonlyMap<string, string>;
   /** the local names `file`'s imports bind to a server action, each with that action's `file#name` */
   bindingsIn(file: ScannedFile): ReadonlyMap<string, string>;
 }
@@ -74,7 +77,7 @@ export function scanServerActions(): ServerActionScan {
     }
   }
 
-  const bindingsIn = (scanned: ScannedFile): ReadonlyMap<string, string> => {
+  const importsIn = (scanned: ScannedFile): ReadonlyMap<string, string> => {
     const bound = new Map<string, string>();
     for (const statement of scanned.ast.statements) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -83,14 +86,16 @@ export function scanServerActions(): ServerActionScan {
       const resolved = resolveSpecifier(TREE, scanned.file, statement.moduleSpecifier.text);
       if (resolved.kind !== "module") continue;
       for (const element of named.elements) {
-        const key = `${resolved.path}#${(element.propertyName ?? element.name).text}`;
-        if (actions.has(key)) bound.set(element.name.text, key);
+        bound.set(element.name.text, `${resolved.path}#${(element.propertyName ?? element.name).text}`);
       }
     }
     return bound;
   };
 
-  return { files, actions, bindingsIn };
+  const bindingsIn = (scanned: ScannedFile): ReadonlyMap<string, string> =>
+    new Map([...importsIn(scanned)].filter(([, key]) => actions.has(key)));
+
+  return { files, actions, importsIn, bindingsIn };
 }
 
 /** The name a call is made by: `f` for `f(…)` and `x.f(…)`. */

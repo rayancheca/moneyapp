@@ -2,7 +2,7 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import type { ActionResult } from "@/app/transactions/action-types";
 import { refusalShownFields } from "@/components/ui/ErrorBanner";
-import { calleeName, lineOf, nodesUnder, scanServerActions } from "@/lib/server-action-scan";
+import { calleeName, lineOf, nodesUnder, scanServerActions, type ScannedFile } from "@/lib/server-action-scan";
 import { landBack, type Landing } from "./refusal-landing";
 
 /** each `redirect()` a landing asks for, with the history entry it asks Next for (`undefined`: Next's default) */
@@ -34,6 +34,13 @@ vi.mock("next/navigation", () => ({
  * (4 → 5), and one Back brought the alert back above the budget he had just created. /transactions' header strip and
  * a new account (/accounts) leave the same way. Every form adapter lands through `landBack` now, and every form bound
  * to one carries the field: a page left out fails here, by name.
+ *
+ * 🔴 …and they read only that a form carries the field, never what it is handed. The review of ba9e0388 (2026-11-06)
+ * set `refusal={null}` where /budgets hands BudgetRow and BudgetForm theirs, /accounts AccountForm and /transactions
+ * HeaderStrip — and `error={null}` in the header strip's three fields — and every unit test stayed green (44 files,
+ * 571 tests; re-measured the same on 2026-11-06): /budgets after a refusal was back to one Back bringing the alert
+ * back. So each field is traced to the refusal its page shows — the page's own `errorParam(…)`, in its
+ * `<ErrorBanner>` — through every component between them, and a break is named where it is.
  */
 
 const scan = scanServerActions();
@@ -45,6 +52,194 @@ const adapterKeys = new Set(adapters.map(([key]) => key));
 /** The `return`s of `fn` itself — not of a function written inside it. */
 function ownReturns(fn: ts.FunctionDeclaration): ts.ReturnStatement[] {
   return nodesUnder(fn.body!, ts.isReturnStatement).filter((r) => ts.findAncestor(r, ts.isFunctionLike) === fn);
+}
+
+/** Every element binding an adapter to its `action` — a `<form>`, or a component that writes one out — where it is. */
+const boundForms = scan.files.flatMap((scanned) => {
+  const bound = scan.bindingsIn(scanned);
+  return nodesUnder(scanned.ast, ts.isJsxAttribute).flatMap((attribute) => {
+    const value = attribute.initializer;
+    if (attribute.name.getText() !== "action" || value === undefined || !ts.isJsxExpression(value)) return [];
+    const name = value.expression;
+    if (name === undefined || !ts.isIdentifier(name)) return [];
+    const action = bound.get(name.text);
+    if (action === undefined || !adapterKeys.has(action)) return [];
+    return [{ scanned, element: attribute.parent.parent, where: `${lineOf(scanned, attribute)} ${name.text}` }];
+  });
+});
+
+/** A JSX element, opening or self-closing: what writes out a form, or renders a component. */
+function isElement(node: ts.Node): node is ts.JsxOpeningLikeElement {
+  return ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node);
+}
+
+/** `element`'s attribute `name`, if it has one. */
+function attributeOf(element: ts.JsxOpeningLikeElement, name: string): ts.JsxAttribute | undefined {
+  return element.attributes.properties.find(
+    (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === name,
+  );
+}
+
+/** What `name={…}` hands `element`, if it hands it an expression. */
+function handedTo(element: ts.JsxOpeningLikeElement, name: string): ts.Expression | undefined {
+  const value = attributeOf(element, name)?.initializer;
+  return value !== undefined && ts.isJsxExpression(value) ? value.expression : undefined;
+}
+
+/**
+ * What each field the element binding an adapter carries is handed: `refusalShownFields(…)` among the fields a
+ * component that writes the form out (`ConfirmActionButton`) is handed, or `error={…}` on a `<RefusalShownField>` in
+ * the `<form>` written out here. None when it carries no field.
+ */
+function refusalsHanded(element: ts.JsxOpeningLikeElement): ts.Expression[] {
+  const fields = handedTo(element, "fields");
+  if (fields !== undefined && ts.isObjectLiteralExpression(fields)) {
+    return fields.properties.flatMap((p) =>
+      ts.isSpreadAssignment(p) && ts.isCallExpression(p.expression) && calleeName(p.expression) === "refusalShownFields"
+        ? p.expression.arguments.slice(0, 1)
+        : [],
+    );
+  }
+  if (!ts.isJsxOpeningElement(element) || element.tagName.getText() !== "form") return [];
+  return nodesUnder(element.parent, ts.isJsxSelfClosingElement)
+    .filter((child) => child.tagName.getText() === "RefusalShownField")
+    .flatMap((child) => handedTo(child, "error") ?? []);
+}
+
+/** Where a refusal handed to a field comes from: the pages that show it, and each place it stops being theirs. */
+interface Trace {
+  /** the pages whose `<ErrorBanner>` shows the refusal handed */
+  readonly shownOn: readonly string[];
+  /** where what is handed stops being that refusal, by file:line — a page, or a component, handing something else */
+  readonly breaks: readonly string[];
+}
+
+const brokenAt = (at: string): Trace => ({ shownOn: [], breaks: [at] });
+
+/** Every element in src, and the file it is in. */
+const elements = scan.files.flatMap((scanned) =>
+  nodesUnder(scanned.ast, isElement).map((element) => ({ scanned, element })),
+);
+/** What each file's imports bind, by file — resolved by the one scan. */
+const imported = new Map(scan.files.map((scanned) => [scanned.file, scan.importsIn(scanned)]));
+
+/** Every element rendering the component `name` that `file` declares: there by that name, elsewhere as imported. */
+function rendersOf(file: string, name: string): { scanned: ScannedFile; element: ts.JsxOpeningLikeElement }[] {
+  return elements.filter(({ scanned, element }) => {
+    const tag = element.tagName.getText();
+    return scanned.file === file ? tag === name : imported.get(scanned.file)?.get(tag) === `${file}#${name}`;
+  });
+}
+
+/** The names a scope declares: a block's `const`s, or a function's parameters. */
+function namesDeclaredIn(scope: ts.Node): ts.BindingName[] {
+  if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
+    const statements = scope.statements.filter(ts.isVariableStatement);
+    return statements.flatMap((s) => s.declarationList.declarations.map((d) => d.name));
+  }
+  return ts.isFunctionLike(scope) ? scope.parameters.map((p) => p.name) : [];
+}
+
+/** The declaration the name `read` reads, nearest scope first: a `const`, a parameter, or a name bound in either. */
+function declarationOf(read: ts.Identifier): ts.Node | undefined {
+  const bound = (name: ts.BindingName): ts.Node | undefined => {
+    if (ts.isIdentifier(name)) return name.text === read.text ? name.parent : undefined;
+    for (const element of name.elements) {
+      const found = ts.isOmittedExpression(element) ? undefined : bound(element.name);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  for (let scope: ts.Node | undefined = read.parent; scope !== undefined; scope = scope.parent) {
+    for (const name of namesDeclaredIn(scope)) {
+      const found = bound(name);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+}
+
+/** The name a component is declared by — `function X(…)`, or `const X = (…) =>` — and none for an inline callback. */
+function componentName(fn: ts.SignatureDeclaration): string | undefined {
+  if (ts.isFunctionDeclaration(fn)) return fn.name?.text;
+  const holder = fn.parent;
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !ts.isVariableDeclaration(holder)) return undefined;
+  return ts.isIdentifier(holder.name) ? holder.name.text : undefined;
+}
+
+/** The component whose props `declaration` is, and the prop `value` reads there: `{ refusal }`, or `props.refusal`. */
+function propOf(declaration: ts.Node, value: ts.Expression): { component: string; prop: string } | undefined {
+  const pattern = ts.isBindingElement(declaration) ? declaration.parent : undefined;
+  const parameter = ts.isParameter(declaration)
+    ? declaration
+    : pattern !== undefined && ts.isObjectBindingPattern(pattern) && ts.isParameter(pattern.parent)
+      ? pattern.parent
+      : undefined;
+  if (parameter === undefined || parameter.parent.parameters[0] !== parameter) return undefined;
+  const component = componentName(parameter.parent);
+  // `props.refusal` reads the parameter itself; `{ refusal }`, or `{ refusal: shown }`, a name bound in it
+  const prop = ts.isPropertyAccessExpression(value)
+    ? (declaration === parameter ? value.name.text : undefined)
+    : ts.isBindingElement(declaration) ? (declaration.propertyName ?? declaration.name).getText() : undefined;
+  return component === undefined || prop === undefined ? undefined : { component, prop };
+}
+
+/** `value` as a gate names it: on the element it is handed to, `<X refusal={null}>`, or in its call. */
+function named(value: ts.Expression): string {
+  const holder = value.parent;
+  if (ts.isJsxExpression(holder) && ts.isJsxAttribute(holder.parent)) {
+    return `<${holder.parent.parent.parent.tagName.getText()} ${holder.parent.getText()}>`;
+  }
+  return ts.isCallExpression(holder) ? holder.getText() : value.getText();
+}
+
+/** The page's own refusal: `const error = errorParam(…)` — and the `<ErrorBanner message={error}>` showing it. */
+function pageRefusal(scanned: ScannedFile, declaration: ts.VariableDeclaration): Trace {
+  const read = declaration.initializer;
+  const name = declaration.name;
+  if (read === undefined || !ts.isCallExpression(read) || calleeName(read) !== "errorParam" || !ts.isIdentifier(name)) {
+    return brokenAt(`${lineOf(scanned, declaration)} ${declaration.getText()}`);
+  }
+  const page = ts.findAncestor(declaration, ts.isFunctionLike);
+  const banners = (page === undefined ? [] : nodesUnder(page, isElement)).filter(
+    (element) => element.tagName.getText() === "ErrorBanner",
+  );
+  const shows = banners.some((banner) => {
+    const message = handedTo(banner, "message");
+    return message !== undefined && ts.isIdentifier(message) && message.text === name.text;
+  });
+  return shows
+    ? { shownOn: [scanned.file], breaks: [] }
+    : brokenAt(`${lineOf(scanned, declaration)} ${declaration.getText()}, shown in no <ErrorBanner>`);
+}
+
+/**
+ * How `value`, read in `scanned`, comes to be the refusal its page shows: the page's own `errorParam(…)`
+ * (`pageRefusal`), or a prop of the component it is read in that every element rendering the component hands such
+ * a value — followed through every component between the page and the field.
+ */
+function traceRefusal(scanned: ScannedFile, value: ts.Expression, followed: ReadonlySet<string> = new Set()): Trace {
+  const read = ts.isPropertyAccessExpression(value) ? value.expression : value;
+  const declaration = ts.isIdentifier(read) ? declarationOf(read) : undefined;
+  if (declaration !== undefined && read === value && ts.isVariableDeclaration(declaration)) {
+    return pageRefusal(scanned, declaration);
+  }
+  const prop = declaration === undefined ? undefined : propOf(declaration, value);
+  if (prop === undefined) return brokenAt(`${lineOf(scanned, value)} ${named(value)}`);
+  const key = `${scanned.file}#${prop.component}.${prop.prop}`;
+  if (followed.has(key)) return { shownOn: [], breaks: [] };
+  const renders = rendersOf(scanned.file, prop.component);
+  if (renders.length === 0) return brokenAt(`${scanned.file} ${prop.component}: rendered nowhere the scan reads`);
+  const traces = renders.map(({ scanned: at, element }) => {
+    const handed = handedTo(element, prop.prop);
+    if (handed !== undefined) return traceRefusal(at, handed, new Set([...followed, key]));
+    const attribute = attributeOf(element, prop.prop);
+    const tag = element.tagName.getText();
+    return attribute === undefined
+      ? brokenAt(`${lineOf(at, element)} <${tag}> leaves ${prop.prop} out`)
+      : brokenAt(`${lineOf(at, attribute)} <${tag} ${attribute.getText()}>`);
+  });
+  return { shownOn: traces.flatMap((t) => t.shownOn), breaks: traces.flatMap((t) => t.breaks) };
 }
 
 describe("every form adapter lands through one rule, and every form bound to one says when a refusal shows", () => {
@@ -59,6 +254,8 @@ describe("every form adapter lands through one rule, and every form bound to one
     ]) {
       expect(adapterKeys, key).toContain(key);
     }
+    // …and the forms bound to them: a scan that resolves no import finds none, and the gates below pass on nothing
+    expect(boundForms.length, "found no form bound to an adapter — did the scan's imports break?").toBeGreaterThan(15);
   });
 
   it("every adapter lands through `landBack` — none redirects on its own, and none returns before it", () => {
@@ -75,34 +272,31 @@ describe("every form adapter lands through one rule, and every form bound to one
     expect(unlanded).toEqual([]);
   });
 
-  /** Does the element binding the action carry the field — in its `<form>`, or among the fields it is handed? */
-  function carriesRefusal(element: ts.JsxOpeningLikeElement): boolean {
-    // a component that writes the form out (`ConfirmActionButton`): `...refusalShownFields(…)` among its fields
-    const fields = element.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText() === "fields");
-    const handed = fields !== undefined && ts.isJsxAttribute(fields) ? fields.initializer : undefined;
-    const literal = handed !== undefined && ts.isJsxExpression(handed) ? handed.expression : undefined;
-    if (literal !== undefined && ts.isObjectLiteralExpression(literal)) {
-      return literal.properties.some(
-        (p) => ts.isSpreadAssignment(p) && ts.isCallExpression(p.expression) && calleeName(p.expression) === "refusalShownFields",
-      );
-    }
-    // a `<form>` written out here: the field among what it holds
-    if (!ts.isJsxOpeningElement(element) || element.tagName.getText() !== "form") return false;
-    return nodesUnder(element.parent, ts.isJsxSelfClosingElement).some((child) => child.tagName.getText() === "RefusalShownField");
-  }
-
   it("every form bound to one carries the field while its page shows a refusal", () => {
-    const unwired = scan.files.flatMap((scanned) => {
-      const bound = scan.bindingsIn(scanned);
-      return nodesUnder(scanned.ast, ts.isJsxAttribute).flatMap((attribute) => {
-        const value = attribute.initializer;
-        if (attribute.name.getText() !== "action" || value === undefined || !ts.isJsxExpression(value)) return [];
-        const action = value.expression !== undefined && ts.isIdentifier(value.expression) ? bound.get(value.expression.text) : undefined;
-        if (action === undefined || !adapterKeys.has(action)) return [];
-        return carriesRefusal(attribute.parent.parent) ? [] : [`${lineOf(scanned, attribute)} ${value.expression!.getText()}`];
-      });
-    });
+    const unwired = boundForms.filter(({ element }) => refusalsHanded(element).length === 0).map(({ where }) => where);
     expect(unwired).toEqual([]);
+  });
+
+  it("…handed the refusal its page shows: the page's own `errorParam`, through every component between them", () => {
+    const traces = boundForms.flatMap(({ scanned, element }) =>
+      refusalsHanded(element).map((value) => traceRefusal(scanned, value)),
+    );
+    // a page, or a component, that hands its forms anything else — `refusal={null}`, a prop left out — by name
+    expect([...new Set(traces.flatMap((t) => t.breaks))].sort()).toEqual([]);
+    // …and the trace reaches each page whose forms it reads, through the components between them
+    const shownOn = new Set(traces.flatMap((t) => t.shownOn));
+    for (const page of [
+      "src/app/budgets/page.tsx",
+      "src/app/transactions/page.tsx",
+      "src/app/accounts/page.tsx",
+      "src/app/accounts/[id]/page.tsx",
+      "src/app/settings/page.tsx",
+      "src/app/imports/page.tsx",
+      "src/app/recurring/page.tsx",
+      "src/app/investments/page.tsx",
+    ]) {
+      expect(shownOn, page).toContain(page);
+    }
   });
 });
 
