@@ -35,7 +35,8 @@ const { seedDatabase } = await import("@/db/seed");
 const { importFiles } = await import("@/db/schema/imports");
 const { fileSha256 } = await import("@/lib/hash");
 const { archivedName } = await import("@/services/import/service");
-const { uploadStatementsAction, uploadStatementsResultAction } = await import("./actions");
+const { unimportFileAction, uploadStatementsAction, uploadStatementsResultAction } = await import("./actions");
+const { refusalShownFields } = await import("@/components/ui/ErrorBanner");
 
 const FIXTURE = path.join(process.cwd(), "tests", "fixtures", "synthetic", "chase", "Chase1111_Activity_2026-07-01_2026-07-05.CSV");
 const ORIGINAL = path.basename(FIXTURE);
@@ -102,5 +103,47 @@ describe("uploadStatementsResultAction — a statement picked from the archive i
     const result = await uploadStatementsResultAction(upload({ name: lookalike, buffer: bytes() }));
 
     expect(result.ok && result.data.outcomes.map((o) => o.fileName)).toEqual([lookalike]);
+  });
+});
+
+/*
+ * 🔴 Measured on a dev server over a copy of his ledger (2026-11-05): an upload refused with nothing picked left
+ * `/imports?error=Pick%20at%20least%20one%20statement%20file`, and the next upload, which landed (Imported files
+ * 454 → 455, its row on the page), kept "Pick at least one statement file" on screen — each form's action returned
+ * on a success, so the page re-rendered under the URL the refusal had left. A press that lands while a refusal shows
+ * goes back to /imports with none; one that lands with none on screen stays where it is — a redirect scrolled the
+ * page to its top (1,200px to 0, the same server).
+ */
+describe("each form on /imports lands back on it — with the refusal, or without one", () => {
+  const read = (): string => getDb().select().from(importFiles).all().find((f) => f.fileName === ORIGINAL)!.id;
+  const note = () => upload({ name: "not-a-statement.txt", buffer: Buffer.from("just a note, no statement\n") });
+  /** a form on the page while it shows a refusal */
+  const shown = (form: FormData): FormData => {
+    for (const [name, value] of Object.entries(refusalShownFields("Pick at least one statement file"))) {
+      form.append(name, value);
+    }
+    return form;
+  };
+
+  test("a refusal lands on `?error=`", async () => {
+    await expect(uploadStatementsAction(new FormData())).rejects.toThrow(
+      `NEXT_REDIRECT:/imports?error=${encodeURIComponent("Pick at least one statement file")}`,
+    );
+  });
+
+  test("an upload that lands while a refusal shows goes back to /imports with none — its banner gone", async () => {
+    await expect(uploadStatementsAction(shown(note()))).rejects.toThrow(/^NEXT_REDIRECT:\/imports$/);
+  });
+
+  test("…and one that lands with no refusal on screen stays where it is", async () => {
+    await expect(uploadStatementsAction(note())).resolves.toBeUndefined();
+  });
+
+  test("…and so does an un-import that lands while a refusal shows", async () => {
+    const form = new FormData();
+    form.append("importFileId", read());
+
+    await expect(unimportFileAction(shown(form))).rejects.toThrow(/^NEXT_REDIRECT:\/imports$/);
+    expect(getDb().select().from(importFiles).all().map((f) => f.fileName)).not.toContain(ORIGINAL);
   });
 });

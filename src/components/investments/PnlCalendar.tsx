@@ -7,6 +7,7 @@ import { CalendarGrid } from "@/components/ui/CalendarGrid";
 import { Money } from "@/components/ui/Money";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { useMonthPaging } from "@/hooks/useMonthPaging";
 import type { CalendarDay } from "@/lib/calendar-math";
 import { formatDayLong } from "@/lib/format-date";
@@ -53,7 +54,9 @@ export function PnlCalendar({ initialMonth, today }: { initialMonth: PnlCalendar
     setOpenDay(iso);
     setDayDetail(null);
     startTransition(async () => {
-      const r = await loadPnlDayAction({ day: iso });
+      // 🔴 settled: a transition throws a rejection to the page's error boundary — a day tapped with the server down
+      // made /investments "This page didn't render … Failed to fetch" (the review of b96b7546, 2026-11-05)
+      const r = await settleAction(() => loadPnlDayAction({ day: iso }));
       if (dayReqRef.current !== iso) return; // a newer day was tapped
       if (r.ok) setDayDetail(r.data);
       else toast({ title: r.error, tone: "negative" });

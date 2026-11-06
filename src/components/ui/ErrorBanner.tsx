@@ -32,3 +32,29 @@ export function ErrorBanner({ message }: { message: string }) {
 export function errorParam(raw: Record<string, string | string[] | undefined>): string | null {
   return typeof raw.error === "string" && raw.error !== "" ? raw.error : null;
 }
+
+/**
+ * The hidden field a form carries while its page shows a refusal: its action, landing, goes back to the page with no
+ * `?error=` — and only then, since a redirect after every press would scroll the page to its top (measured on /imports,
+ * 2026-11-05: from 1,200px down to 0). 🔴 Without it a refusal's banner outlived the next form press that landed:
+ * the page re-rendered under the URL the refusal had left (`landBack`, the one rule for every form whose press stays on
+ * its page; refusal-landing.test.ts holds every one of them to carrying this). A press that returns a value carries no
+ * form, and does not take the banner away (⏳ his call, `landBack`).
+ */
+export const REFUSAL_SHOWN = "refusalShown";
+
+/** The hidden fields a form on a page showing `error` carries — `REFUSAL_SHOWN`, or none. */
+export function refusalShownFields(error: string | null): Readonly<Record<string, string>> {
+  return error === null ? {} : { [REFUSAL_SHOWN]: "1" };
+}
+
+/** Those fields as inputs, for a `<form>` written out by hand (a component handed `fields` spreads them instead). */
+export function RefusalShownField({ error }: { error: string | null }) {
+  return (
+    <>
+      {Object.entries(refusalShownFields(error)).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+    </>
+  );
+}

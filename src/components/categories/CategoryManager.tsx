@@ -16,6 +16,7 @@ import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { CATEGORY_KIND_JARGON } from "@/lib/jargon";
 import { CategoryRow } from "./CategoryRow";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import type { CategoryTreeNode, MoveDestination } from "@/services/category-edit";
 import { CREATABLE_CATEGORY_KINDS, KIND_ORDER, type CreatableCategoryKind } from "@/lib/category-kinds";
 
@@ -74,11 +75,13 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
     event.preventDefault();
     if (busy || name.trim() === "") return;
     setBusy(true);
-    void createCategoryAction({
-      name,
-      parentId: isTopLevel ? null : parentId,
-      ...(isTopLevel ? { kind } : {}),
-    })
+    void settleAction(() =>
+      createCategoryAction({
+        name,
+        parentId: isTopLevel ? null : parentId,
+        ...(isTopLevel ? { kind } : {}),
+      }),
+    )
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });
@@ -94,8 +97,9 @@ export function CategoryManager({ tree, destinations }: CategoryManagerProps) {
   function setArchived(node: CategoryTreeNode, archived: boolean): void {
     if (busy) return;
     setBusy(true);
-    const run = archived ? archiveCategoryAction : unarchiveCategoryAction;
-    void run({ categoryId: node.id })
+    // each action called where it is named, so the press gate reads it there (useAction.test.ts)
+    const input = { categoryId: node.id };
+    void settleAction(() => (archived ? archiveCategoryAction(input) : unarchiveCategoryAction(input)))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });

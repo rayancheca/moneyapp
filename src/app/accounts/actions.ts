@@ -22,6 +22,7 @@ import {
   parseAmountField,
   type ActionResult,
 } from "@/app/transactions/action-types";
+import { landBack } from "@/app/refusal-landing";
 
 /**
  * Every form action on this surface has a `*ResultAction` twin that validates
@@ -195,12 +196,19 @@ export async function addAnchorResultAction(
   return { ok: true, data: { accountId: parsed.data.accountId, enteredCents: amount.data } };
 }
 
-export async function addAnchorAction(formData: FormData): Promise<void> {
-  const result = await addAnchorResultAction(formData);
-  if (result.ok) return;
+/** The account page a form names (`accountId`) — the page its three forms sit on — else /accounts. */
+function accountPage(formData: FormData): string {
   const accountId = formData.get("accountId");
-  const base = typeof accountId === "string" && accountId !== "" ? `/accounts/${accountId}` : "/accounts";
-  redirect(`${base}?error=${encodeURIComponent(result.error)}`);
+  return typeof accountId === "string" && accountId !== "" ? `/accounts/${accountId}` : "/accounts";
+}
+
+/**
+ * A refusal on the account's page, and a balance that lands while that page shows one goes back to it with none
+ * (`landBack`). 🔴 The review of 425ae02c (2026-11-05): a mistyped balance followed by the right one left the refusal
+ * beside the balance he had just added.
+ */
+export async function addAnchorAction(formData: FormData): Promise<void> {
+  landBack(accountPage(formData), formData, await addAnchorResultAction(formData));
 }
 
 const deleteAnchorSchema = z.object({
@@ -232,10 +240,9 @@ export async function deleteAnchorResultAction(
   return { ok: true, data: { accountId: parsed.data.accountId } };
 }
 
+/** Refused on /accounts, as it always was; landing while the account page shows a refusal, back to it with none. */
 export async function deleteAnchorAction(formData: FormData): Promise<void> {
-  const result = await deleteAnchorResultAction(formData);
-  if (result.ok) return;
-  redirect(`/accounts?error=${encodeURIComponent(result.error)}`);
+  landBack(accountPage(formData), formData, await deleteAnchorResultAction(formData), "/accounts");
 }
 
 const setActiveSchema = z.object({
@@ -265,10 +272,9 @@ export async function setAccountActiveResultAction(
   return { ok: true, data: { accountId: parsed.data.accountId, isActive } };
 }
 
+/** Refused on /accounts, as it always was; landing while the account page shows a refusal, back to it with none. */
 export async function setAccountActiveAction(formData: FormData): Promise<void> {
-  const result = await setAccountActiveResultAction(formData);
-  if (result.ok) return;
-  redirect(`/accounts?error=${encodeURIComponent(result.error)}`);
+  landBack(accountPage(formData), formData, await setAccountActiveResultAction(formData), "/accounts");
 }
 
 // ── Manage accounts (§7.2): value-returning actions the client drives ─────────

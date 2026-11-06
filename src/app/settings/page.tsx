@@ -18,14 +18,8 @@ import { InsightsManager } from "@/components/settings/InsightsManager";
 import { RulesManager } from "@/components/settings/RulesManager";
 import { BackupsManager } from "@/components/settings/BackupsManager";
 import { describeState, retentionSentence, toBackupRow } from "@/components/settings/backup-rows";
-import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
-import {
-  clearInsightSelectionsAction,
-  runInsightSelectionAction,
-  stopInsightSelectionAction,
-  updateInsightSettingsAction,
-  updateSettingsAction,
-} from "./actions";
+import { ErrorBanner, errorParam, RefusalShownField } from "@/components/ui/ErrorBanner";
+import { updateSettingsAction } from "./actions";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -74,6 +68,8 @@ export default async function SettingsPage({
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">Thresholds</h2>
           <form action={updateSettingsAction} className="grid gap-4 sm:grid-cols-2">
+            {/* while a refusal shows, a save that lands clears it (`landBack`) */}
+            <RefusalShownField error={error} />
             <Field label="AI monthly cap (USD)">
               <Input name="aiMonthlyCapUsd" type="number" step="0.5" min="0" defaultValue={settings.aiMonthlyCapUsd} className="figures" />
             </Field>
@@ -111,10 +107,7 @@ export default async function SettingsPage({
             lastRun={selectState.lastRun}
             isRunning={selectState.isRunning}
             estPerPoolUsd={EST_USD_PER_POOL}
-            save={updateInsightSettingsAction}
-            run={runInsightSelectionAction}
-            stop={stopInsightSelectionAction}
-            clear={clearInsightSelectionsAction}
+            refusal={error}
           />
         </SurfaceCard>
 

@@ -7,10 +7,10 @@ import {
   setMerchantDefaultCategoryAction,
 } from "@/app/merchants/actions";
 import { CategoryPicker, type CategoryPickerOption } from "@/components/transactions/CategoryPicker";
-import { offerUndoToast } from "@/components/transactions/undo-toast";
+import { offerUndoToast, offerUndoToastWith } from "@/components/transactions/undo-toast";
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui/Toast";
-import { settleAction, useAction } from "@/hooks/useAction";
+import { useAction } from "@/hooks/useAction";
 
 /**
  * The merchant→category rule, editable where the merchant lives (S6): pick a
@@ -46,23 +46,14 @@ export function MerchantDefaultCategory({
     const label = categories.find((c) => c.id === categoryId)?.label ?? "category";
     void run(() => setMerchantDefaultCategoryAction({ merchantId, categoryId }), {
       onSuccess: () => {
-        toast({
-          title: `Default set to ${label}`,
-          action: {
-            label: "Undo",
-            // settle and RETURN: the card keeps itself (and the previous
-            // category in this closure) alive when the undo fails, instead of
-            // dismissing on click and reverting nothing without saying so
-            onAction: async () => {
-              const result = await settleAction(
-                () => setMerchantDefaultCategoryAction({ merchantId, categoryId: defaultCategoryId }),
-                "Couldn’t put the default back — try again",
-              );
-              if (result.ok) refresh();
-              return result;
-            },
-          },
-        });
+        // the shared Undo card: a failed undo keeps it (and the previous category in this closure) alive, and says
+        // what every Undo card says — 🔴 it said its own once, "Couldn’t put the default back — try again" (the review
+        // of batch 9 F, 2026-10-30)
+        offerUndoToastWith(
+          `Default set to ${label}`,
+          () => setMerchantDefaultCategoryAction({ merchantId, categoryId: defaultCategoryId }),
+          refresh,
+        );
         refresh();
       },
     });

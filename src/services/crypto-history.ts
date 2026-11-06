@@ -6,7 +6,8 @@ import { holdingEvents } from "@/db/schema/holding-events";
 import { priceCache } from "@/db/schema/holdings";
 import { addDays, compareDates, todayIso } from "@/lib/dates";
 import { adjustedHoldingEvents } from "./holding-timeline";
-import { valueCentsOf } from "./holdings";
+// from its home, never through `holdings` — which imports the derivation, the cycle `holdings` used to warn of
+import { valueCentsOf } from "@/lib/holding-returns";
 
 /**
  * Investment daily_balances from the quantity timeline (Stage 4a, generalizing

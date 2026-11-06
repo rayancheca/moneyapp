@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/Field";
 import { InlineEditableText } from "@/components/ui/InlineEditableText";
 import { Money } from "@/components/ui/Money";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
 import { budgetCoverageFact } from "@/lib/budget-coverage";
 import { formatDayShort } from "@/lib/format-date";
@@ -63,7 +64,7 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
     const previous = period;
     setPeriod(next);
     startTransition(async () => {
-      const r = await updateBudgetPeriodAction({ budgetId: budget.id, period: next });
+      const r = await settleAction(() => updateBudgetPeriodAction({ budgetId: budget.id, period: next }));
       if (!r.ok) {
         setPeriod(previous);
         toast({ title: r.error, tone: "negative" });
@@ -79,11 +80,13 @@ export function BudgetDetails({ status, rolloverEnabled }: BudgetDetailsProps) {
     patch: { startsOn?: string | null; capCents?: number | null },
     describe: string,
   ): Promise<{ ok: boolean; error?: string }> {
-    const r = await setBudgetRolloverAction({
-      budgetId: budget.id,
-      enabled: rolloverEnabled,
-      ...patch,
-    });
+    const r = await settleAction(() =>
+      setBudgetRolloverAction({
+        budgetId: budget.id,
+        enabled: rolloverEnabled,
+        ...patch,
+      }),
+    );
     if (r.ok) {
       toast({ title: describe });
       router.refresh();

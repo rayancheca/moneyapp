@@ -285,12 +285,16 @@ describe("the acknowledgements a ledger keeps (`left_out_acknowledgements`)", ()
  * read the table through the writer's module — each imported the other. Harmless while neither touched the other at
  * module scope; an uninitialised binding the day one did. A source gate, as /imports' page.test.ts is: the reader is
  * where the lines are asked of it, and the edge runs one way.
+ * 🔴 Review of batch 9 F (2026-10-30): the gate matched the `@/` path alone — `import … from
+ * "../left-out-acknowledgements"` brought the cycle back with it green. It reads the module's name after any path.
  */
 describe("the table's reader and its one writer import one way only", () => {
   const source = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), "utf8");
 
   test("the lines left out read the table themselves — never through the writer's module", () => {
-    expect(source("src/services/import/lines-left-out.ts")).not.toMatch(/from "@\/services\/left-out-acknowledgements"/);
+    // the writer's module by any path — `@/services/…`, `../…`, `./…` — and never the pure lib's (`…-acknowledgement`)
+    const writersModule = /["'](?:[^"']*\/)?left-out-acknowledgements["']/;
+    expect(source("src/services/import/lines-left-out.ts")).not.toMatch(writersModule);
     expect(source("src/services/left-out-acknowledgements.ts")).toMatch(/from "@\/services\/import\/lines-left-out"/);
   });
 });

@@ -35,7 +35,14 @@ const { transactions } = await import("@/db/schema/transactions");
 const { recurringSeries } = await import("@/db/schema/recurring");
 const { MERGE_FILING_CHANGED, mergeFilings } = await import("@/services/recurring-links");
 const { seedHisCarSeries } = await import("@/services/one-charge-fixture");
-const { attachToSeriesAction, mergeIntoSeriesAction } = await import("./actions");
+const {
+  attachToSeriesAction,
+  confirmSeriesAction,
+  detectNowAction,
+  dismissSeriesAction,
+  mergeIntoSeriesAction,
+} = await import("./actions");
+const { refusalShownFields } = await import("@/components/ui/ErrorBanner");
 
 type Ledger = ReturnType<typeof seedHisCarSeries>;
 let his: Ledger;
@@ -133,5 +140,39 @@ describe("attachToSeriesAction — what it filed comes back with it", () => {
     expect(r.ok && r.data.attached).toBe(1);
     expect(r.ok && r.data.filed?.count).toBe(1);
     expect(r.ok && r.data.filed?.categoryPath).toBe("Transport");
+  });
+});
+
+/*
+ * 🔴 The review of 425ae02c (2026-11-05): /recurring's three forms — Detect now, and a suggestion's Confirm and Not
+ * recurring — returned on a success, so a refusal's `?error=` outlived the next press that landed, as it had on
+ * /imports. Each, landing while the page shows a refusal, goes back to /recurring with none (`landBack`).
+ */
+describe("/recurring's form adapters land back on it — with the refusal, or without one", () => {
+  const shown = (form: FormData = new FormData()): FormData => {
+    for (const [name, value] of Object.entries(refusalShownFields("Detection failed"))) form.set(name, value);
+    return form;
+  };
+  const series = (seriesId: string): FormData => {
+    const form = new FormData();
+    form.set("seriesId", seriesId);
+    return form;
+  };
+
+  test("Detect now, landing while a refusal shows, goes back to /recurring with none", async () => {
+    await expect(detectNowAction(shown())).rejects.toThrow(/^NEXT_REDIRECT:\/recurring$/);
+  });
+
+  test("…and with none showing it stays where it is", async () => {
+    await expect(detectNowAction(new FormData())).resolves.toBeUndefined();
+  });
+
+  test("a suggestion confirmed or dismissed while a refusal shows goes back with none", async () => {
+    await expect(confirmSeriesAction(shown(series(his.insuranceId)))).rejects.toThrow(/^NEXT_REDIRECT:\/recurring$/);
+    await expect(dismissSeriesAction(shown(series(his.balanceId)))).rejects.toThrow(/^NEXT_REDIRECT:\/recurring$/);
+  });
+
+  test("a refusal still lands on `?error=`", async () => {
+    await expect(confirmSeriesAction(new FormData())).rejects.toThrow(/^NEXT_REDIRECT:\/recurring\?error=/);
   });
 });

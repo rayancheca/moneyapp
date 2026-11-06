@@ -335,6 +335,19 @@ describe("a charge a never-posted commitment expects to the cent is its first po
     expect(linkRowsMadeActive(bundle.db, [row], TODAY_DEC)).toEqual({ absorbed: 1, firstPostings: 0, filed: [] });
     expect(seriesOf(row).recurringSeriesId).toBe(insurance);
   });
+
+  // ⚖️ default built, not asked (2026-11-05): a first posting is a posting the series counts, an active row — linked to
+  // an excluded one, the one-off would still read owed, and still wait for a first posting to link a second row
+  test("…and a $72.74 he excluded from analytics is no first posting: the one-off still waits for its charge", () => {
+    const TODAY_NOV = "2026-11-20";
+    carInsurance();
+    novemberBalance();
+    const row = post({ postedOn: "2026-11-11", amountCents: -7274, raw: PROGRESSIVE_WF_CARD, accountId: checking });
+    bundle.db.update(transactions).set({ status: "excluded" }).where(eq(transactions.id, row)).run();
+
+    expect(linkRowsMadeActive(bundle.db, [row], TODAY_NOV)).toEqual({ absorbed: 0, firstPostings: 0, filed: [] });
+    expect(seriesOf(row)).toMatchObject({ recurringSeriesId: null, status: "excluded" });
+  });
 });
 
 describe("a series past its last date owns no later charge by description", () => {
@@ -788,6 +801,35 @@ describe("⚖️ default built, not asked (2026-10-29): what the import links to
     expect(seriesOf(excluded).status).toBe("excluded");
     expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 2 rows filed under Income > Salary"]);
     expect([...filed[0]!.transactionIds].sort()).toEqual([active, excluded].sort());
+  });
+
+  /*
+   * ⚖️ default built, not asked (2026-11-05): linking claims what a series counts — an active row, as its stats, the
+   * calendar, the settlement and the posted average read it — so one he excluded that arrives with no link (a rule
+   * that excludes, a twin an un-import restores excluded) is linked by no linker, and filed by nothing. The
+   * import files a row he excluded only when it arrives linked: a re-read's carry, or a link an un-import gave back,
+   * since a re-read never changes what he filed (`FILED_AT_IMPORT`). 🔴 Review of 029d3c41 (batch 9c, 2026-11-04): the
+   * filing and the two linkers read two status rules with nothing saying which was meant.
+   */
+  test("…and one he excluded that arrives with no link is no posting: no linker claims it, nothing files it", () => {
+    const salary = categoryId("Income", "Salary");
+    const pay = confirmedPay();
+    const arrives = (week: number, status: "active" | "excluded"): string => {
+      const [postedOn, raw] = WEEKS[week]!;
+      const id = deposit(postedOn, raw);
+      bundle.db.update(transactions).set({ status }).where(eq(transactions.id, id)).run();
+      return id;
+    };
+    const [active, excluded] = [arrives(0, "active"), arrives(1, "excluded")];
+
+    const { filed, ...linked } = linkRowsMadeActive(bundle.db, [active, excluded], TODAY_OCT);
+
+    expect(linked).toEqual({ absorbed: 1, firstPostings: 0 });
+    expect(seriesOf(active).recurringSeriesId).toBe(pay);
+    expect(filingOf(active)).toEqual(filedByImport(salary));
+    expect(seriesOf(excluded)).toMatchObject({ recurringSeriesId: null, status: "excluded" });
+    expect(filingOf(excluded)).toEqual({ ...unfiled, needsReview: true });
+    expect(filed.map(importFilingLine)).toEqual(["It America LLC (weekly pay): 1 row filed under Income > Salary"]);
   });
 
   test("what the filing feeds is settled in the same step: a recompute afterwards changes nothing", () => {

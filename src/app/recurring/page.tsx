@@ -20,7 +20,7 @@ import { RecurringTabs, type RecurringTab } from "@/components/recurring/Recurri
 import { UpcomingList } from "@/components/recurring/UpcomingList";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
+import { ErrorBanner, errorParam, RefusalShownField } from "@/components/ui/ErrorBanner";
 import { detectNowAction } from "./actions";
 
 export const metadata: Metadata = { title: "Recurring" };
@@ -41,7 +41,7 @@ export default async function RecurringPage({
   const raw = await searchParams;
   const { tab } = searchSchema.parse({ tab: raw.tab }) as { tab: RecurringTab };
   // detectNow / confirmSeries / dismissSeries are `Promise<void>` form actions,
-  // so their failures travel back as ?error= (actions.ts:97,127,139) — the
+  // so their failures travel back as ?error= (`landBack`) — the
   // /budgets pattern. Unread, a confirm refused because its restore point could
   // not be written was indistinguishable from one that quietly did nothing.
   const error = errorParam(raw);
@@ -100,6 +100,8 @@ export default async function RecurringPage({
           description="Detected subscriptions, bills, and salary with next expected dates — feeding an inspectable end-of-month forecast."
         />
         <form action={detectNowAction}>
+          {/* while a refusal shows, a press that lands clears it (`landBack`) */}
+          <RefusalShownField error={error} />
           <button
             type="submit"
             className="rounded-md border border-line bg-surface-raised px-3 py-1.5 text-sm font-medium text-accent transition-colors duration-(--duration-fast) hover:border-accent hover:bg-accent-soft"
@@ -152,6 +154,7 @@ export default async function RecurringPage({
                   narrowed={allTab.narrowed}
                   overdueBySeries={overdueBySeries}
                   today={today}
+                  refusal={error}
                 />
               )}
             </div>

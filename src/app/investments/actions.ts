@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { ASSET_TYPES } from "@/db/schema/holdings";
@@ -25,6 +24,7 @@ import {
   parseAmountField,
   type ActionResult,
 } from "@/app/transactions/action-types";
+import { landBack } from "@/app/refusal-landing";
 
 // the single-argument form reports the SAME message when the field is missing
 // entirely, instead of zod's "expected string, received undefined"
@@ -121,11 +121,9 @@ export async function addHoldingResultAction(
   return { ok: true, data: { symbol: parsed.data.symbol, quantityE8 } };
 }
 
+/** A refusal on `?error=`; an add that lands while the page shows one goes back to /investments with none (`landBack`). */
 export async function addHoldingAction(formData: FormData): Promise<void> {
-  const result = await addHoldingResultAction(formData);
-  if (result.ok) return;
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(`/investments?error=${encodeURIComponent(result.error)}`);
+  landBack("/investments", formData, await addHoldingResultAction(formData));
 }
 
 export interface RefreshPricesSummary {

@@ -30,7 +30,7 @@ import { archiveAccountRadius } from "@/components/accounts/archive-account-radi
 import { balanceListWords } from "@/components/accounts/balance-list-words";
 import { removeBalanceControls, removeBalanceRadius } from "@/components/accounts/remove-balance-radius";
 import { BalanceFigure } from "@/components/accounts/BalanceFigure";
-import { ErrorBanner, errorParam } from "@/components/ui/ErrorBanner";
+import { ErrorBanner, errorParam, RefusalShownField, refusalShownFields } from "@/components/ui/ErrorBanner";
 import { BalanceChartPanel } from "@/components/accounts/BalanceChartPanel";
 import { EditAccountButton } from "@/components/accounts/EditAccountButton";
 import { buildCategoryPickerOptions } from "@/components/transactions/category-options";
@@ -94,9 +94,10 @@ export default async function AccountDetailPage({
 }) {
   const { id } = await params;
   const raw = await searchParams;
-  // `addAnchorAction` (accounts/actions.ts:174) redirects HERE with the reason a
+  // `addAnchorAction` redirects HERE with the reason a
   // balance was refused — "Add a balance you counted" is the form most likely to be
-  // rejected on this page, and until this was read the refusal was invisible.
+  // rejected on this page, and until this was read the refusal was invisible. While it shows, each of the page's
+  // forms carries `REFUSAL_SHOWN`, so a press that lands takes it away (`landBack`).
   const error = errorParam(raw);
   const db = getDb();
   const account = getAccount(db, id);
@@ -382,7 +383,7 @@ export default async function AccountDetailPage({
                 ? "Enter the amount you owe — it counts against your net worth."
                 : "A known balance on a known date anchors this account's history."}
             </p>
-            <AnchorForm accountId={id} isCredit={liability} defaultDate={today} />
+            <AnchorForm accountId={id} isCredit={liability} defaultDate={today} refusal={error} />
           </SurfaceCard>
         )}
 
@@ -426,7 +427,7 @@ export default async function AccountDetailPage({
                       {removal && (
                         <ConfirmActionButton
                           action={deleteAnchorAction}
-                          fields={{ anchorId: a.id, accountId: id }}
+                          fields={{ anchorId: a.id, accountId: id, ...refusalShownFields(error) }}
                           formClassName="inline"
                           triggerLabel="remove"
                           triggerAriaLabel={controls.triggerAriaLabel}
@@ -500,7 +501,7 @@ export default async function AccountDetailPage({
           {account.isActive ? (
             <ConfirmActionButton
               action={setAccountActiveAction}
-              fields={{ accountId: id, isActive: "false" }}
+              fields={{ accountId: id, isActive: "false", ...refusalShownFields(error) }}
               triggerLabel="Archive account"
               triggerClassName="text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:text-ink"
               title="Archive this account"
@@ -516,6 +517,7 @@ export default async function AccountDetailPage({
             />
           ) : (
             <form action={setAccountActiveAction}>
+              <RefusalShownField error={error} />
               <input type="hidden" name="accountId" value={id} />
               <input type="hidden" name="isActive" value="true" />
               <button

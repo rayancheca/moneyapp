@@ -31,7 +31,7 @@ import type { SeriesEndDays } from "@/lib/committed";
 import { isOneCharge } from "@/lib/one-charge";
 import type { Occurrence } from "@/lib/posted-average";
 import { parseAmountHistory, rateOn, seriesAmountCents } from "@/lib/series-kind";
-import { outsidePortfolioCashAccountIds } from "./accounts";
+import { outsidePortfolioCashAccountIds } from "./account-sides";
 import { isAgentsSeries } from "./analytics";
 import {
   billingCarriers,
@@ -714,6 +714,13 @@ export interface AbsorptionResult {
  * recurring" and an ended one is over; neither should be quietly growing.
  * Absorption never CREATES a series, so declining to feed them cannot
  * resurrect a pattern under a new identity.
+ *
+ * ⚖️ default built, not asked (2026-11-05): ACTIVE rows only, as owners and as claims — what a series counts as a
+ * posting (its stats, the calendar, the settlement and the posted average read active rows). A row he excluded that
+ * arrives with no link stays so, as a commitment's first posting leaves it (`planFirstPostings`): linked, it would be a
+ * posting nothing counts. The import files one he excluded only when it arrives linked — a re-read's carry, a link an
+ * un-import gave back (`FILED_AT_IMPORT`). 🔴 Review of 029d3c41 (batch 9c, 2026-11-04): the filing's status rule and
+ * the linkers' differed, with nothing saying which was meant.
  *
  * ⛔ `candidateIds` narrows which untagged rows may be CLAIMED — never whose
  * descriptor is whose. The owner map is always read from the whole ledger,

@@ -14,6 +14,7 @@ import { transactionSubjects } from "@/lib/row-subject";
 import { bulkApplyAction, bulkApplyByFilterAction } from "@/app/transactions/actions";
 import type { TxnPatch } from "@/app/transactions/action-types";
 import type { TransactionStatus } from "@/db/schema/transactions";
+import { settleAction } from "@/hooks/useAction";
 import { Icon } from "@/components/shell/Icon";
 import { BulkActionBar } from "./BulkActionBar";
 import { CategoryPicker, type CategoryPickerOption } from "./CategoryPicker";
@@ -220,9 +221,12 @@ export function TransactionsLedger({
   }
 
   function applyPatch(patch: TxnPatch, verb: string): void {
-    const run = allMatching
-      ? bulkApplyByFilterAction({ params: selectionParams, patch })
-      : bulkApplyAction({ ids: [...selected], patch });
+    // settled, as every press is: a refusal, or a call that never reached the server, says why
+    const run = settleAction(() =>
+      allMatching
+        ? bulkApplyByFilterAction({ params: selectionParams, patch })
+        : bulkApplyAction({ ids: [...selected], patch }),
+    );
     void run.then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });

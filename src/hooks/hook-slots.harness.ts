@@ -42,6 +42,8 @@ export class HookSlots {
   private cursor = 0;
   /** the effects the last render asked for, in its order — run only when a test mounts it (`mount`) */
   private effects: (() => unknown)[] = [];
+  /** what the transitions started from these renders threw, until `settle` throws it */
+  private readonly thrown: unknown[] = [];
 
   render<P>(component: (props: P) => ReactNode, props: P): ReactNode {
     const previous = host;
@@ -84,7 +86,14 @@ export class HookSlots {
 
   useTransition(): [boolean, (fn: () => unknown) => void] {
     this.cursor++;
-    return [false, (fn) => void fn()];
+    return [
+      false,
+      (fn) => {
+        const done = fn();
+        // React throws an async transition's rejection to the page's error boundary — `settle` throws it here
+        if (done instanceof Promise) done.catch((error: unknown) => void this.thrown.push(error));
+      },
+    ];
   }
 
   // an effect runs after a mount, and nothing stepped here is mounted: as in a static render, it never runs — unless
@@ -107,9 +116,14 @@ export class HookSlots {
   /**
    * Let every answer already given finish what it started — the awaits behind a resolved action, and the state they
    * set. An answer the test has not given yet stays pending: settling never waits on it.
+   *
+   * What a transition threw is thrown here, as React throws it to the page's error boundary and the page becomes its
+   * error screen. 🔴 Dropped (`void fn()`), it was an unhandled rejection no assertion was about: the review of
+   * b96b7546 (2026-11-05) tapped a P&L day with the server down and /investments became "This page didn't render".
    */
   async settle(): Promise<void> {
     for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setImmediate(resolve));
+    if (this.thrown.length > 0) throw this.thrown.splice(0)[0];
   }
 }
 

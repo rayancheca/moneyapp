@@ -173,6 +173,8 @@ export function planFirstPostings(
     .from(transactions)
     .where(
       and(
+        // a posting the series counts: one he excluded is no first posting (⚖️ default built, not asked, 2026-11-05 —
+        // as `absorbIntoLiveSeries` says)
         eq(transactions.status, "active"),
         isNull(transactions.recurringSeriesId),
         lte(transactions.postedOn, today),

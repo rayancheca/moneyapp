@@ -29,11 +29,17 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/useViewState", () => ({ useViewState: () => ({ state: {}, setView: vi.fn(), isPending: false }) }));
 // the card is not what is under test, and its own fixture is a month of forecast math
 vi.mock("./ForecastCard", () => ({ ForecastCard: () => null }));
+vi.mock("@/components/ui/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui/Toast")>()),
+  toast: vi.fn(),
+}));
 
 const { ForecastAndCalendar } = await import("./ForecastAndCalendar");
 const { RecurringCalendar } = await import("./RecurringCalendar");
 const { RecurringTabs } = await import("./RecurringTabs");
 const { CalendarGrid } = await import("@/components/ui/CalendarGrid");
+const { ForecastCard } = await import("./ForecastCard");
+const { toast } = await import("@/components/ui/Toast");
 const actions = await import("@/app/recurring/actions");
 
 function month(monthKey: string, entryCount: number): RecurringCalendarMonth {
@@ -179,5 +185,43 @@ describe("ForecastAndCalendar — the Calendar badge follows the grid when it pa
     expect(load.mock.calls.map(([arg]) => arg.monthKey)).toEqual(["2026-10", "2026-11"]);
     const strip = findElement(page.render(ForecastAndCalendar, props), RecurringTabs)!;
     expect((strip.props.counts as Record<string, number>).calendar).toBe(13);
+  });
+});
+
+/*
+ * 🔴 The review of b96b7546 (2026-11-05): the card follows the grid by `loadMonthForecastAction`, awaited inside
+ * `startTransition(async …)` and let through the press gate by its name — a call that never reached the server threw
+ * to the page's error boundary, as /investments' P&L day did (measured there: "This page didn't render … Failed to
+ * fetch"). A forecast that fails leaves the card it had standing, and says why.
+ */
+describe("ForecastAndCalendar — a forecast that fails to load", () => {
+  test("one that never reaches the server leaves September's card standing, and says why", async () => {
+    vi.mocked(toast).mockClear();
+    vi.mocked(actions.loadMonthForecastAction).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    vi.mocked(actions.loadRecurringMonthAction).mockResolvedValueOnce({ ok: true, data: month("2026-10", 14) });
+    const page = new HookSlots();
+    const grid = new HookSlots();
+    const props = {
+      initialForecast: { monthKey: "2026-09" } as MonthForecast,
+      initialMonth: month("2026-09", 12),
+      today: "2026-09-15",
+      view: {},
+      tab: "calendar" as const,
+      counts: { upcoming: 10, all: 15, calendar: 12 },
+    };
+    const calendar = findElement(page.render(ForecastAndCalendar, props), RecurringCalendar)!;
+    const cells = findElement(
+      grid.render(RecurringCalendar, calendar.props as unknown as Parameters<typeof RecurringCalendar>[0]),
+      CalendarGrid,
+    )!;
+    (cells.props.onMonthChange as (key: string) => void)("2026-10");
+    await grid.settle();
+    await page.settle();
+
+    expect(vi.mocked(toast).mock.calls).toEqual([[{ title: "Failed to fetch", tone: "negative" }]]);
+    const drawn = page.render(ForecastAndCalendar, props);
+    expect((findElement(drawn, ForecastCard)!.props.forecast as MonthForecast).monthKey).toBe("2026-09");
+    // the month itself loaded: the grid's badge moved with it
+    expect((findElement(drawn, RecurringTabs)!.props.counts as Record<string, number>).calendar).toBe(14);
   });
 });

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { confirmSeriesAction, dismissSeriesAction } from "@/app/recurring/actions";
 import { Money } from "@/components/ui/Money";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { SERIES_EVIDENCE_LABEL, seriesEvidenceNote, suggestionNote, type SeriesEvidence } from "@/lib/series-evidence";
 import { billedWithPhrase } from "@/lib/billed-with";
 import { postedAvgNotes } from "@/lib/posted-average";
@@ -50,6 +51,7 @@ export function AllSeriesView({
   narrowed = null,
   overdueBySeries,
   today,
+  refusal = null,
 }: {
   series: SeriesView[];
   /** how much of the tab a link narrowed it to (`seriesListed`) — null, or left out, when nothing did */
@@ -57,6 +59,8 @@ export function AllSeriesView({
   overdueBySeries: OverdueBySeries;
   /** so a Next date outside this year names its year — see `futureDateLabel` */
   today: string;
+  /** the refusal the page shows (`?error=`): while one shows, a Confirm or a Dismiss that lands takes it away (`landBack`) */
+  refusal?: string | null;
 }) {
   const suggestions = series.filter((s) => s.status === "detected");
   const confirmed = series.filter((s) => s.status === "confirmed");
@@ -99,7 +103,7 @@ export function AllSeriesView({
           </div>
           <ul className="grid gap-2 sm:grid-cols-2">
             {suggestions.map((s) => (
-              <SuggestionCard key={s.id} series={s} />
+              <SuggestionCard key={s.id} series={s} refusal={refusal} />
             ))}
           </ul>
         </section>
@@ -119,6 +123,7 @@ export function AllSeriesView({
           series={active}
           overdueBySeries={overdueBySeries}
           today={today}
+          refusal={refusal}
           empty={suggestions.length > 0 ? "No active series yet — confirm a suggestion above." : "No active series yet."}
         />
       ) : null}
@@ -126,22 +131,22 @@ export function AllSeriesView({
           been checked through (2026-10-08). Their own section, beside Active and never muted: nothing is known to
           be wrong — the ledger has not looked yet. */}
       {awaitingStatements.length > 0 ? (
-        <SeriesSection title={SERIES_EVIDENCE_LABEL["awaiting-statements"]} note={noteOf("awaiting-statements", awaitingStatements)} series={awaitingStatements} overdueBySeries={overdueBySeries} today={today} />
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["awaiting-statements"]} note={noteOf("awaiting-statements", awaitingStatements)} series={awaitingStatements} overdueBySeries={overdueBySeries} today={today} refusal={refusal} />
       ) : null}
       {late.length > 0 ? (
-        <SeriesSection title="Running late" note={noteOf("running-late", late)} series={late} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Running late" note={noteOf("running-late", late)} series={late} overdueBySeries={overdueBySeries} today={today} refusal={refusal} muted />
       ) : null}
       {neverBilled.length > 0 ? (
-        <SeriesSection title="Never billed" note={noteOf("never-billed", neverBilled)} series={neverBilled} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Never billed" note={noteOf("never-billed", neverBilled)} series={neverBilled} overdueBySeries={overdueBySeries} today={today} refusal={refusal} muted />
       ) : null}
       {/* a live transfer or `other` series lapses too — the note says what stops in their words (`lapsedSectionNote`, through `noteOf`) */}
       {lapsed.length > 0 ? (
-        <SeriesSection title="Lapsed" note={noteOf("lapsed", lapsed)} series={lapsed} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title="Lapsed" note={noteOf("lapsed", lapsed)} series={lapsed} overdueBySeries={overdueBySeries} today={today} refusal={refusal} muted />
       ) : null}
       {/* 🔴 A month past its one day the Nov 11 balance sat under "Never billed — registered by hand and forecast",
           while the subscriptions card counted it ended (review of 0af5689). Filed where the card files it. */}
       {scheduleEnded.length > 0 ? (
-        <SeriesSection title={SERIES_EVIDENCE_LABEL["schedule-ended"]} note={noteOf("schedule-ended", scheduleEnded)} series={scheduleEnded} overdueBySeries={overdueBySeries} today={today} muted />
+        <SeriesSection title={SERIES_EVIDENCE_LABEL["schedule-ended"]} note={noteOf("schedule-ended", scheduleEnded)} series={scheduleEnded} overdueBySeries={overdueBySeries} today={today} refusal={refusal} muted />
       ) : null}
     </div>
   );
@@ -163,7 +168,7 @@ function NarrowedNote({ narrowed }: { narrowed: SeriesNarrowing }) {
   );
 }
 
-function SuggestionCard({ series: s }: { series: SeriesView }) {
+function SuggestionCard({ series: s, refusal }: { series: SeriesView; refusal: string | null }) {
   return (
     <li className="rounded-(--radius-card) border border-accent/30 bg-accent-soft/40 p-3">
       <div className="flex items-start justify-between gap-2">
@@ -207,6 +212,7 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
             ⚠️ NOT gated, and that is left for the owner: End is behind a full
             blast-radius Confirm and these post immediately. */}
         <form action={confirmSeriesAction}>
+          <RefusalShownField error={refusal} />
           <input type="hidden" name="seriesId" value={s.id} />
           <button
             type="submit"
@@ -217,6 +223,7 @@ function SuggestionCard({ series: s }: { series: SeriesView }) {
           </button>
         </form>
         <form action={dismissSeriesAction}>
+          <RefusalShownField error={refusal} />
           <input type="hidden" name="seriesId" value={s.id} />
           <button
             type="submit"
@@ -237,6 +244,7 @@ function SeriesSection({
   series,
   overdueBySeries,
   today,
+  refusal,
   muted,
   empty = "None.",
 }: {
@@ -245,6 +253,7 @@ function SeriesSection({
   series: SeriesView[];
   overdueBySeries: OverdueBySeries;
   today: string;
+  refusal: string | null;
   muted?: boolean;
   /** what an empty section says — only Active stands empty (above) */
   empty?: string;
@@ -288,7 +297,7 @@ function SeriesSection({
             </thead>
             <tbody>
               {series.map((s) => (
-                <SeriesRow key={s.id} series={s} overdue={overdueBySeries.get(s.id) ?? null} today={today} />
+                <SeriesRow key={s.id} series={s} overdue={overdueBySeries.get(s.id) ?? null} today={today} refusal={refusal} />
               ))}
             </tbody>
           </table>
@@ -302,10 +311,12 @@ function SeriesRow({
   series: s,
   overdue,
   today,
+  refusal,
 }: {
   series: SeriesView;
   overdue: OverdueEntry | null;
   today: string;
+  refusal: string | null;
 }) {
   // ⚖️ what is billed inside its payments (§6A 59), and a payment that covered more than one charge (default, not asked,
   // 2026-10-22): what its posted average holds — the series page's words, one list (`postedAvgNotes`)
@@ -393,6 +404,7 @@ function SeriesRow({
       </td>
       <td className="px-4 py-3 text-right">
         <form action={dismissSeriesAction}>
+          <RefusalShownField error={refusal} />
           <input type="hidden" name="seriesId" value={s.id} />
           {/* ⛔ The name starts with the word on the button (WCAG 2.5.3). This
               read "Mark X as not recurring" — the suggestion card's name, whose

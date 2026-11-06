@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { refreshIntradayAction } from "@/app/investments/actions";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { SESSION_TZ_LABEL, type SessionChartView } from "@/lib/intraday-axis";
 import { formatDayLong } from "@/lib/format-date";
 
@@ -52,7 +53,7 @@ export function SessionNote({ session, pricedSymbols, totalSymbols, closeOn, tod
 
   function load() {
     startTransition(async () => {
-      const res = await refreshIntradayAction();
+      const res = await settleAction(() => refreshIntradayAction());
       if (!res.ok) {
         toast({ title: "Couldn't load today's session", description: res.error, tone: "negative" });
         return;

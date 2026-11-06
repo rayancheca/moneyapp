@@ -140,6 +140,15 @@ const REASSURANCE =
 const GIVEN_BACK = "given back when the same lines are imported again";
 
 /**
+ * What a row the un-import puts back goes through: the linking and filing of an import's own rows
+ * (`linkRowsMadeActive` — ⚖️ default A, 304c59a4: what links to a series he confirmed is filed under its category; 9c,
+ * 029d3c41: one he excluded, too). 🔴 Review of batch 9 F (2026-10-30): the line named the restore alone. Measured on
+ * his ledger copy 2026-11-05: un-importing any of 15 of his 454 files would put back 71 rows, none of them linked yet.
+ */
+const PUT_BACK =
+  "linked and filed as an import's rows are: one linked to a series you confirmed is filed under its category";
+
+/**
  * 🔴 An export whose rows record lines of statements imported after it "deleted every row it brought in", and did:
  * un-importing Spending Report PDF (1).pdf put 8 reconciled Chase Sapphire periods into gap (a copy of the real ledger,
  * 2026-09-16). Those rows stay under a file that prints them (`printed-lines`), and the headline says so.
@@ -276,7 +285,7 @@ export function unimportRadius({
       }),
       ...optional(counts.duplicateSurvivors > 0, {
         label: "…of which comes back",
-        value: `${countPhrase(counts.duplicateSurvivors, "row")} whose retired duplicate is restored`,
+        value: `${countPhrase(counts.duplicateSurvivors, "row")} whose retired duplicate is restored — ${PUT_BACK}`,
       }),
       ...optional(underCopy.length > 0, {
         label: "Transactions kept under another download of this statement",

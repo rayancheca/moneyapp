@@ -7,11 +7,8 @@ import { holdings, priceCache, ASSET_TYPES, type AssetType } from "@/db/schema/h
 import { financialWindowMessage, isWithinFinancialWindow } from "@/lib/date-window";
 import { isValidIsoDate, todayIso } from "@/lib/dates";
 import { valueCentsOf } from "@/lib/holding-returns";
-// NOTE: derivation → crypto-history → holdings closes an import cycle here.
-// It is safe (every cross-module reference is inside a function body, never at
-// module scope) but do not add a module-scope use of a derivation export. The
-// cycle disappears the day crypto-history imports valueCentsOf from
-// @/lib/holding-returns — its real home — instead of re-importing it from here.
+// derivation → crypto-history → holdings closed an import cycle here until crypto-history read valueCentsOf from
+// @/lib/holding-returns, its real home (2026-11-05); import-cycles.test.ts holds src to the cycles it names
 import { rebuildAccount } from "./derivation";
 
 /**

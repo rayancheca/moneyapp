@@ -101,6 +101,13 @@ const KEPT = "Transactions kept, detached from the file";
 const NOT_REDERIVED = "Categorized by Claude, or with no recorded source";
 const PRINTED_ELSEWHERE = "Transactions kept under another file that prints them";
 const GIVEN_BACK = "given back when the same lines are imported again";
+/*
+ * A row an un-import puts back is linked and filed as an import's rows are (`linkRowsMadeActive` — ⚖️ default A,
+ * 304c59a4, and 9c, 029d3c41), and the line that says what comes back says so. 🔴 Review of batch 9 F (2026-10-30): it
+ * named the restore alone, while a row put back linked to a series he confirmed is filed under its category.
+ */
+const PUT_BACK_FILED =
+  "linked and filed as an import's rows are: one linked to a series you confirmed is filed under its category";
 
 describe("unimportRadius — what un-importing a statement deletes, and what stays", () => {
   test("a file with nothing attached keeps its headline, and counts the transfer legs it deletes", () => {
@@ -132,7 +139,7 @@ describe("unimportRadius — what un-importing a statement deletes, and what sta
       { label: "Transfer legs deleted", value: "4 legs — a partner left alone in its transfer is unlinked, and linked again once the same line is imported again — unless by then the partner was deleted by hand or linked elsewhere" },
       { label: "Categorized by you", value: "no transactions" },
       { label: "Money leaving the ledger", value: "$798.48 in · $0.00 out" },
-      { label: "…of which comes back", value: "4 rows whose retired duplicate is restored" },
+      { label: "…of which comes back", value: `4 rows whose retired duplicate is restored — ${PUT_BACK_FILED}` },
       { label: KEPT, value: "5 transactions filed under it by hand" },
       { label: "Transfer legs kept", value: "5 legs — 4 still linked, 1 not linked to any other leg" },
       { label: "Recorded balances removed", value: "2 balances" },

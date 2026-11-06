@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox, Field, Input, Select } from "@/components/ui/Field";
 import { Sheet } from "@/components/ui/Sheet";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { ACCOUNT_TYPES, ACCOUNT_SUBTYPES, type AccountType, type AccountSubtype } from "@/db/schema/accounts";
 
 export interface EditableAccount {
@@ -66,16 +67,18 @@ export function EditAccountSheet({
       return;
     }
     setSaving(true);
-    void editAccountAction({
-      accountId: account.id,
-      name,
-      institutionId,
-      last4,
-      type,
-      subtype: effectiveSubtype,
-      paymentSourceAccountId: type === "credit" && paymentSource !== "" ? paymentSource : null,
-      confirmRederive,
-    }).then((r) => {
+    void settleAction(() =>
+      editAccountAction({
+        accountId: account.id,
+        name,
+        institutionId,
+        last4,
+        type,
+        subtype: effectiveSubtype,
+        paymentSourceAccountId: type === "credit" && paymentSource !== "" ? paymentSource : null,
+        confirmRederive,
+      }),
+    ).then((r) => {
       setSaving(false);
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });

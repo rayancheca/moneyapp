@@ -64,7 +64,7 @@ export default async function InvestmentsPage({
 }) {
   const raw = await searchParams;
   // addHoldingAction is a `Promise<void>` form action, so its failures travel
-  // back as ?error= (actions.ts:113). Unread, an add refused by validation — or
+  // back as ?error= (`landBack`). Unread, an add refused by validation — or
   // by a restore point that could not be written — was indistinguishable from
   // one that quietly did nothing. Rendered in BOTH page branches below (:94, :156)
   // so the message can never land on a branch that drops it.
@@ -209,6 +209,7 @@ export default async function InvestmentsPage({
               .filter((a) => ownBooks.has(a.id))
               .map((a) => ({ id: a.id, name: a.name, subtype: a.subtype }))}
             defaultDate={today}
+            refusal={error}
           />
         </div>
       </div>

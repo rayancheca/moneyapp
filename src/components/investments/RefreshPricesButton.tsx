@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { refreshPricesAction } from "@/app/investments/actions";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 
 /** Press-time clock format for the "as of" stamp ("2:34 PM"). Client-only, so
  *  it never runs during SSR (asOf is null until a press) — no hydration drift. */
@@ -23,7 +24,7 @@ export function RefreshPricesButton() {
 
   function refresh() {
     startTransition(async () => {
-      const res = await refreshPricesAction();
+      const res = await settleAction(() => refreshPricesAction());
       if (!res.ok) {
         toast({ title: "Couldn't refresh prices", description: res.error, tone: "negative" });
         return;

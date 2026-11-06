@@ -1,6 +1,6 @@
 import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { noScheduleReason, type SeriesEvidence, type SeriesStatusForCopy } from "@/lib/series-evidence";
 
 // the server action pulls in next/cache and the database client
@@ -8,9 +8,10 @@ vi.mock("@/app/recurring/actions", () => ({ setSeriesOverridesAction: vi.fn() })
 // what a Save says — asked of the toast it raises
 vi.mock("@/components/ui/Toast", () => ({ toast: vi.fn() }));
 
-const { CadenceSentence } = await import("./CadenceSentence");
+const { CadenceSentence, pressSeriesOverride } = await import("./CadenceSentence");
 const { setSeriesOverridesAction } = await import("@/app/recurring/actions");
 const { toast } = await import("@/components/ui/Toast");
+const { ACTION_FAILED } = await import("@/hooks/useAction");
 
 const EVERY_EVIDENCE: readonly SeriesEvidence[] = ["active", "never-billed", "awaiting-statements", "running-late", "lapsed", "schedule-ended"];
 const EVERY_STATUS: readonly SeriesStatusForCopy[] = ["detected", "confirmed", "dismissed", "ended"];
@@ -307,5 +308,93 @@ describe("CadenceSentence — what the rent carries says the day it falls due be
     vi.mocked(toast).mockClear();
     dateEditorOf({ ...utilities, dueWith: null }).onSave(null);
     await vi.waitFor(() => expect(toast).toHaveBeenCalledWith({ title: "Next date reset to detected" }));
+  });
+});
+
+/** The sentence's three editors as it hands them over, read off the element tree, as `dateEditorOf` reads one. */
+function editorsOf(overrides: Partial<SentenceProps>): {
+  pick: (cadence: "monthly" | null) => void;
+  saveDate: (date: string | null) => void;
+  saveAmount: (cents: number | null) => void;
+} {
+  const props: Record<string, unknown>[] = [];
+  const walk = (n: ReactNode): void => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (!isValidElement<Record<string, unknown> & { children?: ReactNode }>(n)) return;
+    props.push(n.props);
+    walk(n.props.children);
+  };
+  walk(CadenceSentence(propsOf("confirmed", "active", overrides)));
+  const one = <T,>(key: string, test: (p: Record<string, unknown>) => boolean): T => {
+    const found = props.filter(test);
+    expect(found, key).toHaveLength(1);
+    return found[0]![key] as T;
+  };
+  return {
+    pick: one("onPick", (p) => typeof p.onPick === "function"),
+    saveDate: one("onSave", (p) => typeof p.onSave === "function" && typeof p.fieldLabel === "string"),
+    saveAmount: one("onSave", (p) => typeof p.onSave === "function" && typeof p.cents === "number"),
+  };
+}
+
+/*
+ * 🔴 Review of 7b7443b2 (2026-11-05, a dev server over his ledger copy 10-29b): the sentence's three editors awaited
+ * their save with no catch, and each dropped the promise — on HBO Max's page, Monthly picked from the cadence menu with
+ * the server down rejected "Failed to fetch" unhandled: no toast, and the sentence still read "charges annual". Settled
+ * (`settleAction`), a save that never reached the server says what it threw, as a refusal says its reason, and nothing
+ * is re-read as if it had landed.
+ */
+describe("CadenceSentence — an editor's save that is refused, or never reaches the server, says why", () => {
+  const onChanged = vi.fn();
+  const toasts = () => vi.mocked(toast).mock.calls.map(([t]) => t);
+
+  beforeEach(() => {
+    vi.mocked(setSeriesOverridesAction).mockReset();
+    vi.mocked(toast).mockClear();
+    onChanged.mockClear();
+  });
+
+  test("a save that lands re-reads the page and says what it set", async () => {
+    vi.mocked(setSeriesOverridesAction).mockResolvedValue({ ok: true, data: {} });
+
+    await pressSeriesOverride("s1", { userCadence: "monthly" }, "Cadence set to monthly", onChanged);
+
+    expect(setSeriesOverridesAction).toHaveBeenCalledExactlyOnceWith({ seriesId: "s1", userCadence: "monthly" });
+    expect(onChanged).toHaveBeenCalledOnce();
+    expect(toasts()).toEqual([{ title: "Cadence set to monthly" }]);
+  });
+
+  test("a refusal says its reason, and nothing is re-read", async () => {
+    vi.mocked(setSeriesOverridesAction).mockResolvedValue({ ok: false, error: "Series not found" });
+
+    await pressSeriesOverride("s1", { userAmountCents: -1599 }, "Amount updated", onChanged);
+
+    expect(toasts()).toEqual([{ title: "Series not found", tone: "negative" }]);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  test("a save that never reached the server says what it threw — or what every press says", async () => {
+    vi.mocked(setSeriesOverridesAction).mockRejectedValueOnce(new Error("Failed to fetch")).mockRejectedValueOnce("nope");
+
+    await pressSeriesOverride("s1", { userCadence: "monthly" }, "Cadence set to monthly", onChanged);
+    await pressSeriesOverride("s1", { userCadence: "monthly" }, "Cadence set to monthly", onChanged);
+
+    expect(toasts()).toEqual([
+      { title: "Failed to fetch", tone: "negative" },
+      { title: ACTION_FAILED, tone: "negative" },
+    ]);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  test("…and each of the three editors saves through it: the cadence menu, the date, the amount", async () => {
+    vi.mocked(setSeriesOverridesAction).mockRejectedValue(new Error("Failed to fetch"));
+    const editors = editorsOf({ nextExpectedOn: "2026-11-15" });
+
+    editors.pick("monthly");
+    editors.saveDate("2026-11-20");
+    editors.saveAmount(-1599);
+
+    await vi.waitFor(() => expect(toasts()).toHaveLength(3));
+    expect(toasts()).toEqual(Array.from({ length: 3 }, () => ({ title: "Failed to fetch", tone: "negative" })));
   });
 });

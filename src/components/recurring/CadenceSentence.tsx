@@ -5,6 +5,7 @@ import { setSeriesOverridesAction } from "@/app/recurring/actions";
 import { CADENCES, type Cadence, type SeriesKind } from "@/db/schema/recurring";
 import { Popover, usePopover } from "@/components/ui/Popover";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { formatCents, parseAmountToCents } from "@/lib/money";
 import { ONE_CHARGE_WORD } from "@/lib/one-charge";
 import {
@@ -56,6 +57,32 @@ interface CadenceSentenceProps {
   onChanged: () => void;
 }
 
+/** What one of the sentence's editors writes: a cadence, a next date or an amount, or null to hand it back. */
+type SeriesOverridePatch = Omit<Parameters<typeof setSeriesOverridesAction>[0], "seriesId">;
+
+/**
+ * A press of one of the sentence's editors — the cadence menu, the date and the amount — made at module level so what
+ * it says is tested where it is raised (CadenceSentence.test.ts). Settled (`settleAction`): a save that never reached
+ * the server says what the call threw, as a refusal says its reason, and nothing is re-read as if it had landed.
+ * 🔴 Review of 7b7443b2 (2026-11-05, a dev server over his ledger copy 10-29b): it awaited the save with no catch, and
+ * each editor dropped the promise — on HBO Max's page, Monthly picked with the server down rejected "Failed to fetch"
+ * unhandled: no toast, and the sentence still read "charges annual".
+ */
+export async function pressSeriesOverride(
+  seriesId: string,
+  patch: SeriesOverridePatch,
+  label: string,
+  onChanged: () => void,
+): Promise<void> {
+  const r = await settleAction(() => setSeriesOverridesAction({ seriesId, ...patch }));
+  if (!r.ok) {
+    toast({ title: r.error, tone: "negative" });
+    return;
+  }
+  onChanged();
+  toast({ title: label });
+}
+
 /** A dotted-underline token that opens an editor; carries an override marker. */
 function tokenClass(overridden: boolean): string {
   return `rounded px-0.5 font-medium underline decoration-dotted decoration-ink-faint underline-offset-4 outline-offset-2 transition-colors duration-(--duration-fast) hover:decoration-accent hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
@@ -91,17 +118,8 @@ export function CadenceSentence(props: CadenceSentenceProps) {
      from it" — the 5th off a stored 2026-08-05, its editor saving a date the lapse never reads. */
   const over = !seriesIsProjected(status, evidence);
 
-  async function save(
-    patch: Omit<Parameters<typeof setSeriesOverridesAction>[0], "seriesId">,
-    label: string,
-  ): Promise<void> {
-    const r = await setSeriesOverridesAction({ seriesId, ...patch });
-    if (!r.ok) {
-      toast({ title: r.error, tone: "negative" });
-      return;
-    }
-    onChanged();
-    toast({ title: label });
+  function save(patch: SeriesOverridePatch, label: string): Promise<void> {
+    return pressSeriesOverride(seriesId, patch, label, onChanged);
   }
 
   /* ⚖️ What the date editor calls its date, and its Save — and, its day falling due on its carrier's later one, that

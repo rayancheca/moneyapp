@@ -7,6 +7,7 @@ import { Popover, usePopover } from "@/components/ui/Popover";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/shell/Icon";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { formatCents } from "@/lib/money";
 import type { BudgetPeriodKind } from "@/db/schema/budgets";
 import type { BudgetGuide } from "@/services/budget-guide";
@@ -63,7 +64,7 @@ export function BudgetAmountEditor({ budgetId, amountCents, guide, period, categ
     // round-trip can't be double-submitted while the button shows its spinner.
     if (saving) return;
     setSaving(true);
-    void updateBudgetAmountAction({ budgetId, amount })
+    void settleAction(() => updateBudgetAmountAction({ budgetId, amount }))
       .then((r) => {
         if (!r.ok) {
           toast({ title: r.error, tone: "negative" });

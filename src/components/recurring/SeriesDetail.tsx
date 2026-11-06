@@ -34,6 +34,7 @@ import { Menu } from "@/components/ui/Menu";
 import { Money } from "@/components/ui/Money";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { toast } from "@/components/ui/Toast";
+import { settleAction } from "@/hooks/useAction";
 import { Icon, type IconName } from "@/components/shell/Icon";
 import type { SeriesKind, SeriesStatus } from "@/db/schema/recurring";
 import type { SeriesDetail as SeriesDetailData } from "@/services/recurring-detail";
@@ -153,7 +154,7 @@ export function SeriesDetail({
   const endInput = seriesEndInput(data);
 
   function setStatus(status: "confirmed" | "dismissed" | "ended", label: string): void {
-    void setSeriesStatusAction({ seriesId: data.id, status }).then((r) => {
+    void settleAction(() => setSeriesStatusAction({ seriesId: data.id, status })).then((r) => {
       if (!r.ok) {
         toast({ title: r.error, tone: "negative" });
         return;

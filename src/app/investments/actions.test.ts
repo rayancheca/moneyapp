@@ -36,7 +36,8 @@ const { accounts } = await import("@/db/schema/accounts");
 const { holdings } = await import("@/db/schema/holdings");
 const { institutions } = await import("@/db/schema/institutions");
 const { createAccount } = await import("@/services/accounts");
-const { addHoldingResultAction } = await import("./actions");
+const { addHoldingAction, addHoldingResultAction } = await import("./actions");
+const { refusalShownFields } = await import("@/components/ui/ErrorBanner");
 
 let brokerage: string;
 let book: string;
@@ -97,5 +98,25 @@ describe("addHoldingResultAction — hand-entered positions go to his own books 
 
     expect(result.ok).toBe(false);
     expect(heldIn(agentic.id)).toEqual([]);
+  });
+});
+
+/*
+ * 🔴 The review of 425ae02c (2026-11-05): the Add-holding form returned on a success, so a refusal's `?error=` outlived
+ * the next add that landed, as it had on /imports (`landBack`).
+ */
+describe("addHoldingAction (the <form action> adapter) lands back on /investments", () => {
+  const entries = { accountId: "", symbol: "VOO", assetType: "etf", quantity: "1", occurredOn: "2026-08-21" };
+
+  test("an add that lands while a refusal shows goes back to /investments with none — its banner gone", async () => {
+    const shown = form({ ...entries, accountId: brokerage, ...refusalShownFields("Quantity: enter a number") });
+    await expect(addHoldingAction(shown)).rejects.toThrow(/^NEXT_REDIRECT:\/investments$/);
+  });
+
+  test("…and one with none showing stays where it is; a refusal lands on `?error=`", async () => {
+    await expect(addHoldingAction(form({ ...entries, accountId: brokerage, symbol: "VTI" }))).resolves.toBeUndefined();
+    await expect(addHoldingAction(form({ ...entries, accountId: book }))).rejects.toThrow(
+      /^NEXT_REDIRECT:\/investments\?error=/,
+    );
   });
 });

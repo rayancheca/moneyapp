@@ -8,7 +8,7 @@ import type { AttributionBandKey } from "@/lib/attribution";
 import { addDays, monthKey, periodBounds, todayIso } from "@/lib/dates";
 import { daysThatBanked } from "@/lib/posted-average";
 import { seriesAmountCents, seriesIsIncomeOrSpending } from "@/lib/series-kind";
-import { outsidePortfolioCashAccountIds } from "./accounts";
+import { outsidePortfolioCashAccountIds } from "./account-sides";
 import { seriesCategoryIds } from "./series-category";
 import { activeSplitsInRange } from "./transaction-splits";
 

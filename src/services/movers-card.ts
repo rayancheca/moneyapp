@@ -11,7 +11,7 @@ import { formatCents } from "@/lib/money";
 import { listAccounts, outsidePortfolioCashAccountIds } from "./accounts";
 import { activeTxnsInRange, loadCategoryIndex, monthlySpending, spendingBucket, transactionsHref } from "./analytics";
 import { accountsAwaitingStatements } from "./cash-wallet-rule";
-import { SPEND_BASELINE_MONTHS } from "./committed";
+import { SPEND_BASELINE_MONTHS } from "@/lib/spend-baseline";
 import {
   accountsThatDate,
   awaitedAmong,

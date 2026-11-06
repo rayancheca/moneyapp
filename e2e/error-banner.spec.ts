@@ -79,7 +79,8 @@ test("renders ?error= — /accounts/[id] (the Record-a-balance path)", async ({ 
  * Drift guard: a NEW action that redirects with `?error=` must land on a page that
  * renders it. Derives the expectation from the action sources rather than a list a
  * future pass would forget to update — `src/app/<segment>/actions.ts` containing an
- * `error=` redirect implies `/<segment>` is a landing page and must be covered above.
+ * `error=` redirect implies `/<segment>` is a landing page and must be covered above. So does one that lands through
+ * `landBack` (src/app/refusal-landing.ts), which says its refusal on `?error=` from there.
  */
 test("every action that redirects with ?error= lands on a covered page", () => {
   const appDir = path.join(process.cwd(), "src", "app");
@@ -91,7 +92,7 @@ test("every action that redirects with ?error= lands on a covered page", () => {
     for (const file of ["actions.ts", "rules-actions.ts"]) {
       const p = path.join(appDir, seg, file);
       try {
-        if (/[?&]error=/.test(readFileSync(p, "utf8"))) return true;
+        if (/[?&]error=|\blandBack\(/.test(readFileSync(p, "utf8"))) return true;
       } catch {
         // no such action file in this segment
       }
