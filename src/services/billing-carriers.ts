@@ -6,7 +6,7 @@ import { transactions } from "@/db/schema/transactions";
 import type { BillingCarrier, CarrierSchedule, OpeningPayment } from "@/lib/billed-with";
 import { compareDates, diffDays } from "@/lib/dates";
 import { daysThatPaid, occurrencesOf, paidAheadDays, readsPerOccurrence } from "@/lib/posted-average";
-import { stepPlan } from "@/lib/recurring-step";
+import { stepPlan, walkDayOfMonth } from "@/lib/recurring-step";
 import { seriesAmountCents } from "@/lib/series-kind";
 import {
   dueDayNearest,
@@ -291,6 +291,12 @@ export interface CarrierPairing {
   readonly carrierDays: DueDays;
   /** the carrier's day a due day of the series pairs with: the same number of steps on from where the two open */
   readonly carrierDayOf: (day: string) => string | null;
+  /**
+   * …and the day of the month the carrier's days are billed on (`walkDayOfMonth` of its schedule) — null stepped in
+   * days, or with no schedule: what a day of the series falling due on one of them is admitted to whole calendar months
+   * by (`fallsDueDayOfMonth`), as the carrier's own day is
+   */
+  readonly carrierDayOfMonth: number | null;
 }
 
 /**
@@ -654,10 +660,10 @@ function paymentDaysBetween<P extends Payment>(payments: readonly P[], from: str
  *
  * ⚖️ "The same period" is the carrier's own day each day of the carried series PAIRS with (`pairingOf`; default (B),
  * built, not asked, 2026-10-30): the day of theirs that falls due with the carrier's opening day — the one the
- * carrier's payment of that day pays, their day nearest that payment by his decision 76, stepped back as many days as
- * that payment's own day lies past the opening day (`openingOf`) — pairs with it, and each later day of theirs with
- * the carrier's day the same number of steps on. His rent and what it carries both fall due on the 1st, so on his
- * ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and paid Nov 17 opens the
+ * carrier's payment of that day pays, their day nearest that payment by his decision 76, stepped back as many of their
+ * own due days as that payment's own day lies past the opening day (`openingOf`) — pairs with it, and each later day of
+ * theirs with the carrier's day the same number of steps on. His rent and what it carries both fall due on the 1st, so
+ * on his ledger each day pairs with the rent's own that day. Apart: the rent typed Nov 16 and paid Nov 17 opens the
  * utilities on their Dec 1, the rent's Nov 16, and their Jan 1 is its Dec 16; paid ON Nov 16, their Nov 1 is its Nov
  * 16 and their Dec 1 its Dec 16; no payment of it yet, their day nearest the date, a tie the earlier — the rent typed
  * Nov 2, their Nov 1 is its Nov 2 (default built, not asked, 2026-10-29; reviews of 0ac5d059 and ec7fd198). 🔴 At
@@ -1035,6 +1041,14 @@ function earlierOf(a: string | null, b: string | null): string | null {
  * that steps apart from the carrier's (`stepPlan`): an annual item carried inside a monthly rent. Then the payment
  * nearest each of its days pays it, as before (A) — on the safe side: no pairing hands next year's day of it to next
  * month's rent payment (pinned in nearer-due-day-paired.test.ts, "…on the rent's step only").
+ *
+ * ⚠️ The carrier's END is not read (`CarrierSchedule` has none): a day of its own pairs with the carrier's day the same
+ * number of steps on even where the carrier's end has closed that day. The rent typed Nov 16 and paid Nov 16, its own
+ * end typed Nov 30, the utilities' Dec 10, read through Dec 19: on Nov 20, Dec 5, Dec 11 and Dec 16 their page reads
+ * "Ends Dec 16, 2026" above "Next expected Dec 16, 2026" beside the rent's "Ended Nov 16, 2026" — a rent day its
+ * schedule no longer holds — and from Dec 17 they are owed $182.21 (his ledger copy 2026-11-05, the what-if; review of
+ * 78d64f6a, L133). The safe direction holds: owed, never dropped. Which day such a day falls due on is his call, open
+ * (2026-11-05). Latent on his ledger: neither has an end.
  */
 export function pairingOf(s: SeriesOverrides & CarriedBy): CarrierPairing | null {
   const carrier = s.billedWith;
@@ -1044,10 +1058,14 @@ export function pairingOf(s: SeriesOverrides & CarriedBy): CarrierPairing | null
   const pairsOn = dayFallingDueWith(own, carrier.opensOn, carrier.opensPaidBy);
   if (pairsOn === null) return null;
   const carrierOpensOn = carrier.opensOn;
+  const { cadence, intervalDaysAvg, nextExpectedOn, anchorDay } = carrier.schedule;
   return {
     // the carrier billed on its own — one hop: the link's one writer refuses a carrier billed with another
     carrierDays: dueDaysOf(carrier.schedule, { opensOn: carrierOpensOn, opensOnHisDate: carrier.opensOnHisDate }, null),
     carrierDayOf: (day) => dueDayStepped(carrier.schedule, carrierOpensOn, dueDaysApart(own, pairsOn, day)),
+    // the day of the month its own walk steps on, as `dueDayStepped` steps it
+    carrierDayOfMonth:
+      nextExpectedOn === null ? null : walkDayOfMonth(nextExpectedOn, stepPlan(cadence, intervalDaysAvg, anchorDay)),
   };
 }
 
@@ -1072,9 +1090,35 @@ function stepsAlike(a: CarrierSchedule, b: CarrierSchedule): boolean {
  * (`SeriesDetail.nextFallsDueOn`): "around the 1st, due with the rent on the 16th". 🔴 Held by it but dated by its
  * own day (review of aa05a56d), a reader that re-read the date read another: the category forecast counted their Oct
  * 25 in no month, the dashboard counted their Nov 1 due by a Nov 12 paycheck before the rent's Nov 16, and "next Nov
- * 1" named a day past. 🔴 This note once counted the sentence's date among them (review of 933b29e2, L75).
+ * 1" named a day past. 🔴 This note once counted the sentence's date among them (review of 933b29e2, L75). ⛔ …and
+ * the runway's and the car card's twelve months hold it by this day too (`scheduledOccurrences`), so the two legs of
+ * the runway's book abut on today for it as for any bill. 🔴 They held its own day (review of cd58b3d1, L139).
  */
 export function fallsDueOn(pairedWith: CarrierPairing | null | undefined, day: string): string {
   const carrierOn = pairedWith?.carrierDayOf(day) ?? null;
   return carrierOn !== null && compareDates(carrierOn, day) > 0 ? carrierOn : day;
+}
+
+/**
+ * ⚖️ (B) The day of the month the day a due day FALLS DUE on (`fallsDueOn`) is billed on: `dayOfMonth`, its own walk's
+ * (`walkDayOfMonth`), when it falls due on itself; its carrier's (`CarrierPairing.carrierDayOfMonth`) on the carrier's
+ * later day; and the later of the two where both fall on one date — what admits it to whole calendar months
+ * (`withinMonthHorizon`, `SeriesOccurrence.anchorDayOfMonth`), since a short month clamps several days onto one date.
+ * So a day of what the rent carries is admitted as the rent's day it falls due with is, and the twelve months hold as
+ * many of theirs as of the rent's. 🔴 Asked of its own day's (the 1st), a twelve-month window opening Nov 15 takes in
+ * the rent's Nov 16 a year on — thirteen of theirs in twelve months; asked of the date alone, a six-month one opening
+ * Aug 30 takes in their Feb 28 that the rent's 31st clamps to — seven in six (pinned in committed-falls-due.test.ts,
+ * measured before it was built). Null stepped in days, which never clamps.
+ */
+export function fallsDueDayOfMonth(
+  pairedWith: CarrierPairing | null | undefined,
+  day: string,
+  dayOfMonth: number | null,
+): number | null {
+  const carrierOn = pairedWith?.carrierDayOf(day) ?? null;
+  // falling due on its own day, or stepped in days: its own
+  if (carrierOn === null || dayOfMonth === null || compareDates(carrierOn, day) < 0) return dayOfMonth;
+  // on one step with its carrier (`stepsAlike`), the carrier's walk steps in calendar months too
+  const carriers = pairedWith!.carrierDayOfMonth ?? dayOfMonth;
+  return compareDates(carrierOn, day) > 0 ? carriers : Math.max(dayOfMonth, carriers);
 }

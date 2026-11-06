@@ -10,7 +10,7 @@ import { RunwayCard } from "@/components/dashboard/RunwayCard";
 import { createCategory } from "@/services/category-edit";
 import { checkedThrough } from "@/services/checked-days-fixture";
 import { carCard, committedBook, runwayCard } from "@/services/committed";
-import { closeLedger, marks, openLedger, rentWith, UTIL } from "@/services/nearer-due-day-fixture";
+import { closeLedger, marks, openLedger, RENT, rentWith, UTIL } from "@/services/nearer-due-day-fixture";
 import { listSeries } from "@/services/recurring";
 import { seriesDetail } from "@/services/recurring-detail";
 import { seriesEndInput, seriesEndLines } from "./end-radius";
@@ -59,21 +59,21 @@ beforeEach(() => {
 });
 afterEach(closeLedger);
 
-/** the utilities' page as the owner reads it on `today`, in words */
-const pageOn = (today: string): string =>
+/** the utilities' page — or the series `id`'s — as the owner reads it on `today`, in words */
+const pageOn = (today: string, id: string = UTIL): string =>
   words(
     renderToStaticMarkup(
       createElement(SeriesDetail, {
-        data: seriesDetail(bundle.db, UTIL, today)!,
+        data: seriesDetail(bundle.db, id, today)!,
         today,
         viewState: resolveViewState(RECURRING_SERIES_VIEW_SPEC, {}, undefined),
-        basePath: `/recurring/${UTIL}`,
+        basePath: `/recurring/${id}`,
       }),
     ),
   );
-/** every "Ends …"/"Ended …" the utilities' page prints on `today` — the badge, alone */
-const badgeOn = (today: string): string[] =>
-  pageOn(today).match(/\b(?:Ends|Ended(?: before)?) [A-Z][a-z]{2} \d{1,2}, \d{4}/g) ?? [];
+/** every "Ends …"/"Ended …" the utilities' page — or the series `id`'s — prints on `today`: the badge, alone */
+const badgeOn = (today: string, id: string = UTIL): string[] =>
+  pageOn(today, id).match(/\b(?:Ends|Ended(?: before)?) [A-Z][a-z]{2} \d{1,2}, \d{4}/g) ?? [];
 const endOn = (day: string) =>
   bundle.db.update(recurringSeries).set({ userEndsOn: day }).where(eq(recurringSeries.id, UTIL)).run();
 /** the rent typed Nov 16 and paid Nov 16, the utilities on their own Sep 1 — as 23e9c5d1's review laid it on */
@@ -265,6 +265,86 @@ describe("⛔ the runway names the day what the rent carries stops on — its pa
     }
   });
 
+  /*
+   * ⛔ …and the window it says they stop inside holds what of theirs is still to come by the day each falls due — the
+   * rent's later day (`scheduledOccurrences`), as their page lists them — so the sentence names them to the day their
+   * last charge falls due, and counts what their list holds. 🔴 Review of cd58b3d1 (L139): the window held their own
+   * days, so on Jan 12 the runway read "…so it is billed once rather than throughout, and counts $15.18 a month here"
+   * beside their page listing Jan 16 and Feb 16, and from Feb 2 to Feb 16 it named them not at all, their Feb 16
+   * $182.21 neither still to come nor owed (his ledger copy 2026-11-05, the same what-if).
+   */
+  test("⛔ ending Feb 10: billed twice on Jan 12, once Feb 2 to the rent's Feb 16 — as their page lists them", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-16",
+    );
+    endOn("2027-02-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    /** [the day the lead sentence says they are evidenced through, how often it says they are billed] — or null */
+    const leadOn = (today: string): [string, string] | null => {
+      const card = words(renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, today) })));
+      const lead = new RegExp(
+        "Rent utilities & fees stops inside that window — evidenced through ([A-Z][a-z]{2} \\d{1,2}, \\d{4}), with " +
+          "no renewal in the ledger — so it is billed (once|\\d+ times) rather than throughout",
+      );
+      const said = card.match(lead);
+      return said === null ? null : [said[1]!, said[2]!];
+    };
+    expect(leadOn("2027-01-12")).toEqual(["Feb 16, 2027", "2 times"]);
+    expect(seriesDetail(bundle.db, UTIL, "2027-01-12")!.nextExpected.map((o) => o.date)).toEqual([
+      "2027-01-16",
+      "2027-02-16",
+    ]);
+    for (const day of ["2027-02-02", "2027-02-11", "2027-02-16"]) {
+      expect(leadOn(day), day).toEqual(["Feb 16, 2027", "once"]);
+      expect(seriesDetail(bundle.db, UTIL, day)!.nextExpected.map((o) => o.date), day).toEqual(["2027-02-16"]);
+    }
+  });
+
+  /*
+   * ⛔ …and once their last charge has fallen due, the line that owes it stops on that day still — the day their badge
+   * names, "Ended Feb 16, 2027" — never back on the end he typed: ONE day for the line and the page (`seriesStopsOn` of
+   * `seriesEndDays`). 🔴 Review of cd58b3d1 (L136): the day its last charge falls due was read only while it was still
+   * to come (`lastFallsDueAfterItsEnd`), so from Feb 17 the book's line read ends 2027-02-10 beside a page reading
+   * "Ended Feb 16, 2027"; and with their end typed Dec 10, from Dec 17 2026-12-10 beside "Ended Dec 16, 2026" (his
+   * ledger copy 2026-11-05, both what-ifs). Nothing prints it: an owed line lowers no rate (`endingLead`), and the car
+   * book has no arrears.
+   */
+  test("⛔ owed once it has fallen due, the line stops on the day their badge names — 'Ended Feb 16, 2027'", () => {
+    rentWith(
+      { rentOn: "2026-11-16", typed: true, utilOn: "2026-09-01", noneOfTwo: true },
+      "2026-07-01",
+      "2026-08-02",
+      "2026-09-02",
+      "2026-10-02",
+      "2026-11-16",
+      "2026-12-16",
+    );
+    endOn("2027-02-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2027-02-17", "2027-02-20"]) {
+      const line = committedBook(bundle.db, day).lines.find((l) => l.seriesId === UTIL)!;
+      expect([line.endsOn, line.occurrences, line.overdueCents], day).toEqual(["2027-02-16", 0, 18_221]);
+      expect(badgeOn(day), day).toEqual(["Ended Feb 16, 2027"]);
+    }
+  });
+
+  test("⛔ …and ending Dec 10, owed from Dec 17: the line stops on Dec 16, as 'Ended Dec 16, 2026'", () => {
+    rentPaidNov16();
+    endOn("2026-12-10");
+    checkedThrough(bundle.db, "acct", "2026-12-19");
+    for (const day of ["2026-12-17", "2026-12-20"]) {
+      const line = committedBook(bundle.db, day).lines.find((l) => l.seriesId === UTIL)!;
+      expect([line.endsOn, line.occurrences, line.overdueCents], day).toEqual(["2026-12-16", 0, 18_221]);
+      expect(badgeOn(day), day).toEqual(["Ended Dec 16, 2026"]);
+    }
+  });
+
   // ⛔ …and the car card's sentence asks the same book's day (`termsBySeries`, one reading for both books)
   test("filed under Car, the car card's sentence names that day too", () => {
     rentPaidNov16();
@@ -278,12 +358,31 @@ describe("⛔ the runway names the day what the rent carries stops on — its pa
     );
   });
 
-  // billed on its own, the day it stops is the end he typed — as it read
+  /*
+   * billed on its own, the day it stops is the end he typed — as it read — on its page's badge, the runway's lead
+   * sentence and the book's line it is read off: on a due day of its own and between two, where the day its last
+   * charge falls due is another day. 🔴 It asserted the book's line alone, on an end that is a due day, so a page and a
+   * runway that named different days of a series billed on its own passed it (review of cd58b3d1, L138).
+   */
   test("the rent's own end: the end he typed, on the runway and the page alike", () => {
     rentPaidNov16();
-    bundle.db.update(recurringSeries).set({ userEndsOn: "2027-03-16" }).where(eq(recurringSeries.id, "rent")).run();
-    const line = committedBook(bundle.db, "2026-11-20").lines.find((l) => l.seriesId === "rent")!;
-    expect([line.endsOn, line.endsInHorizon]).toEqual(["2027-03-16", true]);
+    const NOV20 = "2026-11-20";
+    /** the day the runway's lead sentence says the rent is evidenced through, as the owner reads it — null for none */
+    const rentRunwayDayOn = (today: string): string | null => {
+      const card = words(renderToStaticMarkup(createElement(RunwayCard, { data: runwayCard(bundle.db, today) })));
+      const lead = /What-if \(rent\) stops inside that window — evidenced through ([A-Z][a-z]{2} \d{1,2}, \d{4})/;
+      return card.match(lead)?.[1] ?? null;
+    };
+    for (const [end, said] of [
+      ["2027-03-16", "Mar 16, 2027"],
+      ["2027-03-20", "Mar 20, 2027"],
+    ] as const) {
+      bundle.db.update(recurringSeries).set({ userEndsOn: end }).where(eq(recurringSeries.id, RENT)).run();
+      const line = committedBook(bundle.db, NOV20).lines.find((l) => l.seriesId === RENT)!;
+      expect([line.endsOn, line.endsInHorizon], end).toEqual([end, true]);
+      expect(badgeOn(NOV20, RENT), end).toEqual([`Ends ${said}`]);
+      expect(rentRunwayDayOn(NOV20), end).toBe(said);
+    }
   });
 });
 

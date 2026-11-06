@@ -9,7 +9,9 @@ import { SubscriptionsCard } from "@/components/dashboard/SubscriptionsCard";
 import { stalenessSentence } from "@/components/recurring/labels";
 import { CategorySeriesList } from "@/components/spending/CategorySeriesList";
 import { seriesInCategory } from "./category-detail";
+import { createCategory } from "./category-edit";
 import { checkedThrough } from "./checked-days-fixture";
+import { carCard } from "./committed";
 import { forecastForMonth } from "./forecast";
 import { merchantIntelligence } from "./merchants";
 import { closeLedger, openLedger, rentWith, seriesWith, UTIL } from "./nearer-due-day-fixture";
@@ -84,6 +86,30 @@ describe("⚖️ (B) a carried one charge is dated by the day it falls due — e
       const late = forecastForMonth(bundle.db, "2026-11", day)!.components.find((c) => c.label === "Rent utilities & fees")!;
       expect([late.detail.includes("came due Nov 16"), late.staleness?.oneChargeOn], day).toEqual([true, "2026-11-16"]);
     }
+  });
+
+  /*
+   * ⛔ …and the car card's "charges once on …" names that day too: the committed book holds each day by the day it
+   * falls due (`scheduledOccurrences`), and the card's sentence dates a one charge by its last payment there
+   * (`heaviestMonthEnding`'s `lastPaymentOn`). 🔴 Review of cd58b3d1 (L135): with the utilities filed under Car and Car
+   * insurance ended, on Oct 30 and Nov 1 the car card read "Rent utilities & fees charges once on Nov 1, 2026 — the
+   * monthly figure above is what November 2026 bills with that charge in it, …" beside the subscriptions card's "once ·
+   * Nov 16", and from Nov 2 nothing of it (his ledger copy 2026-11-05, the same what-if). At 256e0f1f both read Nov 1.
+   */
+  test("the car card says it charges once on Nov 16 — the subscriptions card's day", () => {
+    const car = createCategory(bundle.db, { name: "Car", kind: "expense" });
+    bundle.db.update(recurringSeries).set({ userCategoryId: car.id }).where(eq(recurringSeries.id, UTIL)).run();
+    for (const day of TO_COME) {
+      const card = carCard(bundle.db, day)!;
+      expect(card.evidenceCaption, day).toBe(
+        "Rent utilities & fees charges once on Nov 16, 2026 — the monthly figure above is what November 2026 bills " +
+          "with that charge in it, not what a month without it costs.",
+      );
+      const subs = subscriptionsCard(bundle.db, day)!.oneOffs.find((o) => o.seriesId === UTIL)!;
+      expect([card.cost.evidencedThrough, subs.on], day).toEqual(["2026-11-16", "2026-11-16"]);
+    }
+    // past it, nothing of it is still to come — and the car book holds nothing owed
+    expect(carCard(bundle.db, "2026-11-17")!.evidenceCaption).toBeNull();
   });
 
   test("the merchant page says it is billed once, on Nov 16", () => {

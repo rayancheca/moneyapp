@@ -102,8 +102,8 @@ export interface AmountHistoryPoint {
    * against nothing (`expectedCents` null) and said "toward no due day", the calendar's words for the same row
    * (`CalendarEntry.towardNoDueDay`) — and no sample of the posted average above it (`SeriesPostedAverage.moneyBack`).
    * 🔴 Held to the rate, a +$357.58 credit on a −$357.58 premium read "$0.00" against it in the table lens and "expected
-   * −$357.58" in its tooltip (review of d7a5485c, L16); 🔴 drawn so, a +$50.00 credit of Breezeline's sat beside
-   * "posted avg -$31.72 ± $40.22", one of its six samples (review of 23e9c5d1). Absent on every other row.
+   * −$357.58" in its tooltip (review of d7a5485c, L16); 🔴 drawn so, a what-if +$50.00 credit of Breezeline's sat
+   * beside "posted avg -$31.72 ± $40.22", one of its six samples (review of 23e9c5d1). Absent on every other row.
    */
   towardNoDueDay?: true;
   /**
@@ -757,7 +757,7 @@ export function seriesDetail(
     billedWith: s.billedWith,
     // its end and the later day its last charge falls due on, off its status as the All tab and the runway read them —
     // never the forecast's lapse (`seriesEndDays`, `lastFallsDueAfterItsEnd`)
-    ...seriesEndDays(s, today),
+    ...seriesEndDays(s),
     scheduleRanOutOn: scheduleRanOutOn(s, today),
     oneChargeOn: oneChargeDays(db, [s]).get(s.id) ?? null,
     annualizedCents: annualizedCentsOf(s, today, checkedThrough),

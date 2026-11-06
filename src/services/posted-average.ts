@@ -66,8 +66,8 @@ export interface SeriesPostedAverage extends PostedAverage {
    * The days whose tagged rows net AGAINST its rate, at every rate, oldest first (`moneyBackDays`) — money back, no
    * payment of the average's (`averagedPayments`): ONE set for the Amount history's bars "toward no due day"
    * (`daysThatPaid`, every grader's rule) and the popover's words naming them, so its counts add up to the rows; null
-   * where `occurrences` is. 🔴 Review of 23e9c5d1: the bar said a +$50.00 credit of Breezeline's paid no charge, the
-   * average beside it counted it a payment.
+   * where `occurrences` is. 🔴 Review of 23e9c5d1: the bar said a what-if +$50.00 credit of Breezeline's paid no
+   * charge, the average beside it counted it a payment (his ledger copy 2026-11-04, the credit added on Venture X).
    */
   moneyBack: readonly Occurrence[] | null;
   /**

@@ -292,16 +292,17 @@ function liveSeriesRows(db: AppDatabase) {
  * Dec 16, the utilities' end typed Feb 10, 2027 — on Jan 12, Jan 20 and Feb 1 the runway read "Rent utilities & fees
  * stops inside that window — evidenced through Feb 10, 2027" beside their page's "Ends Feb 16, 2027" (his ledger copy
  * 2026-11-05, the same what-if). Latent on his ledger: nothing of his billed inside another has an end.
+ *
+ * ⛔ …and still that day once their last charge has fallen due (`seriesEndDays` reads it whatever day it is asked on),
+ * so the arrears line that owes it stops on the day their badge says it ended. 🔴 It went back to the end he typed
+ * (review of cd58b3d1, L136): from Feb 17, "ends 2027-02-10" on the line owing their Feb 1 beside "Ended Feb 16, 2027"
+ * (his ledger copy 2026-11-05, the same what-if). Nothing printed it — an owed line lowers no rate (`endingLead`).
  */
-function termsBySeries(
-  db: AppDatabase,
-  rows: ReturnType<typeof liveSeriesRows>,
-  today: string,
-): Map<string, SeriesTerms> {
+function termsBySeries(db: AppDatabase, rows: ReturnType<typeof liveSeriesRows>): Map<string, SeriesTerms> {
   const oneCharge = oneChargeDays(db, rows);
   return new Map(
     rows.map((r) => {
-      const terms: SeriesTerms = { endsOn: seriesStopsOn(seriesEndDays(r, today)), oneCharge: oneCharge.has(r.id) };
+      const terms: SeriesTerms = { endsOn: seriesStopsOn(seriesEndDays(r)), oneCharge: oneCharge.has(r.id) };
       return [r.id, terms] as const;
     }),
   );
@@ -440,13 +441,14 @@ export function committedBook(
   // every live series with its carrier, read once — its terms below, and the late leg's evidence
   const live = liveSeriesRows(db);
   // each series' stop day and one-charge reading, for both legs (`termsBySeries`)
-  const terms = termsBySeries(db, live, today);
+  const terms = termsBySeries(db, live);
 
   /*
    * ⛔ THE SCHEDULE, PAID OR NOT (`scheduledOccurrences`) — a rate, as above: a bill paid early is still one of the N.
    * 🔴 Read through what is still to pay (`upcomingOccurrences`, which drops a day a payment has paid since the review
    * of 50020a2), the rent paid Sep 30 for Oct 1 left eleven rents in twelve months: $1,933.25 a month for a $2,109.00
-   * bill, on that day alone.
+   * bill, on that day alone. ⚖️ …held, as the arrears below are, by the day each FALLS DUE (`SeriesOccurrence.date`),
+   * and admitted to its months by the day of the month that day is billed on (`anchorDayOfMonth`).
    */
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
     scheduledOccurrences(db, today, diffDays(today, horizon.projectThrough) + 1)
@@ -460,13 +462,18 @@ export function committedBook(
    * today and unposted is not late — it is due — and it is counted once, in
    * the forward leg.
    *
-   * ⚖️ …but one: this leg holds a day by the day it FALLS DUE (`projectOccurrences`), the forward leg by its own day
-   * (`scheduledOccurrences`) — so a day of what the rent carries whose own day is past while the rent's day it falls
-   * due with is still to come lies in neither (default (B), 2026-10-30): on his ledger copy 2026-11-04 with his rent
-   * retyped Nov 16, read Nov 10, the utilities' Nov 1. No figure moves: the forward leg is a rate, whole either way —
-   * twelve of their own days in its twelve months, Dec 1 to Nov 1, 2027, $182.21 a month — and from the day after the
-   * rent's Nov 16, unposted, this leg holds it, $182.21 owed on Nov 17. 🔴 It said no day belongs to neither (review
-   * of 933b29e2, L73).
+   * ⚖️ …what the rent carries too: both legs hold a day by the day it FALLS DUE (`projectOccurrences`,
+   * `scheduledOccurrences`; default (B), 2026-10-30) — the later of its own day and the rent's it pairs with — so a day
+   * of theirs whose own day is past while the rent's is still to come is the forward leg's until that day and this
+   * leg's from the day after. No figure moves between the two days: the forward leg is a rate, whole either way — every
+   * day of theirs falling due in its twelve months, twelve while they run on, each admitted as the rent's day it falls
+   * due with is (`anchorDayOfMonth`) — and their last charge, before an end or as one charge, is in it until it falls
+   * due. 🔴 The forward leg held their own days (review of cd58b3d1, L139), and this note said no figure moved: true
+   * only of a series that runs on. The rent retyped Nov 16 and paid Nov 16 and Dec 16, their end typed Feb 10, 2027 —
+   * the twelve months held $38,634.83 on Feb 1 and $38,452.62 from Feb 2 to Feb 16, their Feb 16 $182.21 in neither
+   * leg; as one charge on Nov 1 with the rent retyped Nov 16, $39,422.73 on Oct 30 and Nov 1 and $39,240.52 from Nov 2
+   * to Nov 10 (his ledger copy 2026-11-05, both what-ifs). Latent on his ledger: every day of theirs falls due on its
+   * own 1st.
    *
    * 🔴 `/budgets` SPLITS THE SAME INSTANT THE OTHER WAY ROUND, and the first
    * version of this comment was wrong about why that is tolerable. It said
@@ -688,7 +695,7 @@ export function carCard(db: AppDatabase, today: string = todayIso()): CarCard | 
   const horizon = monthHorizon(today, months);
   // ⚖️ the runway's own reading of each series (`termsBySeries`) — a one charge is one here too (§6A 56), and the day
   // it stops is the one its page names
-  const carTerms = termsBySeries(db, liveSeriesRows(db), today);
+  const carTerms = termsBySeries(db, liveSeriesRows(db));
 
   // ⛔ the schedule, paid or not (`scheduledOccurrences`): the lease paid two days early is still this month's lease
   const occurrences = // +1: `windowDays` counts days and today is the first — see its docstring
