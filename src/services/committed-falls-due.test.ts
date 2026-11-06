@@ -31,6 +31,11 @@ afterEach(closeLedger);
 
 const endOn = (day: string) =>
   bundle.db.update(recurringSeries).set({ userEndsOn: day }).where(eq(recurringSeries.id, UTIL)).run();
+/** the rent's day of the month as detection proved it (`anchor_day`), beside a next date stored clamped */
+const rentAnchoredOn = (anchorDay: number) =>
+  bundle.db.update(recurringSeries).set({ anchorDay }).where(eq(recurringSeries.id, RENT)).run();
+/** a month-end rent's rows, each on the 31st or its month's last day — what proves the 31st (`deriveAnchorDay`) */
+const MONTH_END_ROWS = ["2026-07-31", "2026-08-31", "2026-09-30", "2026-10-31"];
 /** the utilities in the runway's book on `today`: [their payments in its twelve months, what of them it owes] */
 const legsOn = (today: string): [number, number] => {
   const line = committedBook(bundle.db, today).lines.find((l) => l.seriesId === UTIL);
@@ -99,18 +104,34 @@ describe("⛔ what the rent carries is in ONE leg of the runway's book every day
  * billed with, N payments in N months, whatever day either falls on and whatever day you ask. Asked of its own day's
  * (the 1st) a horizon opening on Nov 15 would take in the rent's Nov 16 a year on, thirteen of their charges in twelve
  * months; of the date alone, a six-month one opening Aug 30 their Feb 28 the rent's 31st clamps to, seven in six.
+ * ⛔ The rent's day of the month is its walk's (`CarrierPairing.carrierDayOfMonth`, `walkDayOfMonth`): the day its rows
+ * proved (`anchor_day`) where its next date is stored clamped — a month-end rent detected, its Nov 30 is its 31st's.
+ * 🔴 The shapes below once all typed the rent, and his date clears that day (`effectiveSchedule`): read off the stored
+ * date alone, the 30th, every test still passed (review of 59374295) — and asked on Dec 31, their Dec 31 a year on was
+ * in the twelve months and the rent's was not, thirteen of theirs to its twelve, seven to its six (the temp ledger).
  */
 describe("⛔ …and an open-ended one is billed as often as the rent it is billed with — N payments in N months", () => {
   test.each([
-    // [the rent's date, theirs, the first day of theirs to fall due]
+    // [the rent's date, theirs, the first day of theirs to fall due — and, the rent's date detected, not his, the day
+    // of the month its rows proved (`anchor_day`): his date clears it (`effectiveSchedule`)]
     ["2026-11-16", "2026-11-01", "2026-11-16"], // their 1st falls due with the rent's 16th: the rent's 16th
     ["2026-08-31", "2026-08-25", "2026-08-31"], // their 25th with the rent's 31st, Feb 28 in February: the rent's 31st
     ["2026-11-01", "2026-11-05", "2026-11-05"], // their 5th falls due on itself, after the rent's 1st: their own 5th
     ["2026-10-31", "2026-11-01", "2026-11-01"], // their 1st falls due on itself, after the rent's 31st: their own 1st
     ["2026-08-30", "2026-08-31", "2026-08-31"], // their 31st and the rent's 30th share Sep 30 and Feb 28: the 31st
     ["2026-08-31", "2026-08-28", "2026-08-31"], // their 28th and the rent's 31st share Feb 28: the 31st
-  ])("the rent on %s, theirs on %s — first due %s", (rentOn, utilOn, firstDue) => {
-    rentWith({ rentOn, typed: true, utilOn, utilTyped: true, noneOfTwo: true }, "2026-07-01", "2026-08-02");
+    // their 25th with a rent detected on the 31st, its next date stored clamped to Nov 30: the rent's 31st, read off
+    // its anchor day, not its date's 30th
+    ["2026-11-30", "2026-11-25", "2026-11-30", 31],
+  ])("the rent on %s, theirs on %s — first due %s", (rentOn, utilOn, firstDue, anchorDay?: number) => {
+    if (anchorDay === undefined) {
+      rentWith({ rentOn, typed: true, utilOn, utilTyped: true, noneOfTwo: true }, "2026-07-01", "2026-08-02");
+    } else {
+      rentWith({ rentOn, typed: false, utilOn, utilTyped: true, noneOfTwo: true }, ...MONTH_END_ROWS);
+      rentAnchoredOn(anchorDay);
+      // ⛔ …and each of theirs due on the rent's day, stepped by the day its rows proved: Dec 31, not a Dec 30
+      expect(coming(addDays(rentOn, -1), UTIL)).toEqual(coming(addDays(rentOn, -1), RENT));
+    }
     expect(coming(addDays(rentOn, -1), UTIL)[0]).toBe(firstDue);
     for (const months of [6, 12]) {
       for (const day of daysFrom(addDays(rentOn, -1), addDays(rentOn, 33))) {
