@@ -38,8 +38,9 @@ import { ratePeriodOf, rateOn, type RateSchedule } from "./series-kind";
  * it — default built, not asked (2026-11-04; `weekBesideExtra`). 🔴 Read as the
  * day, his Oct 15 — the week's $1,141.92 and an off-cycle $200.00 — read "It
  * America LLC (weekly pay) rose by $200.00 between its usual amount and Oct 15."
- * ⚖️ Its blind spot is his call, open: an extra that recurs — a raise paid as an
- * entry of its own beside the old rate — reads as no change (`weekBesideExtra`).
+ * ⚖️ Its blind spot, kept by his answer 80 (2026-11-06, "Keep it (55a)"): an
+ * extra that recurs — a raise paid as an entry of its own beside the old rate —
+ * reads as no change (`weekBesideExtra`).
  */
 
 /** A lump's reading: the paydays its money paid on its own, and what it paid each. */
@@ -254,7 +255,7 @@ function dayPerPayday(
  * average, whichever order each read the day's rows in. ⛔ And /spending's notes read the money beside it from the same
  * readings (`moneyBesideTheWeek`).
  *
- * ⚖️ ITS BLIND SPOT, HIS CALL OPEN (review of 339b2c7a, 2026-11-04): it never asks whether the extra recurs. A raise or
+ * ⚖️ ITS BLIND SPOT, KEPT BY HIM (review of 339b2c7a, 2026-11-04): it never asks whether the extra recurs. A raise or
  * a supplement paid as an entry of its own the same day, beside the old rate, reads as the week paid to the cent and
  * money toward no payday, week after week — silent on every surface that says "the amount changed". Four Thursdays,
  * Oct 1 – 22, each of $1,141.92 and $58.08, read $1,141.92 a week: the calendar `paid`, the posted average $1,141.92 ±
@@ -262,8 +263,10 @@ function dayPerPayday(
  * average of $1,200.00 and four of Worth a look's "rose by $58.08". Only /spending names the $232.32 — "from the
  * deposits of Thu, Oct 1, 2026, …, went toward no payday" (a temp ledger). Latent on his ledger copy (2026-11-04): Oct
  * 15's $200.00 is the one deposit beside a week, and his off-cycle money comes under a descriptor of its own
- * ("…RAYANCHECA RAYAN CHECA", Sep 23's back pay too). Whether a deposit toward no payday on the same weekday several
- * weeks running is still surfaced is his to choose.
+ * ("…RAYANCHECA RAYAN CHECA", Sep 23's back pay too). ⛔ His answer 80 (2026-11-06): asked whether such deposits, the
+ * same weekday several weeks running, should be read as the day again once two paydays in a row each hold the week to
+ * the cent plus an extra (amber, "rose by $X"), he kept his §6A 55a ("Keep it (55a)"): each stays the week and money
+ * toward no payday. Do not re-ask; per-payday.test.ts's "a $58.08 beside the week four Thursdays running…" holds it.
  */
 function weekBesideExtra(
   deposits: readonly ReadableRow[],

@@ -62,7 +62,8 @@
 
 ## 2. HIS ANSWERS AND THE DEFAULTS
 
-No answer of his was asked this session after 2026-10-29 (memory `moneyapp-owner-decisions-2026-09-28` holds 21–79).
+One answer of his after 2026-10-29: **80** (2026-11-06, below) — he kept 55a (memory
+`moneyapp-owner-decisions-2026-09-28` holds 21–80).
 
 **⚖️ Built, not asked** (each marked so in its commit and code):
 - 8d (A): an import FILES what it links to a series he confirmed (`fileImportedLinks`, source `confirmed_series`).
@@ -85,12 +86,14 @@ No answer of his was asked this session after 2026-10-29 (memory `moneyapp-owner
   names every period; IMPORT item 12 (B) linking claims active rows only (an excluded row arriving with no link is
   neither linked nor filed).
 
-**❓ For him (not built — the fixer's pick would be an exception to HIS decision 55a):** a raise paid as its OWN
-same-day entry beside the old rate (e.g. $1,141.92 + $58.08 every Thursday) reads "toward no payday" everywhere and
-shows on no "amount changed" surface. (A, as built — his 55a) keep it; (B) once two consecutive paydays each hold the
-week to the cent plus an extra, read them as the day again (amber; Worth a look "rose by $X"), a one-off like Oct 15's
-$200.00 staying quiet. Latent today. His payer already sends off-cycle money under a second descriptor ("IT AMERICA
-LLC PAYROLL RAYANCHECA RAYAN CHECA").
+**✅ His answer 80 (2026-11-06, "Keep it (55a)") — closed, do not re-ask:** a raise paid as its OWN same-day entry
+beside the old rate (e.g. $1,141.92 + $58.08 every Thursday) reads "toward no payday" everywhere and shows on no
+"amount changed" surface — and STAYS so. He chose (A, as built — his 55a) over (B, the fixer's pick: once two
+consecutive paydays each hold the week to the cent plus an extra, read them as the day again — amber; Worth a look
+"rose by $X" — a one-off like Oct 15's $200.00 staying quiet). Recorded in `weekBesideExtra`'s doc
+(`src/lib/per-payday.ts`) and pinned by the per-payday test "a $58.08 beside the week four Thursdays running…" (it
+fails if the week beside an extra is read as the day). Latent today. His payer already sends off-cycle money under a
+second descriptor ("IT AMERICA LLC PAYROLL RAYANCHECA RAYAN CHECA").
 
 **⏳ Still his call** (recorded in `landBack`'s doc): presses that return a value (runs, Undo cards, inline edits)
 leave a shown refusal banner in place.

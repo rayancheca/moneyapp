@@ -308,6 +308,30 @@ describe("paydayReadings — the week's own deposit beside an extra one the same
     expect(spreadSampleCents(20_000, readings.get("extra"))).toBeNull();
   });
 
+  /*
+   * ⚖️ HIS ANSWER 80 (2026-11-06, "Keep it (55a)"): an extra that RECURS — a raise paid as an entry of its own
+   * beside the old rate, $1,141.92 and $58.08 every Thursday — is the week paid and money toward no payday each
+   * week, never one payday paid more ("rose by $58.08"). Asked against reading such paydays as the day again once
+   * two in a row each hold the week to the cent plus an extra, he kept his §6A 55a. ⛔ This test failing is his
+   * answer changing: ask him, do not re-pin it.
+   */
+  test("a $58.08 beside the week four Thursdays running is the week and money toward no payday each time", () => {
+    const thursdays = ["2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22"];
+    const readings = paydayReadings(
+      thursdays.flatMap((day) => [
+        { id: `week ${day}`, postedOn: day, amountCents: WEEK },
+        { id: `raise ${day}`, postedOn: day, amountCents: 5_808 },
+      ]),
+      thursdays.map((day) => ({ paydayOn: day, depositOn: day, cents: WEEK })),
+      HIS,
+    );
+    for (const day of thursdays) {
+      expect(readings.get(`week ${day}`)).toEqual(reads(true, WEEK, false, 1));
+      expect(readings.get(`raise ${day}`)).toEqual(reads(false, null, true, 1));
+      expect(comparableCents(WEEK, readings.get(`week ${day}`))).toBe(WEEK);
+    }
+  });
+
   // ⛔ the same row on every surface: the calendar, the series page and the posted average each store them their way
   test("two weeks to the cent on a day that paid one payday: one is the week, the same one whichever is first", () => {
     const rows = [
