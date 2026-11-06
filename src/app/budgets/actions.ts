@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
+import { landBack } from "@/app/refusal-landing";
 import { firstIssueMessage, type ActionResult } from "@/app/transactions/action-types";
 import { getDb } from "@/db/client";
 import { BUDGET_PERIODS, type BudgetPeriodKind } from "@/db/schema/budgets";
@@ -73,12 +73,20 @@ export async function createBudgetResultAction(
   return { ok: true, data: { categoryId: parsed.data.categoryId, amountCents } };
 }
 
+/** /budgets' forms leave the page on every press, back to /budgets (`landBack`'s `landsOn`). */
+const BACK_ON_BUDGETS = { landsOn: (): string => "/budgets" } as const;
+
+/**
+ * Back on /budgets after every press — in a refusal's place while the page shows one (`landBack`). 🔴 The review of
+ * cb2e89ac (2026-11-05, a dev server over his ledger copy 10-29b): Housing, Annual, 0 refused (history 3 → 4), 12.34
+ * landed on /budgets (4 → 5), and one Back brought "Budget amount must be positive" back above the budget he had just
+ * created — inside a server action Next pushes a redirect unless told otherwise.
+ */
 export async function createBudgetAction(formData: FormData): Promise<void> {
   const result = await createBudgetResultAction(formData);
   // a failed attempt still revalidates so the page it lands on is fresh
   if (!result.ok) revalidatePath("/budgets");
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(result.ok ? "/budgets" : `/budgets?error=${encodeURIComponent(result.error)}`);
+  landBack("/budgets", formData, result, BACK_ON_BUDGETS);
 }
 
 const updateAmountSchema = z.object({
@@ -209,10 +217,11 @@ export async function deactivateBudgetResultAction(
   return { ok: true, data: { budgetId: parsed.data.budgetId } };
 }
 
+/** Back on /budgets after every press, in a refusal's place while the page shows one — as a budget created is. */
 export async function deactivateBudgetAction(formData: FormData): Promise<void> {
   const result = await deactivateBudgetResultAction(formData);
   if (!result.ok) revalidatePath("/budgets");
-  redirect(result.ok ? "/budgets" : `/budgets?error=${encodeURIComponent(result.error)}`);
+  landBack("/budgets", formData, result, BACK_ON_BUDGETS);
 }
 
 /** Load next-month budget PREDICTIONS (recurring bills + trend/seasonal estimate). */

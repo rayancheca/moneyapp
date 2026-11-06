@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/db/client";
 import { ACCOUNT_TYPES, ACCOUNT_SUBTYPES } from "@/db/schema/accounts";
@@ -150,12 +149,16 @@ export async function createAccountResultAction(
   return { ok: true, data: { id: accountId } };
 }
 
+/**
+ * To the new account's page, refused on /accounts — and in the refusal's place in his history while /accounts shows one
+ * (`landBack`), so Back from the new account is /accounts with none. 🔴 It pushed (Next's default inside a server
+ * action), the shape that brought /budgets' refusal back on one Back above the budget it had just created (the review
+ * of cb2e89ac, 2026-11-05). ⛔ landBack's redirect() throws NEXT_REDIRECT by design — it must stay outside any catch.
+ */
 export async function createAccountAction(formData: FormData): Promise<void> {
-  const result = await createAccountResultAction(formData);
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(
-    result.ok ? `/accounts/${result.data.id}` : `/accounts?error=${encodeURIComponent(result.error)}`,
-  );
+  landBack("/accounts", formData, await createAccountResultAction(formData), {
+    landsOn: ({ id }) => `/accounts/${id}`,
+  });
 }
 
 // The single-argument form gives the SAME message when the field is missing
@@ -202,6 +205,9 @@ function accountPage(formData: FormData): string {
   return typeof accountId === "string" && accountId !== "" ? `/accounts/${accountId}` : "/accounts";
 }
 
+/** A balance removed or an account archived is refused on /accounts, as it always was (`landBack`'s `refusedOn`). */
+const REFUSED_ON_ACCOUNTS = { refusedOn: "/accounts" } as const;
+
 /**
  * A refusal on the account's page, and a balance that lands while that page shows one goes back to it with none
  * (`landBack`). 🔴 The review of 425ae02c (2026-11-05): a mistyped balance followed by the right one left the refusal
@@ -242,7 +248,7 @@ export async function deleteAnchorResultAction(
 
 /** Refused on /accounts, as it always was; landing while the account page shows a refusal, back to it with none. */
 export async function deleteAnchorAction(formData: FormData): Promise<void> {
-  landBack(accountPage(formData), formData, await deleteAnchorResultAction(formData), "/accounts");
+  landBack(accountPage(formData), formData, await deleteAnchorResultAction(formData), REFUSED_ON_ACCOUNTS);
 }
 
 const setActiveSchema = z.object({
@@ -274,7 +280,7 @@ export async function setAccountActiveResultAction(
 
 /** Refused on /accounts, as it always was; landing while the account page shows a refusal, back to it with none. */
 export async function setAccountActiveAction(formData: FormData): Promise<void> {
-  landBack(accountPage(formData), formData, await setAccountActiveResultAction(formData), "/accounts");
+  landBack(accountPage(formData), formData, await setAccountActiveResultAction(formData), REFUSED_ON_ACCOUNTS);
 }
 
 // ── Manage accounts (§7.2): value-returning actions the client drives ─────────

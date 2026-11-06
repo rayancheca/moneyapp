@@ -77,9 +77,18 @@ export function ForecastAndCalendar({
   tab,
   counts,
 }: ForecastAndCalendarProps) {
-  const [forecast, setForecast] = useState<MonthForecast | null>(initialForecast);
-  const [shownMonth, setShownMonth] = useState(initialForecast.monthKey);
-  // the badge counts the month ON SCREEN — the same month the card follows
+  // The card and the month it is about, set together and only by a forecast that loaded: `forecast` is null for a month
+  // that has ended, and the note names `monthKey`. 🔴 The note named the month on the GRID, set before the load: the
+  // review of cb2e89ac (2026-11-05, a dev server over his ledger copy 10-29b) paged ‹ from November to "October 2026
+  // has ended", then › with only the forecast's POST failing, and the card read "November 2026 has ended / There is
+  // nothing to project" over November's grid — a failure keeps the card it had, and the card it had said October.
+  // Re-measured on a dev server over his ledger copy 2026-11-06: the same steps leave "October 2026 has ended"
+  // standing over November's grid (posted $0.00 · as scheduled +$1,293.82) and toast "Failed to fetch."
+  const [card, setCard] = useState<{ monthKey: string; forecast: MonthForecast | null }>({
+    monthKey: initialForecast.monthKey,
+    forecast: initialForecast,
+  });
+  // the badge counts the month ON SCREEN — the month the grid loaded, whether or not its forecast did
   const [calendarCount, setCalendarCount] = useState(initialMonth.entryCount);
   const [, startTransition] = useTransition();
 
@@ -93,26 +102,25 @@ export function ForecastAndCalendar({
   const density = state[CALENDAR_VIEW_SPEC[0]!.key] ?? "regular";
 
   function followMonth(month: RecurringCalendarMonth): void {
-    setShownMonth(month.monthKey);
     setCalendarCount(month.entryCount);
     startTransition(async () => {
       // 🔴 settled: a transition throws a rejection to the page's error boundary, as a P&L day tapped with the server
       // down made /investments its error screen (the review of b96b7546, 2026-11-05)
       const r = await settleAction(() => loadMonthForecastAction({ monthKey: month.monthKey }));
-      // a failed load leaves the previous card standing rather than blanking it:
+      // a failed load leaves the previous card standing rather than blanking it — the month it names with it:
       // a stale-but-labelled projection beats an empty space with no reason — and says why
-      if (r.ok) setForecast(r.data);
+      if (r.ok) setCard({ monthKey: month.monthKey, forecast: r.data });
       else toast({ title: r.error, tone: "negative" });
     });
   }
 
   return (
     <>
-      {forecast ? (
-        <ForecastCard forecast={forecast} />
+      {card.forecast ? (
+        <ForecastCard forecast={card.forecast} />
       ) : (
         <SurfaceCard>
-          <h2 className="text-sm font-medium">{monthLabel(`${shownMonth}-01`)} has ended</h2>
+          <h2 className="text-sm font-medium">{monthLabel(`${card.monthKey}-01`)} has ended</h2>
           <p className="mt-1 text-sm text-ink-muted">
             There is nothing to project — the calendar below shows what actually posted.
           </p>

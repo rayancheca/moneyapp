@@ -84,9 +84,10 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
   const params = await searchParams;
   const parsed = parseFilters(params);
   const notice = parseNotice(params);
-  // All four redirect actions come back through `returnPath` (transactions/actions.ts:121)
+  // All four redirect actions come back through `landBack` (app/refusal-landing.ts)
   // with `&error=`; `parseNotice` matches a fixed enum and cannot carry an arbitrary
   // message, so without this the refusal was dropped and the page re-rendered unchanged.
+  // The header strip's forms are handed it too: one pressed while it shows takes its place.
   const error = errorParam(params);
 
   const db = getDb();
@@ -267,6 +268,7 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
         spend={{ monthUsd: spend.monthUsd, capUsd: spend.capUsd, overCap: spend.overCap }}
         runState={runState}
         returnQuery={returnQuery}
+        refusal={error}
       />
 
       {totalInLedger === 0 ? (

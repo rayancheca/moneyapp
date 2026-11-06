@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createAccountAction } from "@/app/accounts/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { Field, Input, Select } from "@/components/ui/Field";
 
 interface Institution {
@@ -9,11 +10,19 @@ interface Institution {
   name: string;
 }
 
-export function AccountForm({ institutions }: { institutions: Institution[] }) {
+export function AccountForm({
+  institutions,
+  refusal,
+}: {
+  institutions: Institution[];
+  /** the refusal the page shows (`?error=`), or null: while one shows, a new account takes its place (`landBack`) */
+  refusal: string | null;
+}) {
   const [type, setType] = useState("checking");
   const isCredit = type === "credit";
   return (
     <form action={createAccountAction} className="grid gap-3 md:grid-cols-2">
+      <RefusalShownField error={refusal} />
       <Field label="Institution">
         <Select name="institutionId" required>
           {institutions.map((i) => (

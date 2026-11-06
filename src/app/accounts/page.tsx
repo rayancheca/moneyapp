@@ -168,7 +168,7 @@ export default async function AccountsPage({
 
         <SurfaceCard>
           <h2 className="mb-4 text-sm font-medium">Add an account</h2>
-          <AccountForm institutions={institutions} />
+          <AccountForm institutions={institutions} refusal={error} />
           <div className="mt-5 border-t border-line pt-5">
             <AddInstitution />
           </div>

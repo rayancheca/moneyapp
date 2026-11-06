@@ -37,9 +37,11 @@ export function errorParam(raw: Record<string, string | string[] | undefined>): 
  * The hidden field a form carries while its page shows a refusal: its action, landing, goes back to the page with no
  * `?error=` — and only then, since a redirect after every press would scroll the page to its top (measured on /imports,
  * 2026-11-05: from 1,200px down to 0). 🔴 Without it a refusal's banner outlived the next form press that landed:
- * the page re-rendered under the URL the refusal had left (`landBack`, the one rule for every form whose press stays on
- * its page; refusal-landing.test.ts holds every one of them to carrying this). A press that returns a value carries no
- * form, and does not take the banner away (⏳ his call, `landBack`).
+ * the page re-rendered under the URL the refusal had left (`landBack`, the one rule for every form adapter;
+ * refusal-landing.test.ts holds every form bound to one to carrying this). A form that leaves its page on every press
+ * (/budgets, /transactions' header strip, a new account) carries it too: what it lands on takes the refusal's place in
+ * his history, so one Back never brings the refusal back. A press that returns a value carries no form, and does not
+ * take the banner away (⏳ his call, `landBack`).
  */
 export const REFUSAL_SHOWN = "refusalShown";
 

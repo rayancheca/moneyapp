@@ -1,11 +1,20 @@
 import { createBudgetAction } from "@/app/budgets/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { Field, Input, Select } from "@/components/ui/Field";
 import type { BudgetableCategory } from "@/services/budgets";
 
 /** Create-budget form — server-rendered; the action Zod-validates everything. */
-export function BudgetForm({ categories }: { categories: BudgetableCategory[] }) {
+export function BudgetForm({
+  categories,
+  refusal,
+}: {
+  categories: BudgetableCategory[];
+  /** the refusal the page shows (`?error=`), or null: while one shows, a budget created takes its place (`landBack`) */
+  refusal: string | null;
+}) {
   return (
     <form action={createBudgetAction} className="grid gap-3 md:grid-cols-3">
+      <RefusalShownField error={refusal} />
       <Field label="Category">
         <Select name="categoryId" required>
           {categories.map((c) => (

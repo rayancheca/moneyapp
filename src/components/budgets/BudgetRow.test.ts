@@ -90,7 +90,7 @@ function statusFor(name: string): BudgetPaceStatus {
 
 function render(status: BudgetPaceStatus): string {
   return renderToStaticMarkup(
-    createElement(BudgetRow, { status, guide: null, spentProvenance: null, planProvenance: null }),
+    createElement(BudgetRow, { status, guide: null, spentProvenance: null, planProvenance: null, refusal: null }),
   );
 }
 
@@ -427,7 +427,13 @@ describe("BudgetRow — ⚖️ §6A 64, a window not one day of which has been r
       label: s.categoryPath,
     });
     const html = renderToStaticMarkup(
-      createElement(BudgetRow, { status: s, guide: null, spentProvenance: spentProof, planProvenance: null }),
+      createElement(BudgetRow, {
+        status: s,
+        guide: null,
+        spentProvenance: spentProof,
+        planProvenance: null,
+        refusal: null,
+      }),
     );
     expect(figures(html)).toMatch(/^Spent — Budget \$300\.00 Left —/);
     expect(html).not.toContain("$0.00");
@@ -1177,7 +1183,13 @@ describe("BudgetRow — the inline editor's guide", () => {
     createBudget(bundle.db, { categoryId: catId("Food"), period: "monthly", amountCents: 60_000, startsOn: "2026-08-01" });
     popovers.forceOpen = true;
     return renderToStaticMarkup(
-      createElement(BudgetRow, { status: statusFor("Food"), guide, spentProvenance: null, planProvenance: null }),
+      createElement(BudgetRow, {
+        status: statusFor("Food"),
+        guide,
+        spentProvenance: null,
+        planProvenance: null,
+        refusal: null,
+      }),
     )
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ");

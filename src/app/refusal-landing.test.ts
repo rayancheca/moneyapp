@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ActionResult } from "@/app/transactions/action-types";
 import { refusalShownFields } from "@/components/ui/ErrorBanner";
 import { calleeName, lineOf, nodesUnder, scanServerActions } from "@/lib/server-action-scan";
-import { landBack } from "./refusal-landing";
+import { landBack, type Landing } from "./refusal-landing";
 
 /** each `redirect()` a landing asks for, with the history entry it asks Next for (`undefined`: Next's default) */
 const navigations = vi.hoisted(() => [] as { url: string; type: string | undefined }[]);
@@ -27,46 +27,51 @@ vi.mock("next/navigation", () => ({
  * 6 — every adapter but /imports' returned on a success. The same review unwired all three of /imports' forms and
  * every test stayed green. So these read every adapter and every form that binds one, in source: a page is an async
  * server component reading the database, and a render cannot reach a form a ledger has no row for (an un-import).
+ *
+ * 🔴 …and they left out every adapter that leaves its page on every press, as /budgets' do — the page the rule names as
+ * its origin. The review of cb2e89ac (2026-11-05, a dev server over the copy 10-29b): on /budgets "Create budget" with
+ * Housing, Annual, 0 pushed `/budgets?error=Budget amount must be positive` (history 3 → 4), 12.34 landed on /budgets
+ * (4 → 5), and one Back brought the alert back above the budget he had just created. /transactions' header strip and
+ * a new account (/accounts) leave the same way. Every form adapter lands through `landBack` now, and every form bound
+ * to one carries the field: a page left out fails here, by name.
  */
 
 const scan = scanServerActions();
 
 /** The adapters React binds to a `<form action>`: exported async functions of a `"use server"` module, `Promise<void>`. */
 const adapters = [...scan.actions].filter(([, fn]) => fn.type?.getText() === "Promise<void>");
+const adapterKeys = new Set(adapters.map(([key]) => key));
 
 /** The `return`s of `fn` itself — not of a function written inside it. */
 function ownReturns(fn: ts.FunctionDeclaration): ts.ReturnStatement[] {
   return nodesUnder(fn.body!, ts.isReturnStatement).filter((r) => ts.findAncestor(r, ts.isFunctionLike) === fn);
 }
 
-/** An adapter that leaves its page on every press: no `return`, and a `redirect(…)` its last statement (/budgets). */
-function redirectsEveryPress(fn: ts.FunctionDeclaration): boolean {
-  const last = fn.body!.statements.at(-1);
-  return (
-    ownReturns(fn).length === 0 &&
-    last !== undefined &&
-    ts.isExpressionStatement(last) &&
-    ts.isCallExpression(last.expression) &&
-    calleeName(last.expression) === "redirect"
-  );
-}
-
-/** The adapters whose press, landing, stays on its page — each must take a shown refusal away. */
-const staysPut = new Set(adapters.filter(([, fn]) => !redirectsEveryPress(fn)).map(([key]) => key));
-
-describe("a form whose press stays on its page takes a refusal it shows away", () => {
-  it("the scan reads the adapters — /budgets' leave on every press, the rest stay", () => {
+describe("every form adapter lands through one rule, and every form bound to one says when a refusal shows", () => {
+  it("the scan reads the adapters — those that stay on their page and those that leave it on every press", () => {
     expect(adapters.length, "found no form adapters at all — did the scan break?").toBeGreaterThan(10);
-    expect(staysPut).toContain("src/app/settings/actions.ts#updateSettingsAction");
-    expect(staysPut).not.toContain("src/app/budgets/actions.ts#createBudgetAction");
+    for (const key of [
+      "src/app/settings/actions.ts#updateSettingsAction",
+      "src/app/budgets/actions.ts#createBudgetAction",
+      "src/app/budgets/actions.ts#deactivateBudgetAction",
+      "src/app/transactions/actions.ts#runCategorizationAction",
+      "src/app/accounts/actions.ts#createAccountAction",
+    ]) {
+      expect(adapterKeys, key).toContain(key);
+    }
   });
 
-  it("every adapter that stays on its page lands through `landBack`, and returns before it nowhere", () => {
-    const unlanded = [...staysPut].filter((key) => {
-      const fn = scan.actions.get(key)!;
-      const calls = nodesUnder(fn.body!, ts.isCallExpression);
-      return ownReturns(fn).length > 0 || !calls.some((call) => calleeName(call) === "landBack");
-    });
+  it("every adapter lands through `landBack` — none redirects on its own, and none returns before it", () => {
+    const unlanded = adapters
+      .filter(([, fn]) => {
+        const calls = nodesUnder(fn.body!, ts.isCallExpression);
+        return (
+          ownReturns(fn).length > 0 ||
+          calls.some((call) => calleeName(call) === "redirect") ||
+          !calls.some((call) => calleeName(call) === "landBack")
+        );
+      })
+      .map(([key]) => key);
     expect(unlanded).toEqual([]);
   });
 
@@ -93,7 +98,7 @@ describe("a form whose press stays on its page takes a refusal it shows away", (
         const value = attribute.initializer;
         if (attribute.name.getText() !== "action" || value === undefined || !ts.isJsxExpression(value)) return [];
         const action = value.expression !== undefined && ts.isIdentifier(value.expression) ? bound.get(value.expression.text) : undefined;
-        if (action === undefined || !staysPut.has(action)) return [];
+        if (action === undefined || !adapterKeys.has(action)) return [];
         return carriesRefusal(attribute.parent.parent) ? [] : [`${lineOf(scanned, attribute)} ${value.expression!.getText()}`];
       });
     });
@@ -116,10 +121,10 @@ describe("a press made while a refusal shows takes the refusal's place in his hi
     return fd;
   };
   /** where `landBack` sends a press on /settings, and the history entry it asks for */
-  const land = (showing: boolean, result: ActionResult<unknown>, refusedOn?: string): typeof navigations => {
+  const land = <T>(showing: boolean, result: ActionResult<T>, landing?: Landing<T>): typeof navigations => {
     navigations.length = 0;
     try {
-      landBack("/settings", form(showing), result, refusedOn);
+      landBack("/settings", form(showing), result, landing);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.startsWith("NEXT_REDIRECT")) throw error;
     }
@@ -134,7 +139,7 @@ describe("a press made while a refusal shows takes the refusal's place in his hi
     expect(land(true, { ok: false, error: "Too big" })).toEqual([
       { url: "/settings?error=Too%20big", type: "replace" },
     ]);
-    expect(land(true, { ok: false, error: "Gone" }, "/accounts")).toEqual([
+    expect(land(true, { ok: false, error: "Gone" }, { refusedOn: "/accounts" })).toEqual([
       { url: "/accounts?error=Gone", type: "replace" },
     ]);
   });
@@ -147,5 +152,69 @@ describe("a press made while a refusal shows takes the refusal's place in his hi
 
   it("a press that lands with none shown stays where it is", () => {
     expect(land(false, { ok: true, data: null })).toEqual([]);
+  });
+});
+
+/*
+ * 🔴 The review of cb2e89ac (2026-11-05): a form that leaves its page on every press kept Next's default, a push, so
+ * on /budgets the budget created after a refusal stacked /budgets over it and one Back brought the alert back. Where
+ * such a press lands is its own (`landsOn`) — /budgets, the filtered view /transactions was pressed from, a new
+ * account's page — and it takes the refusal's entry as a press that stays does.
+ */
+describe("a form that leaves its page on every press lands where it goes, in a shown refusal's place", () => {
+  const form = (showing: boolean): FormData => {
+    const fd = new FormData();
+    for (const [name, value] of Object.entries(refusalShownFields(showing ? "Budget amount must be positive" : null))) {
+      fd.set(name, value);
+    }
+    return fd;
+  };
+  const land = <T>(
+    page: string,
+    showing: boolean,
+    result: ActionResult<T>,
+    landing: Landing<T>,
+  ): typeof navigations => {
+    navigations.length = 0;
+    try {
+      landBack(page, form(showing), result, landing);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("NEXT_REDIRECT")) throw error;
+    }
+    return [...navigations];
+  };
+  const toBudgets: Landing<unknown> = { landsOn: () => "/budgets" };
+
+  it("a budget created while /budgets shows a refusal replaces its entry — one Back is /budgets as it stood", () => {
+    expect(land("/budgets", true, { ok: true, data: null }, toBudgets)).toEqual([{ url: "/budgets", type: "replace" }]);
+  });
+
+  it("…and one created with none shown goes to /budgets as it always did", () => {
+    expect(land("/budgets", false, { ok: true, data: null }, toBudgets)).toEqual([{ url: "/budgets", type: "push" }]);
+  });
+
+  it("a refusal there is pushed, and one over it takes its place", () => {
+    expect(land("/budgets", false, { ok: false, error: "Budget amount must be positive" }, toBudgets)).toEqual([
+      { url: "/budgets?error=Budget%20amount%20must%20be%20positive", type: "push" },
+    ]);
+    expect(land("/budgets", true, { ok: false, error: "Pick a category" }, toBudgets)).toEqual([
+      { url: "/budgets?error=Pick%20a%20category", type: "replace" },
+    ]);
+  });
+
+  it("where the press lands is its own: a new account's page, in the place of /accounts' refusal", () => {
+    expect(
+      land("/accounts", true, { ok: true, data: { id: "acct-1" } }, { landsOn: ({ id }) => `/accounts/${id}` }),
+    ).toEqual([{ url: "/accounts/acct-1", type: "replace" }]);
+  });
+
+  it("a refusal on a page with a query of its own follows it with `&error=` — /transactions' filtered view", () => {
+    const view = "/transactions?view=review&page=2";
+    expect(land(view, false, { ok: false, error: "No run" }, { landsOn: () => view })).toEqual([
+      { url: `${view}&error=No%20run`, type: "push" },
+    ]);
+    expect(land(view, true, { ok: true, data: null }, { landsOn: () => `${view}&notice=no-api-key` })).toEqual([
+      { url: `${view}&notice=no-api-key`, type: "replace" },
+    ]);
   });
 });

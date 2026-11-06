@@ -224,4 +224,61 @@ describe("ForecastAndCalendar — a forecast that fails to load", () => {
     // the month itself loaded: the grid's badge moved with it
     expect((findElement(drawn, RecurringTabs)!.props.counts as Record<string, number>).calendar).toBe(14);
   });
+
+  /*
+   * 🔴 The review of cb2e89ac (2026-11-05, a dev server over his ledger copy 10-29b, /recurring?tab=calendar on Nov 5):
+   * ‹ from November showed "October 2026 has ended", and › with only the forecast's POST failing left the card reading
+   * "November 2026 has ended / There is nothing to project — the calendar below shows what actually posted." over
+   * November's grid — a month not yet over, said to have ended. The note printed the month on the GRID, set before the
+   * load, beside the forecast the failure kept: none. The card that stands is the card it had, the month it names
+   * included.
+   */
+  test("one that fails after an ended month leaves that month's note — never 'September 2026 has ended'", async () => {
+    vi.mocked(toast).mockClear();
+    const forecastLoad = vi.mocked(actions.loadMonthForecastAction);
+    forecastLoad.mockReset();
+    // August has ended: its forecast is none; September's never reaches the server
+    forecastLoad.mockResolvedValueOnce({ ok: true, data: null });
+    forecastLoad.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const monthLoad = vi.mocked(actions.loadRecurringMonthAction);
+    monthLoad.mockReset();
+    monthLoad.mockResolvedValueOnce({ ok: true, data: month("2026-08", 11) });
+    monthLoad.mockResolvedValueOnce({ ok: true, data: month("2026-09", 12) });
+    const page = new HookSlots();
+    const grid = new HookSlots();
+    const props = {
+      initialForecast: { monthKey: "2026-09" } as MonthForecast,
+      initialMonth: month("2026-09", 12),
+      today: "2026-09-15",
+      view: {},
+      tab: "calendar" as const,
+      counts: { upcoming: 10, all: 15, calendar: 12 },
+    };
+    const pageTo = async (monthKey: string): Promise<void> => {
+      const calendar = findElement(page.render(ForecastAndCalendar, props), RecurringCalendar)!;
+      const cells = findElement(
+        grid.render(RecurringCalendar, calendar.props as unknown as Parameters<typeof RecurringCalendar>[0]),
+        CalendarGrid,
+      )!;
+      (cells.props.onMonthChange as (key: string) => void)(monthKey);
+      await grid.settle();
+      await page.settle();
+    };
+    /** the note the card's place holds, as its heading reads */
+    const heading = (): string | null => {
+      const drawn = findElement(page.render(ForecastAndCalendar, props), "h2");
+      return drawn === null ? null : renderToStaticMarkup(drawn).replace(/<[^>]+>/g, "");
+    };
+
+    await pageTo("2026-08");
+    expect(heading()).toBe("August 2026 has ended");
+    await pageTo("2026-09");
+
+    expect(vi.mocked(toast).mock.calls).toEqual([[{ title: "Failed to fetch", tone: "negative" }]]);
+    expect(heading()).toBe("August 2026 has ended");
+    const drawn = page.render(ForecastAndCalendar, props);
+    expect(findElement(drawn, ForecastCard)).toBeNull();
+    // the month itself loaded: the grid's badge moved with it
+    expect((findElement(drawn, RecurringTabs)!.props.counts as Record<string, number>).calendar).toBe(12);
+  });
 });

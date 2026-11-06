@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { landBack, type Landing } from "@/app/refusal-landing";
 import { getDb, type AppDatabase } from "@/db/client";
 import { categories } from "@/db/schema/categories";
 import { merchants } from "@/db/schema/merchants";
@@ -124,13 +124,24 @@ const TXN_LABELS = {
  * `(formData) => void | Promise<void>`, so a result cannot be returned from one
  * without breaking its call site. Each delegates to a `*ResultAction` twin that
  * validates with safeParse and hands back the destination, and the void adapter
- * does the redirect — a failure lands on `?error=` instead of becoming a
- * Next.js error digest that replaces the page.
+ * lands through `landBack` — a failure on `&error=` after the view it was pressed
+ * from instead of a Next.js error digest that replaces the page, and a press made
+ * while that view shows a refusal in the refusal's place in his history.
+ *
+ * 🔴 Each redirected with Next's default — inside a server action, a push — so a
+ * press that landed under a refusal stacked the view over it and one Back brought
+ * the refusal back, the shape the review of cb2e89ac measured on /budgets. Measured
+ * on a dev server over his ledger copy 2026-11-06, a refusal's URL opened
+ * (`?view=review&error=…`, history 10): Run categorization landed on `?view=review`
+ * (11) and Back was the refusal again; with `landBack` it landed in the refusal's
+ * place (15, 15) and Back was `?view=review` with no alert.
  */
-function returnPath(returnQuery: string, error: string): string {
-  const separator = returnQuery === "" ? "?" : "&";
-  return `/transactions${returnQuery}${separator}error=${encodeURIComponent(error)}`;
+function pressedFrom(formData: FormData): string {
+  return transactionsPath(safeReturnQuery(formData.get("returnTo")));
 }
+
+/** where a press that lands goes: the view it was pressed from — a notice on it when there is one */
+const LANDS_ON_HREF: Landing<{ href: string }> = { landsOn: ({ href }) => href };
 
 export async function correctCategoryResultAction(
   formData: FormData,
@@ -167,13 +178,8 @@ export async function correctCategoryResultAction(
 }
 
 export async function correctCategoryAction(formData: FormData): Promise<void> {
-  const result = await correctCategoryResultAction(formData);
-  // redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
-  redirect(
-    result.ok
-      ? result.data.href
-      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
-  );
+  // landBack's redirect() throws NEXT_REDIRECT by design — it must stay outside any catch
+  landBack(pressedFrom(formData), formData, await correctCategoryResultAction(formData), LANDS_ON_HREF);
 }
 
 const returnOnlyFormSchema = z.object({ returnTo: z.string() });
@@ -200,12 +206,7 @@ export async function runCategorizationResultAction(
 }
 
 export async function runCategorizationAction(formData: FormData): Promise<void> {
-  const result = await runCategorizationResultAction(formData);
-  redirect(
-    result.ok
-      ? result.data.href
-      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
-  );
+  landBack(pressedFrom(formData), formData, await runCategorizationResultAction(formData), LANDS_ON_HREF);
 }
 
 export async function stopClassifyResultAction(
@@ -227,12 +228,7 @@ export async function stopClassifyResultAction(
 }
 
 export async function stopClassifyAction(formData: FormData): Promise<void> {
-  const result = await stopClassifyResultAction(formData);
-  redirect(
-    result.ok
-      ? result.data.href
-      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
-  );
+  landBack(pressedFrom(formData), formData, await stopClassifyResultAction(formData), LANDS_ON_HREF);
 }
 
 export async function classifyMerchantsResultAction(
@@ -261,12 +257,7 @@ export async function classifyMerchantsResultAction(
 }
 
 export async function classifyMerchantsAction(formData: FormData): Promise<void> {
-  const result = await classifyMerchantsResultAction(formData);
-  redirect(
-    result.ok
-      ? result.data.href
-      : returnPath(safeReturnQuery(formData.get("returnTo")), result.error),
-  );
+  landBack(pressedFrom(formData), formData, await classifyMerchantsResultAction(formData), LANDS_ON_HREF);
 }
 
 /* -------------------------------------------------------------------------

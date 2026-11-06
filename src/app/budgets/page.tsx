@@ -45,6 +45,7 @@ export default async function BudgetsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const raw = await searchParams;
+  // the refusal shown, and handed to every form here: while one shows, a press that lands takes its place (`landBack`)
   const error = errorParam(raw);
 
   const db = getDb();
@@ -324,6 +325,7 @@ export default async function BudgetsPage({
                     guide={guides.get(status.budget.id) ?? null}
                     spentProvenance={spendProvenance.get(status.budget.id) ?? null}
                     planProvenance={planProvenance.get(status.budget.id) ?? null}
+                    refusal={error}
                   />
                 ))}
               </ul>
@@ -337,7 +339,7 @@ export default async function BudgetsPage({
             One active budget per category and period. Budgeting a subcategory alongside its parent is
             allowed — the child&apos;s spending counts toward both, and totals never double-count.
           </p>
-          <BudgetForm categories={categories} />
+          <BudgetForm categories={categories} refusal={error} />
         </SurfaceCard>
       </div>
     </>

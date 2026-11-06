@@ -14,11 +14,14 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
  */
 
 const redirects = vi.hoisted(() => [] as string[]);
+/** the history entry each of `redirects` asked Next for (`undefined`: Next's default — a push, in a server action) */
+const entries = vi.hoisted(() => [] as (string | undefined)[]);
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({
-  redirect: (url: string): never => {
+  redirect: (url: string, type?: string): never => {
     redirects.push(url);
+    entries.push(type);
     // mirrors Next's real control flow: redirect() never returns
     throw new Error(`NEXT_REDIRECT:${url}`);
   },
@@ -303,6 +306,32 @@ describe("createAccountAction (the <form action> adapter)", () => {
       createAccountAction(form({ institutionId, name: "Redirected", type: "checking" })),
     ).rejects.toThrow(/NEXT_REDIRECT/);
     expect(redirects[0]).toMatch(/^\/accounts\/[^?]+$/);
+  });
+
+  /*
+   * 🔴 The review of cb2e89ac (2026-11-05): an adapter that leaves its page on every press kept Next's default, a push
+   * — on /budgets one Back after the budget that landed brought the refusal back above it. A new account is the same
+   * shape: created while /accounts shows a refusal, it takes the refusal's entry, so Back is /accounts with none.
+   */
+  test("one created while /accounts shows a refusal takes its place — Back is /accounts with none", async () => {
+    redirects.length = 0;
+    entries.length = 0;
+    await expect(
+      createAccountAction(shown({ institutionId, name: "After a refusal", type: "checking" })),
+    ).rejects.toThrow(/NEXT_REDIRECT/);
+    await expect(createAccountAction(shown({ institutionId, name: "", type: "checking" }))).rejects.toThrow(
+      /NEXT_REDIRECT/,
+    );
+    await expect(createAccountAction(form({ institutionId, name: "", type: "checking" }))).rejects.toThrow(
+      /NEXT_REDIRECT/,
+    );
+    expect(redirects[0]).toMatch(/^\/accounts\/[^?]+$/);
+    expect(redirects.slice(1)).toEqual([
+      `/accounts?error=${encodeURIComponent("Name the account")}`,
+      `/accounts?error=${encodeURIComponent("Name the account")}`,
+    ]);
+    // the landing and a refusal over a refusal take its place; a first refusal is pushed
+    expect(entries).toEqual(["replace", "replace", "push"]);
   });
 });
 

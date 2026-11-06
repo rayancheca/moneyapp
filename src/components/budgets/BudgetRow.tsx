@@ -5,6 +5,7 @@ import { useState } from "react";
 import { deactivateBudgetAction } from "@/app/budgets/actions";
 import { Icon } from "@/components/shell/Icon";
 import { ConfirmActionButton } from "@/components/ui/Confirm";
+import { refusalShownFields } from "@/components/ui/ErrorBanner";
 import type { Provenance } from "@/services/provenance";
 import { Money } from "@/components/ui/Money";
 import { ProvenancePopover } from "@/components/ui/ProvenancePopover";
@@ -91,6 +92,8 @@ interface BudgetRowProps {
    * the render.
    */
   planProvenance: Provenance | null;
+  /** the refusal the page shows (`?error=`), or null: while one shows, a Deactivate takes its place (`landBack`) */
+  refusal: string | null;
 }
 
 /**
@@ -104,7 +107,7 @@ interface BudgetRowProps {
  * The headline and the definition beside it both come from `budgetVerdict`, so
  * the words and their explanation are chosen by one branch.
  */
-export function BudgetRow({ status, guide, spentProvenance, planProvenance }: BudgetRowProps) {
+export function BudgetRow({ status, guide, spentProvenance, planProvenance, refusal }: BudgetRowProps) {
   const { budget, tail } = status;
   // Lifted out of BudgetRolloverToggle so the details panel reacts to the toggle
   // immediately. Left inside the toggle, the panel would read the stale server
@@ -432,7 +435,7 @@ export function BudgetRow({ status, guide, spentProvenance, planProvenance }: Bu
           />
           <ConfirmActionButton
             action={deactivateBudgetAction}
-            fields={{ budgetId: budget.id }}
+            fields={{ budgetId: budget.id, ...refusalShownFields(refusal) }}
             triggerLabel="Deactivate"
             triggerAriaLabel={`Deactivate the ${status.categoryPath} budget`}
             triggerClassName="rounded-md px-1.5 py-0.5 text-xs text-ink-faint transition-colors duration-(--duration-fast) hover:bg-surface-sunken hover:text-negative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

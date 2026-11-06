@@ -3,6 +3,7 @@ import {
   runCategorizationAction,
   stopClassifyAction,
 } from "@/app/transactions/actions";
+import { RefusalShownField } from "@/components/ui/ErrorBanner";
 import { formatIsoInstantLong } from "@/lib/format-instant";
 import { formatCents } from "@/lib/money";
 import type { CoverageStats } from "@/services/categorize";
@@ -20,6 +21,8 @@ interface HeaderStripProps {
   runState: ClaudeRunState;
   /** current filter query string — actions return the user here */
   returnQuery: string;
+  /** the refusal the page shows (`?error=`), or null: while one shows, a press here takes its place (`landBack`) */
+  refusal: string | null;
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -73,7 +76,7 @@ export function failedRunMessage(
 }
 
 /** Coverage + queue stats with the two engine triggers. Thin UI over the services. */
-export function HeaderStrip({ coverage, pendingMerchants, spend, runState, returnQuery }: HeaderStripProps) {
+export function HeaderStrip({ coverage, pendingMerchants, spend, runState, returnQuery, refusal }: HeaderStripProps) {
   const estUsd = pendingMerchants * EST_USD_PER_MERCHANT;
   const { isRunning, lastRun } = runState;
   // a live run supersedes the last one, so a stale failure never shouts over it
@@ -102,6 +105,7 @@ export function HeaderStrip({ coverage, pendingMerchants, spend, runState, retur
         <div className="flex flex-wrap items-center gap-2">
           <form action={runCategorizationAction}>
             <input type="hidden" name="returnTo" value={returnQuery} />
+            <RefusalShownField error={refusal} />
             <button
               type="submit"
               title="Deterministic rules + merchant map + bank categories — free, no API calls"
@@ -113,6 +117,7 @@ export function HeaderStrip({ coverage, pendingMerchants, spend, runState, retur
           {isRunning ? (
             <form action={stopClassifyAction}>
               <input type="hidden" name="returnTo" value={returnQuery} />
+              <RefusalShownField error={refusal} />
               <button
                 type="submit"
                 className="rounded-md border border-negative/40 px-3.5 py-2 text-sm font-medium text-negative transition-colors duration-(--duration-fast) hover:border-negative"
@@ -124,6 +129,7 @@ export function HeaderStrip({ coverage, pendingMerchants, spend, runState, retur
             <div className="text-right">
               <form action={classifyMerchantsAction}>
                 <input type="hidden" name="returnTo" value={returnQuery} />
+                <RefusalShownField error={refusal} />
                 <button
                   type="submit"
                   disabled={pendingMerchants === 0 || spend.overCap}
