@@ -2,7 +2,16 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import type { ActionResult } from "@/app/transactions/action-types";
 import { refusalShownFields } from "@/components/ui/ErrorBanner";
-import { calleeName, lineOf, nodesUnder, scanServerActions, type ScannedFile } from "@/lib/server-action-scan";
+import {
+  calleeName,
+  lineOf,
+  nodesUnder,
+  scanServerActions,
+  SRC_TREE,
+  type ScannedFile,
+  type ServerAction,
+  type ServerActionScan,
+} from "@/lib/server-action-scan";
 import { landBack, type Landing } from "./refusal-landing";
 
 /** each `redirect()` a landing asks for, with the history entry it asks Next for (`undefined`: Next's default) */
@@ -41,32 +50,99 @@ vi.mock("next/navigation", () => ({
  * 571 tests; re-measured the same on 2026-11-06): /budgets after a refusal was back to one Back bringing the alert
  * back. So each field is traced to the refusal its page shows — the page's own `errorParam(…)`, in its
  * `<ErrorBanner>` — through every component between them, and a break is named where it is.
+ *
+ * 🔴 …and they picked the adapters by what they declare, `: Promise<void>`, from a scan that read only `export async
+ * function`: an adapter written otherwise took its form out of every gate (the review of 63847994, 2026-11-06, its
+ * cases staged below). A form adapter is every server action an `action={…}` binds, and an `action={…}` binding
+ * anything else is named.
  */
 
-const scan = scanServerActions();
+/** An element binding a server action to its `action` — a `<form>`, or a component writing one out — and where. */
+interface BoundForm {
+  readonly scanned: ScannedFile;
+  readonly element: ts.JsxOpeningLikeElement;
+  /** the server action it binds, by `file#name` */
+  readonly action: string;
+  readonly where: string;
+}
 
-/** The adapters React binds to a `<form action>`: exported async functions of a `"use server"` module, `Promise<void>`. */
-const adapters = [...scan.actions].filter(([, fn]) => fn.type?.getText() === "Promise<void>");
+/** What the gates read in a scan: the form adapters, the forms binding them, and each `action={…}` that is neither. */
+interface FormReading {
+  readonly adapters: readonly (readonly [string, ServerAction])[];
+  readonly boundForms: readonly BoundForm[];
+  /** each `action={…}` binding no server action the scan reads, and handing on no `action` of its component's own */
+  readonly unreadForms: readonly string[];
+}
+
+/**
+ * The adapters React binds to a `<form action>`: every server action an `action={…}` binds — whatever it declares —
+ * and every one declared `Promise<void>`, as an adapter is. 🔴 Picked by `: Promise<void>` alone, an adapter written
+ * without it took its form out of every gate (the review of 63847994, below). An `action={…}` binding anything else —
+ * a function of the file's own, an inline one — is named: no gate could read what its press does.
+ */
+function formReading(actionScan: ServerActionScan): FormReading {
+  const attributes = actionScan.files.flatMap((scanned) => {
+    const bindings = actionScan.bindingsIn(scanned);
+    return nodesUnder(scanned.ast, ts.isJsxAttribute).flatMap((attribute) => {
+      const value = attribute.initializer;
+      if (attribute.name.getText() !== "action" || value === undefined || !ts.isJsxExpression(value)) return [];
+      const name = value.expression;
+      const action = name !== undefined && ts.isIdentifier(name) ? bindings.get(name.text) : undefined;
+      return [{ scanned, attribute, name, action }];
+    });
+  });
+  const boundForms = attributes.flatMap(({ scanned, attribute, name, action }) => {
+    if (action === undefined || name === undefined) return [];
+    const where = `${lineOf(scanned, attribute)} ${name.getText()}`;
+    return [{ scanned, element: attribute.parent.parent, action, where }];
+  });
+  // what binds none is named — but a component's own `action`, handed on to the `<form>` it writes out
+  // (ConfirmActionButton's): each element rendering it binds an `action={…}` read here too
+  const unreadForms = attributes
+    .filter(({ name, action }) => action === undefined && (name === undefined || propRead(name)?.prop !== "action"))
+    .map(({ scanned, attribute }) => `${lineOf(scanned, attribute)} ${attribute.getText()}`);
+  const bound = new Set(boundForms.map(({ action }) => action));
+  const adapters = [...actionScan.actions].filter(
+    ([key, fn]) => bound.has(key) || fn.type?.getText() === "Promise<void>",
+  );
+  return { adapters, boundForms, unreadForms };
+}
+
+const scan = scanServerActions();
+const { adapters, boundForms, unreadForms } = formReading(scan);
 const adapterKeys = new Set(adapters.map(([key]) => key));
 
 /** The `return`s of `fn` itself — not of a function written inside it. */
-function ownReturns(fn: ts.FunctionDeclaration): ts.ReturnStatement[] {
+function ownReturns(fn: ServerAction): ts.ReturnStatement[] {
   return nodesUnder(fn.body!, ts.isReturnStatement).filter((r) => ts.findAncestor(r, ts.isFunctionLike) === fn);
 }
 
-/** Every element binding an adapter to its `action` — a `<form>`, or a component that writes one out — where it is. */
-const boundForms = scan.files.flatMap((scanned) => {
-  const bound = scan.bindingsIn(scanned);
-  return nodesUnder(scanned.ast, ts.isJsxAttribute).flatMap((attribute) => {
-    const value = attribute.initializer;
-    if (attribute.name.getText() !== "action" || value === undefined || !ts.isJsxExpression(value)) return [];
-    const name = value.expression;
-    if (name === undefined || !ts.isIdentifier(name)) return [];
-    const action = bound.get(name.text);
-    if (action === undefined || !adapterKeys.has(action)) return [];
-    return [{ scanned, element: attribute.parent.parent, where: `${lineOf(scanned, attribute)} ${name.text}` }];
+/** Each adapter not declared `Promise<void>`, with what it declares instead. */
+function undeclared(found: FormReading["adapters"]): string[] {
+  return found.flatMap(([key, fn]) => {
+    const declared = fn.type?.getText();
+    return declared === "Promise<void>" ? [] : [`${key}: ${declared ?? "no return type declared"}`];
   });
-});
+}
+
+/** Each adapter that redirects on its own, returns before it lands, or never lands through `landBack`. */
+function unlanded(found: FormReading["adapters"]): string[] {
+  return found
+    .filter(([, fn]) => {
+      const calls = nodesUnder(fn.body!, ts.isCallExpression);
+      return (
+        ownReturns(fn).length > 0 ||
+        calls.some((call) => calleeName(call) === "redirect") ||
+        !calls.some((call) => calleeName(call) === "landBack")
+      );
+    })
+    .map(([key]) => key);
+}
+
+/** Each element binding an adapter that carries no field saying its page shows a refusal. */
+function unwired(forms: FormReading["boundForms"]): string[] {
+  return forms.filter(({ element }) => refusalsHanded(element).length === 0).map(({ where }) => where);
+}
 
 /** A JSX element, opening or self-closing: what writes out a form, or renders a component. */
 function isElement(node: ts.Node): node is ts.JsxOpeningLikeElement {
@@ -184,6 +260,13 @@ function propOf(declaration: ts.Node, value: ts.Expression): { component: string
   return component === undefined || prop === undefined ? undefined : { component, prop };
 }
 
+/** The prop of its component that `value` reads — `{ refusal }`, or `props.refusal` — if it reads one. */
+function propRead(value: ts.Expression): { component: string; prop: string } | undefined {
+  const read = ts.isPropertyAccessExpression(value) ? value.expression : value;
+  const declaration = ts.isIdentifier(read) ? declarationOf(read) : undefined;
+  return declaration === undefined ? undefined : propOf(declaration, value);
+}
+
 /** `value` as a gate names it: on the element it is handed to, `<X refusal={null}>`, or in its call. */
 function named(value: ts.Expression): string {
   const holder = value.parent;
@@ -219,12 +302,9 @@ function pageRefusal(scanned: ScannedFile, declaration: ts.VariableDeclaration):
  * a value — followed through every component between the page and the field.
  */
 function traceRefusal(scanned: ScannedFile, value: ts.Expression, followed: ReadonlySet<string> = new Set()): Trace {
-  const read = ts.isPropertyAccessExpression(value) ? value.expression : value;
-  const declaration = ts.isIdentifier(read) ? declarationOf(read) : undefined;
-  if (declaration !== undefined && read === value && ts.isVariableDeclaration(declaration)) {
-    return pageRefusal(scanned, declaration);
-  }
-  const prop = declaration === undefined ? undefined : propOf(declaration, value);
+  const declaration = ts.isIdentifier(value) ? declarationOf(value) : undefined;
+  if (declaration !== undefined && ts.isVariableDeclaration(declaration)) return pageRefusal(scanned, declaration);
+  const prop = propRead(value);
   if (prop === undefined) return brokenAt(`${lineOf(scanned, value)} ${named(value)}`);
   const key = `${scanned.file}#${prop.component}.${prop.prop}`;
   if (followed.has(key)) return { shownOn: [], breaks: [] };
@@ -258,23 +338,20 @@ describe("every form adapter lands through one rule, and every form bound to one
     expect(boundForms.length, "found no form bound to an adapter — did the scan's imports break?").toBeGreaterThan(15);
   });
 
+  it("every adapter is declared `Promise<void>` — one a form binds is an adapter whatever it declares", () => {
+    expect(undeclared(adapters)).toEqual([]);
+  });
+
+  it("every `action={…}` binds a server action the scan reads, or hands on its component's own `action`", () => {
+    expect(unreadForms).toEqual([]);
+  });
+
   it("every adapter lands through `landBack` — none redirects on its own, and none returns before it", () => {
-    const unlanded = adapters
-      .filter(([, fn]) => {
-        const calls = nodesUnder(fn.body!, ts.isCallExpression);
-        return (
-          ownReturns(fn).length > 0 ||
-          calls.some((call) => calleeName(call) === "redirect") ||
-          !calls.some((call) => calleeName(call) === "landBack")
-        );
-      })
-      .map(([key]) => key);
-    expect(unlanded).toEqual([]);
+    expect(unlanded(adapters)).toEqual([]);
   });
 
   it("every form bound to one carries the field while its page shows a refusal", () => {
-    const unwired = boundForms.filter(({ element }) => refusalsHanded(element).length === 0).map(({ where }) => where);
-    expect(unwired).toEqual([]);
+    expect(unwired(boundForms)).toEqual([]);
   });
 
   it("…handed the refusal its page shows: the page's own `errorParam`, through every component between them", () => {
@@ -297,6 +374,69 @@ describe("every form adapter lands through one rule, and every form bound to one
     ]) {
       expect(shownOn, page).toContain(page);
     }
+  });
+});
+
+/*
+ * 🔴 The review of 63847994 (2026-11-06): the adapters were picked by the return they declare, `: Promise<void>`, and
+ * the scan read only `export async function`. With addAnchorAction's annotation taken off (its `landBack` kept) and
+ * AnchorForm's `<RefusalShownField error={refusal} />` made `{null}` — or the adapter written `export const
+ * addAnchorAction = async (formData: FormData): Promise<void> =>`, the form unwired the same — refusal-landing,
+ * useAction and accounts/actions passed 49/49 and tsc was clean (re-measured 2026-11-06: the same). He would see it on
+ * /accounts/[id]: after a refused balance, the next balance that lands stays under `?error=`, the banner beside it —
+ * 425ae02c's defect with every gate green. The review's cases are staged here over the real tree, as it made them.
+ */
+describe("a form's adapter is held to every gate whatever it declares, and however it is written", () => {
+  /** `[file, text, its replacement]`: one edit a case makes to the real tree */
+  type Edit = readonly [file: string, from: string, to: string];
+  const ACTIONS = "src/app/accounts/actions.ts";
+  const FORM = "src/components/accounts/AnchorForm.tsx";
+  const DECLARED = "export async function addAnchorAction(formData: FormData): Promise<void> {";
+  const UNWIRED: Edit = [FORM, "<RefusalShownField error={refusal} />", "{null}"];
+  const ANCHOR_FORM_LINE = /^src\/components\/accounts\/AnchorForm\.tsx:\d+ /;
+
+  /** The gates' reading of the real tree with `edits` made — each finds its text once, or the case stages nothing. */
+  function staged(...edits: readonly Edit[]): FormReading {
+    const texts = new Map<string, string>();
+    for (const [file, from, to] of edits) {
+      const text = texts.get(file) ?? SRC_TREE.read(file) ?? "";
+      expect(text.split(from).length - 1, `${file} no longer reads "${from}" once`).toBe(1);
+      texts.set(file, text.replace(from, to));
+    }
+    const tree = { paths: () => SRC_TREE.paths(), read: (file: string) => texts.get(file) ?? SRC_TREE.read(file) };
+    return formReading(scanServerActions(tree));
+  }
+
+  it("an adapter a form binds that declares no `Promise<void>` is named — and its form, left unwired", () => {
+    const reading = staged([ACTIONS, DECLARED, "export async function addAnchorAction(formData: FormData) {"], UNWIRED);
+    expect(undeclared(reading.adapters)).toEqual([`${ACTIONS}#addAnchorAction: no return type declared`]);
+    expect(unwired(reading.boundForms)).toEqual([expect.stringMatching(ANCHOR_FORM_LINE)]);
+  });
+
+  it("…and one written `export const … = async` is read as one written `export async function`", () => {
+    const arrow = "export const addAnchorAction = async (formData: FormData): Promise<void> => {";
+    const reading = staged([ACTIONS, DECLARED, arrow], UNWIRED);
+    expect(reading.adapters.map(([key]) => key)).toContain(`${ACTIONS}#addAnchorAction`);
+    expect(unwired(reading.boundForms)).toEqual([expect.stringMatching(ANCHOR_FORM_LINE)]);
+  });
+
+  it("a form bound to a function of its own, which calls the adapter, is named — no gate reads what it binds", () => {
+    // caught, as useAction's gate asks, and tsc takes it: made in AnchorForm itself, 63847994's gates passed 49/49
+    // and only this names it (2026-11-06)
+    const wrapper = [
+      "const submit = async (formData: FormData): Promise<void> => {",
+      "  await addAnchorAction(formData).catch(() => undefined);",
+      "};",
+      "",
+      "export function AnchorForm(",
+    ].join("\n");
+    const reading = staged(
+      [FORM, "action={addAnchorAction}", "action={submit}"],
+      [FORM, "export function AnchorForm(", wrapper],
+    );
+    const submitLine = new RegExp(`${ANCHOR_FORM_LINE.source}action=\\{submit\\}$`);
+    expect(reading.unreadForms).toEqual([expect.stringMatching(submitLine)]);
+    expect(reading.boundForms.filter(({ scanned }) => scanned.file === FORM)).toEqual([]);
   });
 });
 
