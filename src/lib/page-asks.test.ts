@@ -353,6 +353,29 @@ describe("createPageAsks: what is still going", () => {
     expect(gone).toBe(true);
     expect(asks.stillGoing()).toBeNull();
   });
+
+  /**
+   * …and nothing from before a Back/Forward: after it a press lands nowhere (`landing`) and a writer's URL is no longer
+   * the newest asked (`isNewest`), so it draws nothing of its own. 🔴 Review of cd44d6d0 (batch 9 R, L111): a press
+   * whose write never answered stayed going for the rest of the session, and every redraw after a later Back's save
+   * waited BACK_SAVE_WAIT_MS on it.
+   */
+  test("a Back/Forward ends what is going before it, never what starts going after it", async () => {
+    const asks = createPageAsks();
+    const hung = asks.going(); // a press whose write never answers
+    asks.moved();
+    expect(asks.stillGoing()).toBeNull();
+    const pill = asks.going(); // a URL writer, held by that Back's save
+    let gone = false;
+    void asks.stillGoing()!.then(() => (gone = true));
+    hung(); // its write lands at last: nothing more
+    await flush();
+    expect(gone).toBe(false);
+    pill();
+    await flush();
+    expect(gone).toBe(true);
+    expect(asks.stillGoing()).toBeNull();
+  });
 });
 
 /**
@@ -722,6 +745,22 @@ describe("redrawAfterBackSaves", () => {
     expect(redraw).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(redraw).toHaveBeenCalledTimes(1);
+  });
+
+  /** 🔴 …and never on what went before a later Back/Forward (review of cd44d6d0, batch 9 R, L111) */
+  test("after a later Back/Forward, draws as its saves land, though a press from before it never answers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const asks = createPageAsks();
+    asks.going(); // a press whose write never answers
+    asks.moved(); // Back
+    let land!: () => void;
+    asks.backSaveSent(new Promise<void>((resolve) => (land = resolve)));
+    const redraw = vi.fn();
+    redrawAfterBackSaves(asks, redraw);
+    land();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(redraw).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
