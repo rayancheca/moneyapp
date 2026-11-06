@@ -356,9 +356,14 @@ export interface PageAsks {
    * once its write lands, or at BACK_SAVE_WAIT_MS and again then (`pressWriteLanding`) — and a URL writer held by
    * Back's saves, until it has gone once they land (`navigateAfterBackSaves`). Call what it returns then. What is still
    * going draws its own page, so PageAsksProvider waits on it before drawing the page on screen again
-   * (`redrawAfterBackSaves`).
+   * (`redrawAfterBackSaves`) — and only until the next Back/Forward (`moved`), after which it draws nothing of its own:
+   * a press lands nowhere, or only where something made since goes itself (`landing`), and a writer's URL is no longer
+   * the newest asked (`isNewest`).
    * 🔴 Reviews of b37a250, 7898ee2 (batch 6) and 1c057674 (batch 8): drawn again as Back's save landed, the page was
    * rendered twice — the provider's redraw, then a press going to its own URL or making again the link he had followed.
+   * 🔴 Review of cd44d6d0 (batch 9 R, L111): a press whose write never answered stayed going for the rest of the
+   * session, and a page drawn while a later Back's save was being written was drawn again only BACK_SAVE_WAIT_MS after
+   * that save landed — 5 s of the view he had walked away from, the one Back showed saved.
    */
   going(): () => void;
   /** Settles once everything still going (`going`) has gone; null when nothing is. */
@@ -374,7 +379,7 @@ export interface PageAsks {
   departing(href: string, kind: HistoryKind): void;
   /** the router committed `href` (pathname and query): the URL on screen a press starts from */
   committed(href: string): void;
-  /** Back/Forward: the page moved under the ask, whatever URL it lands on */
+  /** Back/Forward: the page moved under the ask, whatever URL it lands on, and under what is still going (`going`) */
   moved(): void;
   /**
    * A mark of the page's moves under its asks so far — each Back/Forward, and each push or replace nobody asked for (a
@@ -447,7 +452,7 @@ export function createPageAsks(): PageAsks {
   // the page's moves under its asks (a Back/Forward, a link nobody asked for): how many, and the newest
   let moves = 0;
   let newestMove: PageMove = "link";
-  // what is still going (`going`): each one's last navigation, once made
+  // what is still going (`going`) since the last Back/Forward: each one's last navigation, once made
   let goings: readonly Promise<void>[] = [];
   // every URL a press or URL writer asked for, in one spelling: the view keys his presses had
   // asked for when it was (every one was saved by its press), and the ones it kept from the URL it
@@ -525,6 +530,8 @@ export function createPageAsks(): PageAsks {
       current = null;
       overtaken = null;
       dropped = null;
+      // what was still going draws nothing of its own after it (`going`): no redraw waits on it any longer
+      goings = [];
       traversing = true;
       moves += 1;
       newestMove = "traverse";

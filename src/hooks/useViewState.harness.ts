@@ -239,9 +239,13 @@ export class World<P> {
     current = null;
   }
 
-  /** answer the oldest request the server holds (of `kind`, when given), then let React run */
-  async serve(kind?: ServerWork["kind"]): Promise<ServerWork> {
-    const index = this.inbox.findIndex((entry) => kind === undefined || entry.work.kind === kind);
+  /**
+   * answer the oldest request the server holds (of `kind`, when given) — or the newest (`from`), as a server does while
+   * an older one it took is never answered — then let React run
+   */
+  async serve(kind?: ServerWork["kind"], from: "oldest" | "newest" = "oldest"): Promise<ServerWork> {
+    const of = (entry: { work: ServerWork }): boolean => kind === undefined || entry.work.kind === kind;
+    const index = from === "oldest" ? this.inbox.findIndex(of) : this.inbox.findLastIndex(of);
     if (index < 0) throw new Error(`the server holds no ${kind ?? "request"}: ${JSON.stringify(this.pending)}`);
     const [entry] = this.inbox.splice(index, 1);
     entry!.serve();

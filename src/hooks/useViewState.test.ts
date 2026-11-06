@@ -1278,8 +1278,10 @@ describe("Back/Forward to a page with view pills", () => {
 
   /**
    * …and a view PRESS gone at its bound goes again itself once its own write lands — which Next queues behind Back's
-   * save, so after it lands. 🔴 Review of b37a250 (harness probe Q1): the provider's redraw, meant for a link, fired for
-   * the press's navigation too, and the page was rendered twice: the provider's refresh, then the press going again.
+   * save, so after it lands. The provider's redraw is made for the press's navigation too, as for every push or replace
+   * while Back's save is being written: it waits on the press (`PageAsks.going`) and draws nothing once a navigation
+   * has started since (`starts`): no second. 🔴 Review of b37a250 (harness probe Q1): it fired as Back's save landed,
+   * before the press's write, and the page was rendered twice: the provider's refresh, then the press going again.
    */
   test("a view press gone at BACK_SAVE_WAIT_MS: once Back's save and its write land, drawn once more, not twice", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -1507,6 +1509,49 @@ describe("Back/Forward to a page with view pills", () => {
     await page.serve("render");
     expect(page.url).toBe("/investments?range=1Y&unit=percent");
     expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
+  });
+
+  /**
+   * …and waited on no longer than the next Back/Forward: after it the press lands nowhere (`landing` is null — ⚖️ Owner
+   * 2026-10-05, he is not dragged anywhere), so it draws nothing of its own. 🔴 Review of cd44d6d0 (batch 9 R, L111;
+   * harness probe): its write never answered, it stayed going for the rest of the session, and a link followed after a
+   * later Back, while that Back's save was being written, was drawn again only BACK_SAVE_WAIT_MS after the save landed:
+   * 5 s of the dollar he had walked away from, the percent Back showed saved. b86f4e88 drew it again as it landed.
+   */
+  test("…and after the next Back, a link followed while its save is written is drawn again as it lands", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page = await open(portfolioPage, "/investments?range=1Y");
+    ui.portfolio!.setView("view", "returns");
+    await page.settle();
+    page.back();
+    await idle(); // Back's save, held
+
+    ui.portfolio!.setView("unit", "percent"); // its write is never answered
+    await idle();
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // the press, gone at its bound
+    await page.serve("write"); // Back's save, late
+    await vi.advanceTimersByTimeAsync(BACK_SAVE_WAIT_MS);
+    await idle();
+    await page.serve("render"); // drawn again: the Value, with the percent he pressed
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" });
+
+    page.router.push("/investments?range=3M");
+    await idle();
+    await page.serve("render");
+    page.back(); // to the Value and the percent
+    await idle(); // Back's save of them, held
+    page.router.push("/investments?range=6M"); // a link that carries no view
+    await idle();
+    await page.serve("render");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "dollar" }); // drawn before Back's save landed
+    await page.serve("write", "newest"); // Back's save lands; the press's write still hangs
+    expect(page.pending).toContainEqual({ kind: "render", label: "/investments?range=6M" });
+    await page.serve("render");
+    expect(page.url).toBe("/investments?range=6M");
+    expect(ui.portfolio!.state).toMatchObject({ view: "value", unit: "percent" }); // the view Back showed, as saved
+    expect(page.persisted.investments).toMatchObject({ view: "value", unit: "percent" });
   });
 
   test("the control: a link followed once Back's save has landed draws the view Back showed, once", async () => {
